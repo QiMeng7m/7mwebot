@@ -151,6 +151,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `WEBOT_ENV_FILE` | `str` | `""` | `src/config.py:resolve_env_file()` | `src/config.py` (显式指定 .env 路径) |
 | `ONBOARDING_DONE` | `bool` | `False` | `.env` 写入 | `src/config.py:is_onboarding_done()`, `src/web/server.py`, `desktop.py` |
 | `WCDB_KEY` | `str` | `""` | `.env` / 引导流程写入 | `src/wechat/wcdb_client.py` |
+| `WCDB_PATCH_EXPIRY` | `bool` | `True` | `.env` / 环境变量 | `src/wechat/wcdb_client.py:_apply_expiry_patch()` (运行时放宽 DLL 到期检查) |
 | `MAC_WECHAT_SEND_SHORTCUT` | `str` | `"enter"` | `desktop_mac.py` | `src/wechat/mac_ui_backend.py` |
 | `MAC_CHAT_TITLE_CACHE_FILE` | `str` | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
 | `MAC_CHAT_TITLE_MAP` | `str` (JSON) | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
@@ -355,7 +356,7 @@ todo_delete_keywords: list[str] = [
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
 | `__init__(dll_dir)` | 初始化 WCDB 客户端 | `dll_dir: str` | `None` |
-| `init()` | 初始化 wcdb_api.dll | 无 | `bool` |
+| `init()` | 初始化 wcdb_api.dll（含 DRM/到期补丁） | 无 | `None` (失败抛 RuntimeError) |
 | `open()` | 打开加密数据库 | 无 | `bool` |
 | `close()` | 关闭数据库连接 | 无 | `None` |
 | `get_sessions()` | 获取所有会话列表 | 无 | `list[dict]` |
@@ -363,6 +364,11 @@ todo_delete_keywords: list[str] = [
 | `get_group_members(talker)` | 获取群成员列表 | `talker: str` | `list[dict] \| None` |
 | `resolve_nickname(wxid)` | 解析 wxid → 昵称 | `wxid: str` | `str` |
 | `get_display_names(wxids)` | 批量解析昵称 | `wxids: list[str]` | `dict[str, str]` |
+| `_apply_drm_patch(dll_handle, dll_path)` | 1 字节 DRM 补丁 | `dll_handle: int, dll_path: str` | `None` |
+| `_apply_expiry_patch(module_base)` | 放宽 DLL 内置到期检查（内存补丁） | `module_base: int` | `None` |
+| `_patch_expiry_buffer(buf)` | 定位并修补 InitProtection 时间比较 | `buf: bytearray` | `tuple[str, int, bytes]` |
+| `_patch_init_time_check_buffer(buf)` | 修补 wcdb_init 中的第二次时间比较 | `buf: bytearray` | `tuple[str, int, bytes]` |
+| `_text_section_range(module_base)` | 解析 PE 头，返回 .text 的 (RVA, size) | `module_base: int` | `tuple[int, int] \| None` |
 
 ### 2.10 `src/wechat/window_controller.py` (WeChatWindowController)
 
@@ -901,7 +907,14 @@ AbstractSummarizer (base.py)
 WcdbBackend.start(callback)
   │
   ├── WcdbNativeClient.init()
-  │     └── ctypes 加载 wcdb_api.dll
+  │     ├── ctypes 加载 wcdb_api.dll
+  │     ├── _apply_drm_patch() — 1 字节 DRM 补丁 (RVA 0x6e1f6)
+  │     ├── _apply_expiry_patch() — 放宽内置到期检查（仅内存）
+  │     │     ├── _text_section_range() — 解析 PE .text
+  │     │     ├── _patch_expiry_buffer() — InitProtection 时间比较
+  │     │     └── _patch_init_time_check_buffer() — wcdb_init 时间比较
+  │     ├── InitProtection() — 返回 -101 表示 DLL 已过期
+  │     └── wcdb_init() — 返回 -1000 表示保护未通过
   │
   ├── WcdbNativeClient.open()
   │     └── 应用 1-byte DRM patch + 打开 session.db

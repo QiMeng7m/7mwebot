@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import struct
 import sys
 from pathlib import Path
 
@@ -97,6 +98,150 @@ def _apply_drm_patch(dll_handle, dll_path):
     _kernel32.VirtualProtect(
         patch_addr, 5, old_protect, ct.byref(wintypes.DWORD())
     )
+
+
+# ── DLL expiry check patch ────────────────────────────────────────────
+# wcdb_api.dll's InitProtection() compares _time64(NULL) against a
+# hard-coded expiry and returns -101 once the host clock passes it, which
+# makes wcdb_init() fail with -1000.  Release builds carry such a bound
+# (observed: 0x6abda27f = 2026-10-01 07:59:59 local) and no refreshed DLL
+# is published, so we widen the bound to 0x7fffffff (2038-01-19).
+#
+# The comparison looks like:
+#   48 3D <imm32>        cmp rax, <expiry>
+#   7E 0A                jle +0x0a
+#   B8 9B FF FF FF       mov eax, -101
+#
+# Set WCDB_PATCH_EXPIRY=0 to disable this in-memory patch.
+
+_EXPIRY_CMP_PREFIX = b"\x48\x3d"
+_EXPIRY_SUFFIX = b"\x7e\x0a\xb8\x9b\xff\xff\xff"
+_EXPIRY_NEW_VALUE = 0x7FFFFFFF
+
+# wcdb_init() performs a second check: it builds a struct tm for
+# 2026-09-30 23:59:59, converts it with _mktime64(), then compares time(NULL)
+# against it and jumps to success only while now <= expiry:
+#   48 3B C3          cmp rax, rbx
+#   0F 8E <rel32>     jle success
+# Replacing the comparison with cmp rax, rax makes ZF=1 so jle is taken.
+_INIT_TIME_SIG = b"\x48\x3b\xc3\x0f\x8e"
+_INIT_TIME_ALREADY = b"\x48\x39\xc0\x0f\x8e"
+_INIT_TIME_REPL = b"\x48\x39\xc0"  # cmp rax, rax
+
+
+def _patch_expiry_buffer(buf: bytearray) -> tuple[str, int, bytes]:
+    """Patch the InitProtection expiry comparison inside a ``.text`` buffer.
+
+    Returns ``(status, offset, new_bytes)`` where status is ``"patched"``,
+    ``"already"`` or ``"not_found"``, offset is the location to overwrite,
+    and new_bytes is the replacement (empty when nothing was changed).
+    """
+    raw = bytes(buf)
+    start = 0
+    while True:
+        idx = raw.find(_EXPIRY_CMP_PREFIX, start)
+        if idx < 0:
+            return "not_found", -1, b""
+        end = idx + 13
+        if end <= len(raw) and raw[idx + 6:end] == _EXPIRY_SUFFIX:
+            break
+        start = idx + len(_EXPIRY_CMP_PREFIX)
+
+    new_bytes = _EXPIRY_NEW_VALUE.to_bytes(4, "little")
+    if raw[idx + 2:idx + 6] == new_bytes:
+        return "already", idx + 2, b""
+    buf[idx + 2:idx + 6] = new_bytes
+    return "patched", idx + 2, new_bytes
+
+
+def _patch_init_time_check_buffer(buf: bytearray) -> tuple[str, int, bytes]:
+    """Neutralize the second expiry comparison in ``wcdb_init``."""
+    raw = bytes(buf)
+    already = raw.find(_INIT_TIME_ALREADY)
+    if already >= 0:
+        return "already", already, b""
+    idx = raw.find(_INIT_TIME_SIG)
+    if idx < 0:
+        return "not_found", -1, b""
+    buf[idx:idx + 3] = _INIT_TIME_REPL
+    return "patched", idx, _INIT_TIME_REPL
+
+
+def _text_section_range(module_base: int) -> tuple[int, int] | None:
+    """Return ``(rva, size)`` of the loaded module's ``.text`` section."""
+    try:
+        dos = ct.string_at(module_base, 0x40)
+        if dos[:2] != b"MZ":
+            return None
+        e_lfanew = struct.unpack_from("<I", dos, 0x3C)[0]
+        nt = ct.string_at(module_base + e_lfanew, 0x18)
+        if nt[:4] != b"PE\0\0":
+            return None
+        num_sections = struct.unpack_from("<H", nt, 6)[0]
+        opt_size = struct.unpack_from("<H", nt, 20)[0]
+        sections = module_base + e_lfanew + 24 + opt_size
+        for i in range(num_sections):
+            header = ct.string_at(sections + i * 40, 40)
+            if header[:8].rstrip(b"\0") != b".text":
+                continue
+            vsize, va, rawsize = struct.unpack_from("<III", header, 8)
+            return va, max(vsize, rawsize)
+    except Exception:
+        logger.debug("Failed to inspect PE sections", exc_info=True)
+    return None
+
+
+def _apply_expiry_patch(module_base: int) -> None:
+    """Widen wcdb_api.dll's hard-coded expiry via an in-memory patch."""
+    if os.getenv("WCDB_PATCH_EXPIRY", "1").strip().lower() in (
+        "0", "false", "no", "off",
+    ):
+        logger.info("WCDB_PATCH_EXPIRY disabled — skipping DLL expiry patch")
+        return
+
+    rng = _text_section_range(module_base)
+    if rng is None:
+        logger.warning(
+            "Could not locate .text section — DLL expiry patch skipped"
+        )
+        return
+
+    va, size = rng
+    buf = bytearray(ct.string_at(module_base + va, size))
+    checks = (
+        ("InitProtection", _patch_expiry_buffer(buf)),
+        ("wcdb_init", _patch_init_time_check_buffer(buf)),
+    )
+
+    for label, (status, offset, new_bytes) in checks:
+        if status == "not_found":
+            logger.warning(
+                "%s time check signature not found — leaving that check "
+                "untouched (possibly a newer or older build)",
+                label,
+            )
+            continue
+        if status == "already":
+            logger.info(
+                "%s time check already patched at RVA 0x%x",
+                label, va + offset,
+            )
+            continue
+
+        patch_addr = ct.c_void_p(module_base + va + offset)
+        old_protect = wintypes.DWORD()
+        _kernel32.VirtualProtect(
+            patch_addr, len(new_bytes), PAGE_EXECUTE_READWRITE,
+            ct.byref(old_protect),
+        )
+        ct.memmove(patch_addr, new_bytes, len(new_bytes))
+        _kernel32.VirtualProtect(
+            patch_addr, len(new_bytes), old_protect,
+            ct.byref(wintypes.DWORD()),
+        )
+        logger.info(
+            "%s time check patched at RVA 0x%x", label, va + offset,
+        )
 
 
 # VirtualQuery constants for pointer validation
@@ -324,6 +469,10 @@ class WcdbNativeClient:
         # Apply DRM patch
         _apply_drm_patch(self._dll._handle, dll_path)
 
+        # Release DLLs carry a hard-coded expiry check; widen it so the
+        # engine still initializes after that date (in-memory only).
+        _apply_expiry_patch(self._dll._handle)
+
         # Set up function signatures
         self._dll.InitProtection.argtypes = [ct.c_char_p]
         self._dll.InitProtection.restype = ct.c_int32
@@ -371,7 +520,15 @@ class WcdbNativeClient:
 
         # Init protection
         resource_path = os.path.dirname(self._dll_dir)
-        self._dll.InitProtection(resource_path.encode("utf-8"))
+        protect_ret = self._dll.InitProtection(resource_path.encode("utf-8"))
+        if protect_ret != 0:
+            if protect_ret == -101:
+                raise RuntimeError(
+                    "wcdb_api.dll 授权检查失败（InitProtection=-101）："
+                    "该 DLL 已过期。请更换新版 DLL，或设置 "
+                    "WCDB_PATCH_EXPIRY=1 启用运行时到期补丁。"
+                )
+            raise RuntimeError(f"InitProtection failed: {protect_ret}")
 
         # Init engine
         ret = self._dll.wcdb_init()
