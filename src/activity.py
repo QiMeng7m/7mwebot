@@ -15,12 +15,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 15
 MAX_DAYS = 90
-TOP_N = 10
-MATRIX_MAX_DAYS = 15
-MAX_DORMANT = 8
-BAR_MAX_WIDTH = 16
-MAX_REPORT_CHARS = 4000
+DISPLAY_TOP_N = 5
+MAX_DAILY_LINES = 5
+MAX_TIME_BUCKETS = 2
+MAX_DORMANT_NAMES = 3
+DAILY_NAME_WIDTH = 10
 NAME_MAX_WIDTH = 14
+MAX_REPORT_CHARS = 4000
 
 _WS = r"\s\u2005\u200b\ufeff"
 _ACTIVITY_RE = re.compile(
@@ -118,10 +119,6 @@ def _truncate_display(text: str, max_width: int) -> str:
     return "".join(out) + "…"
 
 
-def _pad_display(text: str, width: int) -> str:
-    return text + " " * max(0, width - _display_width(text))
-
-
 def _clean_display_name(name) -> str:
     text = str(name or "")
     # Clipboard capture on Windows can leak lone surrogates.
@@ -151,13 +148,6 @@ def _unique_name(name: str, used: dict[str, int]) -> str:
     used[name] = used.get(name, 0) + 1
     n = used[name]
     return name if n == 1 else f"{name}({n})"
-
-
-def _bar(value: int, maximum: int) -> str:
-    if value <= 0 or maximum <= 0:
-        return ""
-    width = max(1, round(value / maximum * BAR_MAX_WIDTH))
-    return " " + "█" * width
 
 
 # ── Report building ──────────────────────────────────────────────────
@@ -215,20 +205,14 @@ def format_activity_report(
     end_day = date.fromtimestamp(now_ts)
 
     lines = [
-        f"@{requester} 群活跃报告",
-        f"群：{group}",
-        f"范围：{start_day:%m-%d} ~ {end_day:%m-%d}（共{days}天）",
+        f"@{requester} 群活跃报告 · {group}",
+        f"最近{days}天（{start_day:%m-%d}~{end_day:%m-%d}）| {total}条 | "
+        f"{len(senders)}人 | 日均{round(total / days)}条",
     ]
 
     if total <= 0:
         lines.append("统计范围内暂无消息。")
         return "\n".join(lines)
-
-    lines.append(
-        f"消息：{total} 条 | 活跃成员：{len(senders)} 人 | "
-        f"日均：{round(total / days)} 条"
-    )
-    lines.append("")
 
     # Assign stable, de-duplicated display names.
     used: dict[str, int] = {}
@@ -247,94 +231,96 @@ def format_activity_report(
             )
             names[sender_id] = _unique_name(raw, used)
 
-    top = senders[:TOP_N]
+    top = senders[:DISPLAY_TOP_N]
 
     # ── Ranking ──────────────────────────────────────────────
-    lines.append(f"一、活跃排行 TOP{len(top)}")
+    lines.append("")
+    lines.append(f"发言 TOP{len(top)}")
     for rank, sender in enumerate(top, 1):
         sender_id = sender["sender_id"]
         count = int(sender["message_count"])
         pct = count * 100.0 / total
         last = format_relative_time(int(sender["last_ts"]), now_ts)
         lines.append(
-            f"{rank}. {names[sender_id]} {count}条({pct:.1f}%) 最后 {last}"
+            f"{rank}. {names[sender_id]} {count}条({pct:.0f}%) 最后{last}"
         )
-    if len(senders) > TOP_N:
-        rest = senders[TOP_N:]
+    if len(senders) > len(top):
+        rest = senders[len(top):]
         rest_count = sum(int(s["message_count"]) for s in rest)
-        rest_last = max(int(s["last_ts"]) for s in rest)
-        lines.append(
-            f"（其余 {len(rest)} 人共 {rest_count} 条，"
-            f"最近发言 {format_relative_time(rest_last, now_ts)}）"
-        )
-    lines.append("")
+        lines.append(f"其余 {len(rest)} 人共 {rest_count} 条")
 
-    # ── Daily matrix (most recent MATRIX_MAX_DAYS days) ──────
-    matrix_days = min(days, MATRIX_MAX_DAYS)
-    first_day = date.fromtimestamp(now_ts) - timedelta(days=matrix_days - 1)
-    day_list = [first_day + timedelta(days=i) for i in range(matrix_days)]
-    title = f"近{matrix_days}天" if matrix_days != days else f"{days}天"
-    lines.append(f"二、每日发言（{title}，列=日期）")
-    lines.append(
-        " " * (NAME_MAX_WIDTH + 1)
-        + "".join(f"{day.day:>3d}" for day in day_list)
-    )
-    for rank, sender in enumerate(top, 1):
-        sender_id = sender["sender_id"]
-        cells = "".join(
-            f"{int(daily.get(sender_id, {}).get(day.isoformat(), 0)):>3d}"
-            for day in day_list
-        )
-        label = _pad_display(f"{rank}.{names[sender_id]}", NAME_MAX_WIDTH + 1)
-        lines.append(label + cells)
-    if len(senders) > TOP_N:
-        cells = []
-        for day in day_list:
-            key = day.isoformat()
-            count = sum(
-                int(daily.get(s["sender_id"], {}).get(key, 0))
-                for s in senders[TOP_N:]
+    # ── Daily summary: only days that actually have messages ──
+    day_totals: dict[str, int] = {}
+    for per_day in daily.values():
+        for day, count in per_day.items():
+            day_totals[day] = day_totals.get(day, 0) + int(count)
+    active_days = sorted(day for day, count in day_totals.items() if count > 0)
+
+    if active_days:
+        lines.append("")
+        lines.append("每日")
+        shown_days = active_days[-MAX_DAILY_LINES:]
+        top_ids = {s["sender_id"] for s in top}
+        for day in shown_days:
+            parts = []
+            for sender in top:
+                sender_id = sender["sender_id"]
+                count = int(daily.get(sender_id, {}).get(day, 0))
+                if count:
+                    parts.append(
+                        f"{_truncate_display(names[sender_id], DAILY_NAME_WIDTH)} {count}"
+                    )
+            other = sum(
+                int(daily.get(sender_id, {}).get(day, 0))
+                for sender_id in daily
+                if sender_id not in top_ids
             )
-            cells.append(f"{count:>3d}")
-        lines.append(_pad_display("其他", NAME_MAX_WIDTH + 1) + "".join(cells))
-    lines.append("")
+            if other:
+                parts.append(f"其他 {other}")
+            lines.append(
+                f"{day[5:]} 共{day_totals[day]}条：" + " · ".join(parts)
+            )
+        if len(active_days) > len(shown_days):
+            lines.append(
+                f"（更早的 {len(active_days) - len(shown_days)} 个活跃日未显示）"
+            )
 
-    # ── Hourly distribution ──────────────────────────────────
+    # ── Active hours: only non-empty buckets, top 2 ──────────
     bucket_counts = [
         sum(hours[lo:hi + 1]) if lo < len(hours) else 0
         for lo, hi in _HOUR_BUCKETS
     ]
-    peak = max(bucket_counts) if bucket_counts else 0
-    lines.append("三、活跃时段（4小时）")
-    for (lo, hi), count in zip(_HOUR_BUCKETS, bucket_counts):
+    ranked_buckets = sorted(
+        (
+            (lo, hi, count)
+            for (lo, hi), count in zip(_HOUR_BUCKETS, bucket_counts)
+            if count > 0
+        ),
+        key=lambda item: (-item[2], item[0]),
+    )[:MAX_TIME_BUCKETS]
+    if ranked_buckets:
+        lines.append("")
         lines.append(
-            f"{lo:02d}-{hi:02d} {count:>5d} 条{_bar(count, peak)}"
+            "活跃时段：" + "、".join(
+                f"{lo:02d}-{hi:02d}点 {count}条"
+                f"({count * 100.0 / total:.0f}%)"
+                for lo, hi, count in ranked_buckets
+            )
         )
-    if peak > 0:
-        peak_index = bucket_counts.index(peak)
-        lo, hi = _HOUR_BUCKETS[peak_index]
-        lines.append(
-            f"最活跃：{lo:02d}-{hi:02d} 点（{peak * 100.0 / total:.1f}%）"
-        )
-    lines.append("")
 
-    # ── Members with no messages in the window ───────────────
+    # ── Members with no messages in the window (compact) ─────
     if dormant:
-        lines.append(f"四、窗口内未发言（{len(dormant)} 人）")
-        for member in dormant[:MAX_DORMANT]:
+        shown = []
+        for member in dormant[:MAX_DORMANT_NAMES]:
             sender_id = member["sender_id"]
             name = names.get(sender_id) or _clean_display_name(
                 member.get("sender_name") or sender_id
             )
-            last_ts = int(member.get("last_ts") or 0)
-            if last_ts:
-                last_day = time.strftime("%m-%d", time.localtime(last_ts))
-                days_ago = max(0, (int(now_ts) - last_ts) // 86400)
-                lines.append(f"{name}（最后发言 {last_day}，{days_ago}天前）")
-            else:
-                lines.append(f"{name}（无发言记录）")
-        if len(dormant) > MAX_DORMANT:
-            lines.append(f"（另有 {len(dormant) - MAX_DORMANT} 人未列出）")
+            shown.append(_truncate_display(name, DAILY_NAME_WIDTH))
+        suffix = "、".join(shown)
+        if len(dormant) > MAX_DORMANT_NAMES:
+            suffix += " 等"
+        lines.append(f"窗口内未发言：{len(dormant)} 人（{suffix}）")
 
     report = "\n".join(lines).strip()
     if len(report) > MAX_REPORT_CHARS:

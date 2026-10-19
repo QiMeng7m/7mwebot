@@ -661,8 +661,9 @@ todo_delete_keywords: list[str] = [
 | `build_activity_report(store, nickname_service, chat_id, group_name, requester_name, days=15, now_ts=None, exclude_message_id=None)` | 查询并生成群活跃报告 | 见签名 | `str` |
 | `format_activity_report(data, nickname_service, *, chat_id, group_name, requester_name, days, now_ts, since_ts)` | 将聚合数据格式化为报告(纯函数) | 见签名 | `str` |
 
-模块常量：`DEFAULT_DAYS=15`、`MAX_DAYS=90`、`TOP_N=10`、`MATRIX_MAX_DAYS=15`、
-`MAX_DORMANT=8`、`MAX_REPORT_CHARS=4000`。
+模块常量：`DEFAULT_DAYS=15`、`MAX_DAYS=90`、`DISPLAY_TOP_N=5`、
+`MAX_DAILY_LINES=5`、`MAX_TIME_BUCKETS=2`、`MAX_DORMANT_NAMES=3`、
+`NAME_MAX_WIDTH=14`、`MAX_REPORT_CHARS=4000`。
 
 ---
 
@@ -1628,10 +1629,12 @@ MessageRouter.handle(msg)
         │     ├── 每时段 24 小时直方图（strftime('%H',...)）
         │     └── 窗口内未发言成员（user_last_message + 相关子查询 MAX）
         └── format_activity_report()
-              ├── 总览 + Top10 排行（含百分比、最后发言）
-              ├── 每人每日矩阵（最多近 15 天，Top10 + 其他）
-              ├── 6 个 4 小时时段条形图
-              └── 窗口内未发言名单（最多 8 人）
+              ├── 总览：条数 / 活跃人数 / 日均
+              ├── 发言 TOP5（条数、占比、最后发言；其余合并一行）
+              ├── 每日：只列有消息的活跃日（最多 5 行）
+              │     每人后附 Top5 当日条数 + 「其他」合计
+              ├── 活跃时段：只列非零时段，最多 2 个
+              └── 窗口内未发言：人数 + 最多 3 个名字
 ```
 
 #### 关键约定
