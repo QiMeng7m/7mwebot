@@ -73,6 +73,7 @@ grep "文件名" CODEBASE_REFERENCE.md
    - [功能I: 语音识别](#功能i-语音识别)
    - [功能J: 聊天记忆](#功能j-聊天记忆)
    - [功能K: macOS适配](#功能k-macos适配)
+   - [功能L: 群活跃查询](#功能l-群活跃查询)
 5. [配置文件和环境变量](#5-配置文件和环境变量)
 
 ---
@@ -466,6 +467,7 @@ todo_delete_keywords: list[str] = [
 | `get_user_last_timestamp(chat_id, sender_id)` | 获取用户最后发言时间 | `chat_id, sender_id: str` | `int \| None` |
 | `get_user_previous_timestamp(chat_id, sender_id, before_ts)` | 获取用户在某时间前的最后发言 | `chat_id, sender_id: str, before_ts: int` | `int \| None` |
 | `get_messages_since(chat_id, since_ts, until_ts, limit)` | 获取时间窗口内消息 | `chat_id, since_ts, until_ts, limit` | `list[dict]` |
+| `get_activity_report_data(chat_id, since_ts, exclude_message_id=None)` | 聚合活跃报告数据(每人总数/每日/时段/未发言) | `chat_id: str, since_ts: int, exclude_message_id: str \| None` | `dict` |
 | `was_recently_triggered(chat_id, window_sec)` | 检查最近是否触发过 | `chat_id: str, window_sec: int` | `bool` |
 | `get_group_memory(chat_id)` | 获取群聊记忆 | `chat_id: str` | `dict \| None` |
 | `upsert_group_memory(chat_id, memory_text, message_count, last_message_id)` | 更新/插入群聊记忆 | `chat_id, memory_text, message_count, last_message_id` | `None` |
@@ -638,6 +640,20 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
 
+### 2.35 `src/activity.py`
+
+| 函数 | 描述 | 参数 | 返回值 |
+|---|---|---|---|
+| `parse_activity_query(content)` | 解析「活跃查询 [N]」指令 | `content: str` | `int \| None` (天数) |
+| `clean_command_text(content, bot_name)` | 去掉 @bot / 不可见分隔符 / 引用前缀 | `content: str, bot_name: str` | `str` |
+| `activity_window_start(days, now_ts=None)` | 统计窗口起点(本地 00:00) | `days: int, now_ts: int \| None` | `int` (Unix 秒) |
+| `format_relative_time(ts, now_ts)` | 相对时间文本 | `ts: int, now_ts: int` | `str` |
+| `build_activity_report(store, nickname_service, chat_id, group_name, requester_name, days=15, now_ts=None, exclude_message_id=None)` | 查询并生成群活跃报告 | 见签名 | `str` |
+| `format_activity_report(data, nickname_service, *, chat_id, group_name, requester_name, days, now_ts, since_ts)` | 将聚合数据格式化为报告(纯函数) | 见签名 | `str` |
+
+模块常量：`DEFAULT_DAYS=15`、`MAX_DAYS=90`、`TOP_N=10`、`MATRIX_MAX_DAYS=15`、
+`MAX_DORMANT=8`、`MAX_REPORT_CHARS=4000`。
+
 ---
 
 ## 3. 模块间关系图
@@ -670,6 +686,7 @@ desktop.py  (桌面入口)
             │       ├── src/nickname.py  (昵称服务)
             │       ├── src/admin.py  (管理员命令)
             │       ├── src/fun.py  (趣味功能:抽签)
+            │       ├── src/activity.py  (群活跃报告:活跃查询)
             │       ├── src/welcome.py  (欢迎新成员)
             │       └── src/integrations/feishu/  (飞书导出)
             ├── src/summarize/  (AI 后端)
@@ -808,6 +825,12 @@ AbstractSummarizer (base.py)
 5. WcdbBackend._handle_message() — 提交到 ThreadPoolExecutor
          │
 6. MessageRouter.handle(msg)
+         │
+         ├─→ [活跃查询路径 — 裸文本或 @bot 均可]
+         │      ├─ clean_command_text() → parse_activity_query()  [src/activity.py]
+         │      └─ build_activity_report()
+         │            └─ MessageStore.get_activity_report_data()
+         │                  (每人总数 / 每日 / 时段 / 未发言)
          │
          ├─→ [@mention 路径]
          │      │
@@ -1533,6 +1556,58 @@ MacHybridBackend
 - hiddenimports 包含 `AppKit`, `Quartz`, `objc` 等 macOS 框架
 - excludes 排除 Windows 专用模块 (`uiautomation`, `win32api`, `comtypes` 等)
 - 权限声明: `NSAppleEventsUsageDescription` + `NSScreenCaptureUsageDescription`
+
+---
+
+### 功能L: 群活跃查询
+
+#### 涉及文件
+
+| 文件 | 路径 | 角色 |
+|---|---|---|
+| `activity.py` | `src/activity.py` | 指令解析 + 报告格式化 |
+| `store.py` | `src/db/store.py` | `get_activity_report_data()` 聚合查询 |
+| `router.py` | `src/router.py` | 在 `is_at` 分流前接入，裸文本/@bot 均可触发 |
+
+#### 指令
+
+| 输入 | 行为 |
+|---|---|
+| `活跃查询` | 当前群最近 15 天报告 |
+| `活跃查询 7` / `活跃查询7天` | 当前群最近 7 天报告（1..90，越界自动夹取） |
+| `@机器人 活跃查询` | 同上（先剥离 @bot 再匹配） |
+| 其它文本 | 不拦截，走原有 @mention / 主动发言逻辑 |
+
+#### 调用链
+
+```
+MessageRouter.handle(msg)
+  │  (消息入库、去重、欢迎处理之后)
+  ├── clean_command_text(msg.content, bot_name)
+  ├── parse_activity_query() → days | None
+  ├── 消息年龄 > AT_MENTION_MAX_AGE_SEC → 忽略（启动回放保护）
+  └── build_activity_report()
+        ├── activity_window_start(days, now) — 本地 00:00 起点
+        ├── MessageStore.get_activity_report_data(chat_id, since_ts,
+        │                                          exclude_message_id)
+        │     ├── 每人总数 + MAX(timestamp)（GROUP BY sender_id）
+        │     ├── 每人每日（date(...,'unixepoch','localtime')）
+        │     ├── 每时段 24 小时直方图（strftime('%H',...)）
+        │     └── 窗口内未发言成员（user_last_message + 相关子查询 MAX）
+        └── format_activity_report()
+              ├── 总览 + Top10 排行（含百分比、最后发言）
+              ├── 每人每日矩阵（最多近 15 天，Top10 + 其他）
+              ├── 6 个 4 小时时段条形图
+              └── 窗口内未发言名单（最多 8 人）
+```
+
+#### 关键约定
+
+- 触发指令本身通过 `exclude_message_id` 从统计中排除
+- 系统消息（`msg_type=10000`）不计入活跃
+- 最后发言时间用 `MAX(messages.timestamp)`，不使用可能因启动回放倒退的游标
+- 报告为纯文本直接返回，不经过 `_strip_markdown`（避免误删名字中的符号）
+- 无配置项、无 schema 变更；常量集中在 `src/activity.py`
 
 ---
 

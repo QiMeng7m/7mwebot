@@ -203,6 +203,125 @@ class MessageStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def get_activity_report_data(
+        self,
+        chat_id: str,
+        since_ts: int,
+        exclude_message_id: Optional[str] = None,
+    ) -> dict:
+        """Aggregate activity for a chat since ``since_ts`` (Unix seconds).
+
+        Returns:
+            {
+              "senders": [{"sender_id", "sender_name",
+                           "message_count", "last_ts"}],
+              "daily": {sender_id: {"YYYY-MM-DD": count}},
+              "hours": [24 ints],
+              "dormant": [{"sender_id", "sender_name", "last_ts"}],
+              "total": int,
+            }
+
+        System messages (msg_type 10000) are ignored.  The trigger message
+        itself can be excluded via ``exclude_message_id`` so the report does
+        not count its own command.
+        """
+        exclude_sql = ""
+        extra_params: tuple = ()
+        if exclude_message_id:
+            exclude_sql = " AND message_id != ?"
+            extra_params = (str(exclude_message_id),)
+
+        where = (
+            "chat_id = ? AND timestamp >= ? AND msg_type != 10000"
+            + exclude_sql
+        )
+        params = (chat_id, int(since_ts)) + extra_params
+
+        with self._lock:
+            sender_rows = self.conn.execute(
+                f"""SELECT sender_id,
+                           MAX(sender_name) AS sender_name,
+                           COUNT(*)         AS message_count,
+                           MAX(timestamp)   AS last_ts
+                    FROM messages
+                    WHERE {where}
+                    GROUP BY sender_id
+                    ORDER BY message_count DESC, last_ts DESC,
+                             sender_id ASC""",
+                params,
+            ).fetchall()
+
+            daily_rows = self.conn.execute(
+                f"""SELECT sender_id,
+                           date(timestamp, 'unixepoch', 'localtime') AS day,
+                           COUNT(*) AS message_count
+                    FROM messages
+                    WHERE {where}
+                    GROUP BY sender_id,
+                             date(timestamp, 'unixepoch', 'localtime')""",
+                params,
+            ).fetchall()
+
+            hour_rows = self.conn.execute(
+                f"""SELECT CAST(strftime('%H', timestamp, 'unixepoch',
+                                           'localtime') AS INTEGER) AS hour,
+                           COUNT(*) AS message_count
+                    FROM messages
+                    WHERE {where}
+                    GROUP BY hour""",
+                params,
+            ).fetchall()
+
+            # Candidates are everyone who has ever spoken in this chat.
+            # MAX(messages.timestamp) is the authoritative last message —
+            # the user_last_message cursor can regress during startup replay.
+            dormant_rows = self.conn.execute(
+                """SELECT u.sender_id AS sender_id,
+                          u.sender_name AS sender_name,
+                          (SELECT MAX(m.timestamp)
+                             FROM messages m
+                            WHERE m.chat_id = u.chat_id
+                              AND m.sender_id = u.sender_id
+                              AND m.msg_type != 10000) AS last_ts
+                   FROM user_last_message u
+                   WHERE u.chat_id = ?""",
+                (chat_id,),
+            ).fetchall()
+
+        daily: dict[str, dict[str, int]] = {}
+        for row in daily_rows:
+            daily.setdefault(row["sender_id"], {})[row["day"]] = int(
+                row["message_count"]
+            )
+
+        hours = [0] * 24
+        for row in hour_rows:
+            hour = int(row["hour"] or 0)
+            if 0 <= hour < 24:
+                hours[hour] = int(row["message_count"])
+
+        dormant = []
+        for row in dormant_rows:
+            if row["last_ts"] is None:
+                continue
+            last_ts = int(row["last_ts"])
+            if last_ts < int(since_ts):
+                dormant.append({
+                    "sender_id": row["sender_id"],
+                    "sender_name": row["sender_name"] or row["sender_id"],
+                    "last_ts": last_ts,
+                })
+        dormant.sort(key=lambda item: (-item["last_ts"], item["sender_id"]))
+
+        senders = [dict(row) for row in sender_rows]
+        return {
+            "senders": senders,
+            "daily": daily,
+            "hours": hours,
+            "dormant": dormant,
+            "total": sum(int(s["message_count"]) for s in senders),
+        }
+
     def was_recently_triggered(self, chat_id: str,
                                 window_sec: int) -> bool:
         """Check if a trigger was processed for this chat recently."""

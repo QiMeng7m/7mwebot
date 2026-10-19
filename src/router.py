@@ -17,6 +17,11 @@ from .proactive.sticky import StickyMentionTracker
 from .memory.consolidator import MemoryConsolidator
 from .todo.store import TodoStore
 from .todo.handler import TodoHandler, format_todo_reply
+from .activity import (
+    build_activity_report,
+    clean_command_text,
+    parse_activity_query,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +166,52 @@ class MessageRouter:
             self._sticky is not None
             and self._sticky.consume(msg["chat_id"], msg["sender_id"])
         )
+
+        # ── Activity query (bare keyword or @bot, anyone) ─────────
+        # Handled before the @mention split so "活跃查询" works without @.
+        # The report is plain text; returning directly skips the markdown
+        # stripper so user names are never mangled.
+        if msg.get("msg_type") != 10000:
+            activity_days = parse_activity_query(
+                clean_command_text(msg.get("content", ""), bot_name)
+            )
+            if activity_days is not None:
+                now_ts = int(time.time())
+                msg_age_sec = now_ts - msg.get("timestamp", 0)
+                if msg_age_sec > AT_MENTION_MAX_AGE_SEC:
+                    logger.info(
+                        "Ignoring stale activity query from '%s' "
+                        "(age=%ds, max=%ds)",
+                        msg["sender_name"], msg_age_sec,
+                        AT_MENTION_MAX_AGE_SEC,
+                    )
+                    return None
+
+                requester_name = self._nicks.resolve_name(msg["sender_id"])
+                if requester_name == msg["sender_id"]:
+                    requester_name = msg["sender_name"]
+
+                logger.info(
+                    "Activity query in %s by '%s': days=%d",
+                    msg["chat_id"][:20], msg["sender_name"], activity_days,
+                )
+                try:
+                    return build_activity_report(
+                        store=self._store,
+                        nickname_service=self._nicks,
+                        chat_id=msg["chat_id"],
+                        group_name=msg.get("group_name") or msg["chat_id"],
+                        requester_name=requester_name,
+                        days=activity_days,
+                        now_ts=now_ts,
+                        exclude_message_id=msg.get("message_id"),
+                    )
+                except Exception:
+                    logger.exception("Activity report failed")
+                    return (
+                        f"@{msg['sender_name']} "
+                        "活跃报告生成失败，请稍后再试。"
+                    )
 
         if is_at:
             # ── @mention path (existing logic) ───────────────────
