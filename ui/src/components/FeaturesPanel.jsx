@@ -454,23 +454,21 @@ export default function FeaturesPanel({ activeSection, onNavigate }) {
         </AnimatePresence>
       </div>
 
-      {activeSection !== 'log' && activeSection !== 'fun' && (
-        <div className="mt-8 flex items-center gap-4">
-          <motion.button whileTap={{ scale: 0.97 }} whileHover={{ scale: 1.02 }} onClick={handleSave}
-            className={`w-48 py-2.5 rounded-full text-[14px] font-semibold tracking-wide shadow-sm transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer ${saved ? 'bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-semibold' : 'bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] border border-[#0d0d0d] dark:border-border-main hover:opacity-90'}`}>
-            {saved ? <><CheckCircle size={18} weight="fill" /> 已保存</> : <><FloppyDisk size={18} /> 保存配置</>}
-          </motion.button>
-          {saved ? (
-            <span className="flex items-center gap-1.5 text-xs text-[#c37d0d] bg-[#c37d0d]/10 border border-[#c37d0d]/20 px-4 py-1.5 rounded-full font-medium">
-              <Info size={14} /> 配置已更新，重启机器人后生效
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-xs text-text-muted bg-bg-raised border border-border-main px-4 py-1.5 rounded-full font-medium">
-              <Info size={14} /> 保存将应用所有模块的修改，重启后生效
-            </span>
-          )}
-        </div>
+      <div className="mt-8 flex items-center gap-4">
+      <motion.button whileTap={{ scale: 0.97 }} whileHover={{ scale: 1.02 }} onClick={handleSave}
+        className={`w-48 py-2.5 rounded-full text-[14px] font-semibold tracking-wide shadow-sm transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer ${saved ? 'bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-semibold' : 'bg-[#0d0d0d] dark:bg-white text-white dark:text-[#0d0d0d] border border-[#0d0d0d] dark:border-border-main hover:opacity-90'}`}>
+        {saved ? <><CheckCircle size={18} weight="fill" /> 已保存</> : <><FloppyDisk size={18} /> 保存配置</>}
+      </motion.button>
+      {saved ? (
+        <span className="flex items-center gap-1.5 text-xs text-[#c37d0d] bg-[#c37d0d]/10 border border-[#c37d0d]/20 px-4 py-1.5 rounded-full font-medium">
+          <Info size={14} /> 配置已更新，重启机器人后生效
+        </span>
+      ) : (
+        <span className="flex items-center gap-1.5 text-xs text-text-muted bg-bg-raised border border-border-main px-4 py-1.5 rounded-full font-medium">
+          <Info size={14} /> 保存将应用所有模块的修改，重启后生效
+        </span>
       )}
+      </div>
     </div>
   )
 }
