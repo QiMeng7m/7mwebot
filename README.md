@@ -161,6 +161,18 @@ cd ui && npm install && npm run build && cd ..
 python desktop.py
 ```
 
+> **必须先准备原生 DLL**：仓库不包含 `native/windows/*.dll`（见 `.gitignore`），
+> 缺了会报 `wx_key.dll not found` 或 `wcdb_api.dll not found`。
+>
+> 从 [Releases](https://github.com/cancelGuMu/webot/releases) 下载免安装版 `webot.exe`，然后解出所需 DLL：
+>
+> ```bash
+> pip install pyinstaller
+> python tools/extract_native_dlls.py --archive path/to/webot.exe --dest native/windows
+> ```
+>
+> 也可以直接安装 `webot-setup.exe`，把安装目录下的 `native\windows\` 整个复制到本项目的 `native/` 下。
+
 ---
 
 ## 配置
