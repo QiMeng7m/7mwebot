@@ -255,7 +255,7 @@ function ProactiveSection({ form, update }) {
             <div className="grid grid-cols-2 gap-3">
               <ParamRow label="速率窗口" hint="统计消息速率的时间范围（秒），默认 120 = 2 分钟">
                 <Input type="number" value={String(form.proactive_rate_window_sec || 120)}
-                  onChange={v => update('proactive_rate_window_sec', parseInt(v) || 120)} />
+                  onChange={v => update('proactive_rate_window_sec', Math.max(30, parseInt(v) || 120))} />
               </ParamRow>
               <ParamRow label="安静阈值" hint="速率低于此值不发言（默认 1.5 条/分）">
                 <Input type="number" value={String(form.proactive_rate_quiet ?? 1.5)}

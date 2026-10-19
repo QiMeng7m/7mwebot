@@ -362,6 +362,7 @@ def _write_onboarding_to_env(env_path):
             "WECHAT_BACKEND": _onboarding_data.get("wechat_backend", "wcdb"),
             "WECHAT_GROUPS": _onboarding_data.get("wechat_groups", "*"),
             "BOT_DISPLAY_NAME": _onboarding_data.get("bot_display_name", "群聊小助手"),
+            "FUN_ENABLED": str(_onboarding_data.get("fun_enabled", True)).lower(),
             "PROACTIVE_ENABLED": str(_onboarding_data.get("proactive_enabled", False)).lower(),
             "STICKY_MENTION_ENABLED": str(_onboarding_data.get("sticky_mention_enabled", True)).lower(),
             "WCDB_KEY": _onboarding_data.get("key", ""),
@@ -831,6 +832,7 @@ _onboarding_data = {
     "bot_display_name": "", "wechat_groups": "*", "wechat_backend": "wcdb",
     "ai_backend": "deepseek", "deepseek_api_key": "", "deepseek_model": "deepseek-v4-flash",
     "anthropic_api_key": "", "summarize_model": "claude-haiku-4-5-20251001",
+    "fun_enabled": True,
     "proactive_enabled": False,
     "sticky_mention_enabled": True,
 }
@@ -1364,6 +1366,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     "VOICE_LOCAL_MODEL": config.get("voice_local_model", "small"),
                 }
                 updates.update(_feishu_updates_from_config(config))
+                updates.update(_todo_updates_from_config(config))
                 new_lines = []
                 seen = set()
                 for line in lines:

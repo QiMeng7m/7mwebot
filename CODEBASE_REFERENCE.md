@@ -859,7 +859,10 @@ AbstractSummarizer (base.py)
          │      ├─ feishu export → FeishuExportService.export_recent_chat()
          │      └─ fun (抽签) → draw_lots()
          │
-         └─→ [Proactive 路径]
+         └─→ [Proactive 路径 / 裸关键词]
+                │
+                ├─ TriggerDetector.is_trigger() — 裸关键词 → _handle_summary()
+                │     (仅 5 分钟内的新消息)
                 │
                 ├─ ProactiveGate.should_speak() — 4层门控
                 │     ├─ RateTracker.record() + rate()
@@ -1247,6 +1250,10 @@ WeChatWindowController.send_to_chat(group_name, text)  ← 主入口
 
 1. **@mention 触发**: 消息中 bot 被 @提及 → 总是触发
 2. **关键词触发**: 消息内容匹配 `TRIGGER_KEYWORDS` 中任一关键词 → 触发总结
+
+裸关键词（不带 @）同样生效：`MessageRouter.handle()` 的非 @mention 分支会再次调用
+`is_trigger()`，命中后走 `_handle_summary()`；仅处理 5 分钟内（`AT_MENTION_MAX_AGE_SEC`）
+的新消息，避免启动回放历史消息误触发。
 
 ```python
 class TriggerDetector:

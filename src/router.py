@@ -333,6 +333,28 @@ class MessageRouter:
                 reply = self._handle_chat(msg, clean_content)
 
         else:
+            # ── Bare keyword trigger (no @mention) ────────────────
+            # The UI and README promise that sending a trigger keyword
+            # (e.g. "总结一下") is enough; only stale messages replayed
+            # on startup are ignored.
+            msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
+            if (
+                msg_age_sec <= AT_MENTION_MAX_AGE_SEC
+                and self._config.summarize_enabled
+                and self._detector.is_trigger(
+                    content=msg.get("content", ""),
+                    is_at_mentioned=False,
+                    sender_name=msg["sender_name"],
+                )
+            ):
+                logger.info(
+                    "Bare keyword trigger in %s by '%s'",
+                    msg["chat_id"][:20], msg["sender_name"],
+                )
+                reply = self._handle_summary(msg)
+                if reply:
+                    return self._strip_markdown(reply)
+
             if self._feishu_export is not None:
                 try:
                     self._feishu_export.maybe_auto_export(msg)
