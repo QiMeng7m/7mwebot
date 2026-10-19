@@ -634,6 +634,9 @@ todo_delete_keywords: list[str] = [
 | `_read_recent_logs()` | 读取最近 500 行日志 | 无 | `dict` |
 | `_run_step1_extraction()` | 后台执行密钥提取 | 无 | `None` |
 | `_write_onboarding_to_env(env_path)` | 写入引导数据到 .env | `env_path` | `None` |
+| `_config_updates_from_payload(config)` | 把 /api/config 请求体映射为 .env 更新；**只更新请求体中出现的字段** | `config: dict` | `dict[str, str \| None]` |
+| `_feishu_updates_from_config(config)` | 飞书配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
+| `_todo_updates_from_config(config)` | 待办配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 
 ### 2.34 前端组件 (`ui/src/components/`)
 
@@ -1161,6 +1164,12 @@ MessageRouter.handle(msg) → [无 @mention]
 | `POST` | `/api/voice/download-model` | 触发语音模型下载 | 无 |
 | `GET` | `/api/macos/diagnose` | macOS 微信权限诊断 | 无 |
 | `GET` | `/ws` | WebSocket 升级 (状态推送) | 无 |
+
+> **`/api/config` 是部分更新语义**：只写入请求体中出现的字段。
+> 各面板各自提交自己的字段（功能开关、待办、身份配置……），未提交的配置
+> （如 `WECHAT_GROUPS`、`VOICE_*`）保持不变。这避免了保存一个面板时
+> 把「只监控指定群」悄悄重置成「监控全部群」。`/api/config/import` 同样
+> 只更新导入文件里出现的字段，并跳过导出文件中的脱敏密钥。
 
 #### WebSocket 消息类型
 

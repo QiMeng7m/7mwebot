@@ -332,10 +332,20 @@ function VoiceSection({ form, update }) {
 function IdentitySection({ form, update }) {
   // Local editable groups array — source of truth for rendering
   const [groups, setGroups] = useState([])
+  // Last value we pushed into form.wechat_groups ourselves.  Used to tell
+  // local edits apart from an asynchronously loaded config so the effect
+  // below does not overwrite what the user is typing.
+  const lastSyncedRef = useRef(null)
 
-  // Initialize from form.wechat_groups on mount only
+  // Keep local groups in sync with form.wechat_groups.  Depending on the
+  // value (not an empty dep list) fixes the race where /api/load-config
+  // finishes after this section mounts, leaving the UI stuck on "全部群聊"
+  // and then saving "*" over the user's selected group.
   useEffect(() => {
     const raw = (form.wechat_groups || '').trim()
+    if (raw === lastSyncedRef.current) return
+    lastSyncedRef.current = raw
+
     if (raw === '*' || raw === '') {
       setGroups(['*'])
     } else {
@@ -345,16 +355,19 @@ function IdentitySection({ form, update }) {
         try { return decodeURIComponent(trimmed) } catch { return trimmed }
       }).filter(Boolean))
     }
-  }, [])
+  }, [form.wechat_groups])
 
   // Sync local groups array back to form.wechat_groups (comma-separated, URL-encoded)
   function syncToForm(newGroups) {
     const nonEmpty = newGroups.filter(g => g !== '')
+    let value
     if (nonEmpty.length === 0 || nonEmpty.includes('*')) {
-      update('wechat_groups', '*')
+      value = '*'
     } else {
-      update('wechat_groups', nonEmpty.map(g => encodeURIComponent(g)).join(','))
+      value = nonEmpty.map(g => encodeURIComponent(g)).join(',')
     }
+    lastSyncedRef.current = value
+    update('wechat_groups', value)
   }
 
   const isAll = groups.length === 1 && groups[0] === '*'

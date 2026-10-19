@@ -1266,6 +1266,77 @@ class ApiConfigEndpointTests(unittest.TestCase):
                 f.unlink(missing_ok=True)
             tmp_dir.rmdir()
 
+    def test_partial_saves_preserve_unrelated_settings(self):
+        """Partial payloads must not reset groups, todo or voice settings.
+
+        Regression test: the features panel used to omit wechat_groups, and
+        the server defaulted it to "*", silently switching the bot to monitor
+        every group.  The todo panel had the same effect on feature settings.
+        """
+        tmp_dir = Path(tempfile.mkdtemp())
+        tmp_env = tmp_dir / ".env"
+        tmp_env.write_text(
+            "WECHAT_GROUPS=encoded-group\n"
+            "FUN_ENABLED=false\n"
+            "TODO_ENABLED=false\n"
+            "TODO_GROUPS=only-this-group\n"
+            "VOICE_ASR_ENABLED=true\n"
+            "VOICE_OPENAI_API_KEY=voice-secret\n",
+            encoding="utf-8",
+        )
+        try:
+            # 1) Features-panel-style payload: only feature fields.
+            body = json.dumps({
+                "log_level": "DEBUG",
+                "fun_enabled": True,
+            }).encode()
+            with patch("src.web.server._find_or_create_env",
+                       return_value=tmp_env):
+                handler, sock = _build_handler(
+                    "/api/config", method="POST", body=body,
+                    headers={"Content-Type": "application/json",
+                             "Content-Length": str(len(body))},
+                )
+                parts = sock.get_response_text().split("\r\n\r\n", 1)
+                self.assertTrue(json.loads(parts[1])["ok"])
+
+            content = tmp_env.read_text(encoding="utf-8")
+            self.assertIn("WECHAT_GROUPS=encoded-group", content)
+            self.assertIn("TODO_ENABLED=false", content)
+            self.assertIn("TODO_GROUPS=only-this-group", content)
+            self.assertIn("VOICE_ASR_ENABLED=true", content)
+            self.assertIn("VOICE_OPENAI_API_KEY=voice-secret", content)
+            self.assertIn("LOG_LEVEL=DEBUG", content)
+            self.assertIn("FUN_ENABLED=true", content)
+
+            # 2) Todo-panel-style payload: only todo fields.
+            body = json.dumps({
+                "todo_enabled": True,
+                "todo_groups": ["g1"],
+            }).encode()
+            with patch("src.web.server._find_or_create_env",
+                       return_value=tmp_env):
+                handler, sock = _build_handler(
+                    "/api/config", method="POST", body=body,
+                    headers={"Content-Type": "application/json",
+                             "Content-Length": str(len(body))},
+                )
+                parts = sock.get_response_text().split("\r\n\r\n", 1)
+                self.assertTrue(json.loads(parts[1])["ok"])
+
+            content = tmp_env.read_text(encoding="utf-8")
+            self.assertIn("WECHAT_GROUPS=encoded-group", content)
+            self.assertIn("FUN_ENABLED=true", content)
+            self.assertIn("VOICE_ASR_ENABLED=true", content)
+            self.assertIn("VOICE_OPENAI_API_KEY=voice-secret", content)
+            self.assertIn("TODO_ENABLED=true", content)
+            self.assertIn("TODO_GROUPS=g1", content)
+        finally:
+            tmp_env.unlink(missing_ok=True)
+            for f in tmp_dir.glob("*"):
+                f.unlink(missing_ok=True)
+            tmp_dir.rmdir()
+
     def test_save_config_roundtrip_openai(self):
         """POST /api/config persists OPENAI_* values and load-config reads them."""
         tmp_dir = Path(tempfile.mkdtemp())

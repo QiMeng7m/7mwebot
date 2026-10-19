@@ -217,17 +217,115 @@ def _todo_config_from_raw(raw: dict[str, str]) -> dict:
 
 
 def _todo_updates_from_config(config: dict) -> dict[str, str | None]:
-    """Convert todo config dict to .env lines."""
-    return {
-        "TODO_ENABLED": str(config.get("todo_enabled", True)).lower(),
-        "TODO_GROUPS": ",".join(config.get("todo_groups", ["*"])) if config.get("todo_groups") else "*",
-        "TODO_MAX_PER_GROUP": str(config.get("todo_max_per_group", 50)),
-        "TODO_COMPLETED_RETENTION_DAYS": str(config.get("todo_completed_retention_days", 30)),
-        "TODO_DELETED_RETENTION_DAYS": str(config.get("todo_deleted_retention_days", 30)),
-        "TODO_ADD_KEYWORDS": ",".join(config.get("todo_add_keywords", [])) if config.get("todo_add_keywords") else None,
-        "TODO_COMPLETE_KEYWORDS": ",".join(config.get("todo_complete_keywords", [])) if config.get("todo_complete_keywords") else None,
-        "TODO_DELETE_KEYWORDS": ",".join(config.get("todo_delete_keywords", [])) if config.get("todo_delete_keywords") else None,
-    }
+    """Return env updates for todo settings from a UI payload.
+
+    Only fields present in the payload are written.  The todo panel sends a
+    partial payload; defaulting missing fields would reset the user's todo
+    configuration every time another panel saves.
+    """
+    updates: dict[str, str | None] = {}
+
+    def put(env_key: str, field: str, transform=None, empty=None) -> None:
+        if field not in config:
+            return
+        value = config.get(field)
+        if value is None:
+            return
+        if value == "" and empty is not None:
+            value = empty
+        updates[env_key] = transform(value) if transform else str(value)
+
+    def as_bool(value) -> str:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return str(bool(value)).lower()
+
+    def as_csv(value) -> str:
+        if isinstance(value, (list, tuple)):
+            return ",".join(str(v).strip() for v in value if str(v).strip())
+        return str(value).strip()
+
+    put("TODO_ENABLED", "todo_enabled", transform=as_bool)
+    put("TODO_GROUPS", "todo_groups", transform=lambda v: as_csv(v) or "*")
+    put("TODO_MAX_PER_GROUP", "todo_max_per_group")
+    put("TODO_COMPLETED_RETENTION_DAYS", "todo_completed_retention_days")
+    put("TODO_DELETED_RETENTION_DAYS", "todo_deleted_retention_days")
+    for env_key, field in (
+        ("TODO_ADD_KEYWORDS", "todo_add_keywords"),
+        ("TODO_COMPLETE_KEYWORDS", "todo_complete_keywords"),
+        ("TODO_DELETE_KEYWORDS", "todo_delete_keywords"),
+    ):
+        if field in config and config.get(field) is not None:
+            updates[env_key] = as_csv(config[field]) or None
+    return updates
+
+
+def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
+    """Map a /api/config payload to .env updates.
+
+    Only fields actually present in the payload are written.  The features
+    panel and todo panel send partial payloads; treating missing keys as
+    "use the default" silently reset unrelated settings — most notably
+    WECHAT_GROUPS to "*" (monitor every group) and VOICE_* to defaults.
+    """
+    updates: dict[str, str | None] = {}
+
+    def put(env_key: str, field: str, transform=None, empty=None) -> None:
+        if field not in config:
+            return
+        value = config.get(field)
+        if value is None:
+            return
+        if value == "" and empty is not None:
+            value = empty
+        updates[env_key] = transform(value) if transform else str(value)
+
+    def as_bool(value) -> str:
+        if isinstance(value, str):
+            return value.strip().lower()
+        return str(bool(value)).lower()
+
+    def as_csv(value) -> str:
+        if isinstance(value, (list, tuple)):
+            return ",".join(str(v).strip() for v in value if str(v).strip())
+        return str(value).strip()
+
+    put("AI_BACKEND", "ai_backend")
+    put("DEEPSEEK_API_KEY", "deepseek_api_key")
+    put("DEEPSEEK_BASE_URL", "deepseek_base_url")
+    put("DEEPSEEK_MODEL", "deepseek_model")
+    put("OPENAI_API_KEY", "openai_api_key")
+    put("OPENAI_BASE_URL", "openai_base_url")
+    put("OPENAI_MODEL", "openai_model")
+    put("ANTHROPIC_API_KEY", "anthropic_api_key")
+    put("ANTHROPIC_BASE_URL", "anthropic_base_url")
+    put("SUMMARIZE_MODEL", "summarize_model")
+    put("BOT_DISPLAY_NAME", "bot_display_name")
+    put("WECHAT_BACKEND", "wechat_backend")
+    put("WECHAT_GROUPS", "wechat_groups", empty="*")
+    put("FUN_ENABLED", "fun_enabled", transform=as_bool)
+    put("PROACTIVE_ENABLED", "proactive_enabled", transform=as_bool)
+    put("PROACTIVE_RATE_WINDOW_SEC", "proactive_rate_window_sec")
+    put("PROACTIVE_RATE_QUIET", "proactive_rate_quiet")
+    put("PROACTIVE_RATE_CASUAL", "proactive_rate_casual")
+    put("PROACTIVE_RATE_LIVELY", "proactive_rate_lively")
+    put("PROACTIVE_RATE_BURST", "proactive_rate_burst")
+    put("WELCOME_ENABLED", "welcome_enabled", transform=as_bool)
+    put("STICKY_MENTION_ENABLED", "sticky_mention_enabled", transform=as_bool)
+    put("STICKY_MENTION_TTL_SEC", "sticky_mention_ttl_sec")
+    put("SUMMARIZE_ENABLED", "summarize_enabled", transform=as_bool)
+    put("FALLBACK_WINDOW_HOURS", "fallback_window_hours")
+    if "trigger_keywords" in config and config.get("trigger_keywords") is not None:
+        updates["TRIGGER_KEYWORDS"] = as_csv(config["trigger_keywords"]) or None
+    put("LOG_LEVEL", "log_level")
+    put("WECHAT_DATA_DIR", "wechat_data_dir")
+    put("VOICE_ASR_ENABLED", "voice_asr_enabled", transform=as_bool)
+    put("VOICE_ASR_BACKEND", "voice_asr_backend")
+    put("VOICE_ASR_LANGUAGE", "voice_asr_language")
+    put("VOICE_OPENAI_API_KEY", "voice_openai_api_key")
+    put("VOICE_OPENAI_BASE_URL", "voice_openai_base_url")
+    put("VOICE_LOCAL_MODEL", "voice_local_model")
+    return updates
 
 
 def _feishu_updates_from_config(config: dict) -> dict[str, str | None]:
@@ -1231,42 +1329,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 else:
                     lines = []
                 new_lines = []
-                updates = {
-                    "DEEPSEEK_API_KEY": config.get("deepseek_api_key"),
-                    "DEEPSEEK_BASE_URL": config.get("deepseek_base_url"),
-                    "DEEPSEEK_MODEL": config.get("deepseek_model"),
-                    "OPENAI_API_KEY": config.get("openai_api_key"),
-                    "OPENAI_BASE_URL": config.get("openai_base_url"),
-                    "OPENAI_MODEL": config.get("openai_model"),
-                    "ANTHROPIC_API_KEY": config.get("anthropic_api_key"),
-                    "ANTHROPIC_BASE_URL": config.get("anthropic_base_url"),
-                    "SUMMARIZE_MODEL": config.get("summarize_model"),
-                    "AI_BACKEND": config.get("ai_backend"),
-                    "BOT_DISPLAY_NAME": config.get("bot_display_name"),
-                    "WECHAT_BACKEND": config.get("wechat_backend"),
-                    "WECHAT_GROUPS": config.get("wechat_groups") or "*",
-                    "FUN_ENABLED": str(config.get("fun_enabled", True)).lower(),
-                    "PROACTIVE_ENABLED": str(config.get("proactive_enabled", False)).lower(),
-                    "PROACTIVE_RATE_WINDOW_SEC": str(config.get("proactive_rate_window_sec", 120)),
-                    "PROACTIVE_RATE_QUIET": str(config.get("proactive_rate_quiet", 1.5)),
-                    "PROACTIVE_RATE_CASUAL": str(config.get("proactive_rate_casual", 4.0)),
-                    "PROACTIVE_RATE_LIVELY": str(config.get("proactive_rate_lively", 6.5)),
-                    "PROACTIVE_RATE_BURST": str(config.get("proactive_rate_burst", 8.5)),
-                    "WELCOME_ENABLED": str(config.get("welcome_enabled", False)).lower(),
-                    "STICKY_MENTION_ENABLED": str(config.get("sticky_mention_enabled", True)).lower(),
-                    "STICKY_MENTION_TTL_SEC": str(config.get("sticky_mention_ttl_sec", 60)),
-                    "SUMMARIZE_ENABLED": str(config.get("summarize_enabled", True)).lower(),
-                    "FALLBACK_WINDOW_HOURS": str(config.get("fallback_window_hours", 8)),
-                    "TRIGGER_KEYWORDS": ",".join(config.get("trigger_keywords", [])) if config.get("trigger_keywords") else None,
-                    "LOG_LEVEL": config.get("log_level"),
-                    "WECHAT_DATA_DIR": config.get("wechat_data_dir"),
-                    "VOICE_ASR_ENABLED": str(config.get("voice_asr_enabled", False)).lower(),
-                    "VOICE_ASR_BACKEND": config.get("voice_asr_backend", "local_whisper"),
-                    "VOICE_ASR_LANGUAGE": config.get("voice_asr_language", "zh"),
-                    "VOICE_OPENAI_API_KEY": config.get("voice_openai_api_key", ""),
-                    "VOICE_OPENAI_BASE_URL": config.get("voice_openai_base_url", ""),
-                    "VOICE_LOCAL_MODEL": config.get("voice_local_model", "small"),
-                }
+                updates = _config_updates_from_payload(config)
                 updates.update(_feishu_updates_from_config(config))
                 updates.update(_todo_updates_from_config(config))
                 # ── Safety: never overwrite real secrets with masked values.
@@ -1329,44 +1392,17 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     lines = env_path.read_text(encoding="utf-8").splitlines()
                 else:
                     lines = []
-                updates = {
-                    "DEEPSEEK_API_KEY": config.get("deepseek_api_key"),
-                    "DEEPSEEK_BASE_URL": config.get("deepseek_base_url"),
-                    "DEEPSEEK_MODEL": config.get("deepseek_model"),
-                    "OPENAI_API_KEY": config.get("openai_api_key"),
-                    "OPENAI_BASE_URL": config.get("openai_base_url"),
-                    "OPENAI_MODEL": config.get("openai_model"),
-                    "ANTHROPIC_API_KEY": config.get("anthropic_api_key"),
-                    "ANTHROPIC_BASE_URL": config.get("anthropic_base_url"),
-                    "SUMMARIZE_MODEL": config.get("summarize_model"),
-                    "AI_BACKEND": config.get("ai_backend"),
-                    "BOT_DISPLAY_NAME": config.get("bot_display_name"),
-                    "WECHAT_BACKEND": config.get("wechat_backend"),
-                    "WECHAT_GROUPS": config.get("wechat_groups") or "*",
-                    "FUN_ENABLED": str(config.get("fun_enabled", True)).lower(),
-                    "PROACTIVE_ENABLED": str(config.get("proactive_enabled", False)).lower(),
-                    "PROACTIVE_RATE_WINDOW_SEC": str(config.get("proactive_rate_window_sec", 120)),
-                    "PROACTIVE_RATE_QUIET": str(config.get("proactive_rate_quiet", 1.5)),
-                    "PROACTIVE_RATE_CASUAL": str(config.get("proactive_rate_casual", 4.0)),
-                    "PROACTIVE_RATE_LIVELY": str(config.get("proactive_rate_lively", 6.5)),
-                    "PROACTIVE_RATE_BURST": str(config.get("proactive_rate_burst", 8.5)),
-                    "WELCOME_ENABLED": str(config.get("welcome_enabled", False)).lower(),
-                    "STICKY_MENTION_ENABLED": str(config.get("sticky_mention_enabled", True)).lower(),
-                    "STICKY_MENTION_TTL_SEC": str(config.get("sticky_mention_ttl_sec", 60)),
-                    "SUMMARIZE_ENABLED": str(config.get("summarize_enabled", True)).lower(),
-                    "FALLBACK_WINDOW_HOURS": str(config.get("fallback_window_hours", 8)),
-                    "TRIGGER_KEYWORDS": ",".join(config.get("trigger_keywords", [])) if config.get("trigger_keywords") else None,
-                    "LOG_LEVEL": config.get("log_level"),
-                    "WECHAT_DATA_DIR": config.get("wechat_data_dir"),
-                    "VOICE_ASR_ENABLED": str(config.get("voice_asr_enabled", False)).lower(),
-                    "VOICE_ASR_BACKEND": config.get("voice_asr_backend", "local_whisper"),
-                    "VOICE_ASR_LANGUAGE": config.get("voice_asr_language", "zh"),
-                    "VOICE_OPENAI_API_KEY": config.get("voice_openai_api_key", ""),
-                    "VOICE_OPENAI_BASE_URL": config.get("voice_openai_base_url", ""),
-                    "VOICE_LOCAL_MODEL": config.get("voice_local_model", "small"),
-                }
+                updates = _config_updates_from_payload(config)
                 updates.update(_feishu_updates_from_config(config))
                 updates.update(_todo_updates_from_config(config))
+                # Export files contain masked secrets; never overwrite the
+                # real values with them during import.
+                for masked_key in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY",
+                                   "ANTHROPIC_API_KEY", "FEISHU_APP_SECRET",
+                                   "VOICE_OPENAI_API_KEY"):
+                    val = updates.get(masked_key)
+                    if isinstance(val, str) and "***" in val:
+                        updates[masked_key] = None
                 new_lines = []
                 seen = set()
                 for line in lines:
