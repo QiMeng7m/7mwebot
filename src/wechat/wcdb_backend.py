@@ -28,6 +28,104 @@ DEFAULT_POLL_SEC = 1.0
 MAX_DEDUP_SIZE = 5000
 MAX_CONSECUTIVE_ERRORS = 5   # trigger reinit after this many consecutive failures
 
+# WCDB stores some system messages zstd-compressed; the DLL returns the frame
+# as a hex string.  Join events (and many other sysmsg notifications) use it.
+_ZSTD_HEX_PREFIX = "28b52ffd"
+try:
+    import zstandard as _zstd
+except ImportError:  # pragma: no cover - covered by requirements.txt
+    _zstd = None
+
+_ADDER_LINK_RE = re.compile(r'<link\s+name="adder"[^>]*>(.*?)</link>', re.S)
+_LINK_BLOCK_RE = re.compile(r'<link\s+name="([^"]+)"[^>]*>(.*?)</link>', re.S)
+_XML_USERNAME_RE = re.compile(
+    r"<username>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</username>", re.S,
+)
+_XML_NICKNAME_RE = re.compile(
+    r"<nickname>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</nickname>", re.S,
+)
+_INVITE_JOIN_RE = re.compile(
+    r'邀请[了]?\s*[“"]?([^"“”]+?)[”"]?\s*加入了?群聊'
+)
+_PLAIN_JOIN_RE = re.compile(
+    r'"([^"]+)"(?:通过[^"]*)?加入了?群聊'
+)
+
+
+def _decode_wcdb_content(content: str) -> str:
+    """Decode zstd-compressed content returned as a hex string by WCDB."""
+    text = str(content or "")
+    if len(text) < 16 or text[:8].lower() != _ZSTD_HEX_PREFIX:
+        return text
+    try:
+        raw = bytes.fromhex(text)
+    except ValueError:
+        return text
+    if _zstd is None:
+        logger.warning(
+            "zstandard is not installed; cannot decode compressed WCDB content"
+        )
+        return text
+    try:
+        return _zstd.ZstdDecompressor().decompress(raw).decode(
+            "utf-8", "replace"
+        )
+    except Exception:
+        logger.debug("Failed to decode compressed WCDB content", exc_info=True)
+        return text
+
+
+def _extract_join_member(content: str, resolve_name=None) -> str:
+    """Return the new member's display name from a join system message.
+
+    Handles both plain-text messages ("张三"加入了群聊) and the XML
+    ``sysmsgtemplate`` used by WeChat 4.x, where the new member is stored in
+    ``<link name="adder">``.
+    """
+    if not content or "加入" not in content or "群聊" not in content:
+        return ""
+
+    def _member_from_link(block: str) -> str:
+        username_match = _XML_USERNAME_RE.search(block)
+        nickname_match = _XML_NICKNAME_RE.search(block)
+        username = username_match.group(1).strip() if username_match else ""
+        nickname = nickname_match.group(1).strip() if nickname_match else ""
+        if resolve_name and username:
+            try:
+                resolved = resolve_name(username)
+                if resolved and resolved != username:
+                    return resolved
+            except Exception:
+                pass
+        return nickname or username
+
+    link = _ADDER_LINK_RE.search(content)
+    if link:
+        member = _member_from_link(link.group(1))
+        if member:
+            return member
+
+    # Some templates name the link differently but only contain one member.
+    links = _LINK_BLOCK_RE.findall(content)
+    members = [
+        _member_from_link(block)
+        for name, block in links
+        if name != "from"
+    ]
+    members = [m for m in members if m]
+    if len(members) == 1:
+        return members[0]
+
+    match = _INVITE_JOIN_RE.search(content)
+    if match:
+        return match.group(1).strip()
+
+    match = _PLAIN_JOIN_RE.search(content)
+    if match:
+        return match.group(1).strip()
+
+    return ""
+
 
 class WcdbBackend(AbstractWeChatBackend):
     """Native WCDB backend — database read + window send.
@@ -528,7 +626,13 @@ class WcdbBackend(AbstractWeChatBackend):
         # WCDB message fields: sender_username, message_content, local_type, create_time
         sender = str(msg.get("sender_username", msg.get("senderUsername", msg.get("sender", ""))))
         content = str(msg.get("message_content", msg.get("content", ""))).strip()
-        local_type = int(msg.get("localType", msg.get("msg_type", 1)))
+        local_type = int(msg.get(
+            "local_type", msg.get("localType", msg.get("msg_type", 1)),
+        ))
+
+        # System messages are often zstd-compressed XML in WeChat 4.x.
+        if local_type == 10000:
+            content = _decode_wcdb_content(content)
 
         # ── Voice recognition ──────────────────────────────────────
         # Voice messages (localType=34) have empty message_content;
@@ -546,23 +650,32 @@ class WcdbBackend(AbstractWeChatBackend):
         # Extract "xxx joined the group" events → welcome feature.
         # Only active when WELCOME_ENABLED=true; otherwise join messages
         # are silently filtered out like other system messages.
-        _JOIN_PATTERN = re.compile(r'"([^"]+)"(?:通过[^"]*)?加入了群聊')
-        join_match = _JOIN_PATTERN.search(content)
         new_member_id: str = ""
         is_system_join: bool = False
         welcome_on = (
             self._voice_config is not None
             and getattr(self._voice_config, "welcome_enabled", False)
         )
-        if join_match and welcome_on:
-            new_member_id = join_match.group(1)
-            is_system_join = True
-            logger.info(
-                "Join event detected: new_member=%s group=%s",
-                new_member_id, group_name[:20],
+        join_member = _extract_join_member(
+            content,
+            resolve_name=getattr(self._client, "resolve_nickname", None),
+        )
+        if join_member:
+            if welcome_on:
+                new_member_id = join_member
+                is_system_join = True
+                logger.info(
+                    "Join event detected: new_member=%s group=%s",
+                    new_member_id, group_name[:20],
+                )
+            else:
+                # Welcome disabled — silently drop join messages
+                return None
+        elif "加入群聊" in content or "加入了群聊" in content:
+            logger.warning(
+                "Join-like system message could not be parsed: %s",
+                content[:200],
             )
-        elif join_match:
-            # Welcome disabled — silently drop join messages
             return None
 
         # Filter other system messages (but NOT join events)
@@ -631,7 +744,7 @@ class WcdbBackend(AbstractWeChatBackend):
             "sender_id": str(sender),
             "sender_name": str(sender_name),
             "content": resolved_content,
-            "msg_type": int(msg.get("localType", msg.get("msg_type", 1))),
+            "msg_type": local_type,
             "timestamp": ts,
             "is_at_mentioned": is_at,
             "is_group": True,

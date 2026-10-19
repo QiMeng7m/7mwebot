@@ -346,7 +346,9 @@ todo_delete_keywords: list[str] = [
 | `_poll_cycle(callback)` | 单次轮询周期 | `callback: MessageCallback` | `None` |
 | `_poll_group(group_name, talker, callback)` | 轮询单个群聊消息 | `group_name, talker, callback` | `None` |
 | `_handle_message(group_name, talker, standardized, callback)` | 处理单条消息(线程池) | `group_name, talker, standardized, callback` | `None` |
-| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息 | `msg: dict, group_name: str, talker: str` | `dict \| None` |
+| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
+| `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
+| `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_send_and_confirm(group_name, talker, content)` | 通过键盘发送并确认 | `group_name, talker, content` | `bool` |
 | `_get_voice()` | 懒初始化语音识别管道 | 无 | `VoicePipeline \| None \| False` |
 | `_try_voice(msg)` | 尝试语音识别 | `msg: dict` | `str \| None` |
@@ -530,6 +532,12 @@ todo_delete_keywords: list[str] = [
 | `WelcomeManager.save(data)` | 原子写入配置 | `data: dict` | `None` |
 | `WelcomeManager.resolve_message(chat_id, new_member_id)` | 解析欢迎消息 | `chat_id: str, new_member_id: str` | `str \| None` |
 | `get_welcome_manager()` | 获取模块单例(模块级) | 无 | `WelcomeManager` |
+
+> 入群事件由 `wcdb_backend._standardize()` 识别：WeChat 4.x 的系统消息是
+> zstd 压缩 XML，先用 `_decode_wcdb_content()` 解压，再由
+> `_extract_join_member()` 从 `<link name="adder">` 提取新成员（同时兼容
+> 纯文本 `"张三"加入了群聊`）。仅当 `WELCOME_ENABLED=true` 时保留事件，
+> 否则静默丢弃。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -1784,6 +1792,7 @@ WCDB_KEY=
 | `Pillow>=10.0` | 图像处理 (白屏检测) | 是 |
 | `psutil>=5.0` | 进程管理 | 是 |
 | `pyperclip>=1.8` | 剪贴板操作 | 是 |
+| `zstandard>=0.23.0` | 解压 WCDB 系统消息（入群等） | 是 |
 | `silk-python>=0.2.8` | SILK v3 音频解码 | 语音功能 |
 | `faster-whisper>=1.0` | 本地语音识别 | 语音功能 |
 | `opencc-python-reimplemented>=0.1.7` | 繁简中文转换 | 语音功能 |
