@@ -328,6 +328,37 @@ def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
     return updates
 
 
+def _sandbox_env_overrides(data: dict) -> dict:
+    """Build temporary env overrides from a sandbox test payload.
+
+    The config form holds *masked* secrets (e.g. ``sk-e***2b7b``); sending
+    them as overrides makes the AI call fail with 401.  Skip any value that
+    still contains the mask so the real key from .env is used.
+    """
+    overrides: dict = {}
+    field_map = {
+        "AI_BACKEND": "ai_backend",
+        "DEEPSEEK_API_KEY": "deepseek_api_key",
+        "DEEPSEEK_MODEL": "deepseek_model",
+        "DEEPSEEK_BASE_URL": "deepseek_base_url",
+        "OPENAI_API_KEY": "openai_api_key",
+        "OPENAI_MODEL": "openai_model",
+        "OPENAI_BASE_URL": "openai_base_url",
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "ANTHROPIC_BASE_URL": "anthropic_base_url",
+        "SUMMARIZE_MODEL": "summarize_model",
+    }
+    for env_key, field in field_map.items():
+        value = data.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or "***" in text:
+            continue
+        overrides[env_key] = value
+    return overrides
+
+
 def _feishu_updates_from_config(config: dict) -> dict[str, str | None]:
     """Return env updates for Feishu export settings from UI payload."""
     keywords = config.get("feishu_export_trigger_keywords")
@@ -1810,27 +1841,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 # ── Apply frontend overrides to os.environ BEFORE
                 #     load_config() so validation sees the sandbox values
                 #     rather than whatever is (or isn't) in .env.
-                sandbox_env_overrides = {}
-                if data.get("ai_backend"):
-                    sandbox_env_overrides["AI_BACKEND"] = data["ai_backend"]
-                if data.get("deepseek_api_key"):
-                    sandbox_env_overrides["DEEPSEEK_API_KEY"] = data["deepseek_api_key"]
-                if data.get("deepseek_model"):
-                    sandbox_env_overrides["DEEPSEEK_MODEL"] = data["deepseek_model"]
-                if data.get("deepseek_base_url"):
-                    sandbox_env_overrides["DEEPSEEK_BASE_URL"] = data["deepseek_base_url"]
-                if data.get("openai_api_key"):
-                    sandbox_env_overrides["OPENAI_API_KEY"] = data["openai_api_key"]
-                if data.get("openai_model"):
-                    sandbox_env_overrides["OPENAI_MODEL"] = data["openai_model"]
-                if data.get("openai_base_url"):
-                    sandbox_env_overrides["OPENAI_BASE_URL"] = data["openai_base_url"]
-                if data.get("anthropic_api_key"):
-                    sandbox_env_overrides["ANTHROPIC_API_KEY"] = data["anthropic_api_key"]
-                if data.get("anthropic_base_url"):
-                    sandbox_env_overrides["ANTHROPIC_BASE_URL"] = data["anthropic_base_url"]
-                if data.get("summarize_model"):
-                    sandbox_env_overrides["SUMMARIZE_MODEL"] = data["summarize_model"]
+                sandbox_env_overrides = _sandbox_env_overrides(data)
 
                 # Load .env first, then temporarily apply sandbox overrides
                 # to os.environ so load_config() picks them up.  Save and

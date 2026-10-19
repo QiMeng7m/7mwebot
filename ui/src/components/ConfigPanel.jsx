@@ -1721,7 +1721,7 @@ function SandboxSection({ form }) {
   return (
     <div className="space-y-6">
       <div>
-        <Field label="测试输入消息" hint="模拟用户在群里发送的消息内容">
+        <Field label="测试输入消息" hint="仅测试 AI 对话/总结；「活跃查询」「抽签」「待办」等群指令请在实际群聊中测试">
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}

@@ -1958,5 +1958,23 @@ class WebSocketHelperTests(unittest.TestCase):
         self.assertEqual(result, b"hello")
 
 
+class SandboxOverrideTests(unittest.TestCase):
+    """Sandbox must not send masked secrets back as real API keys."""
+
+    def test_masked_secrets_are_skipped(self):
+        from src.web.server import _sandbox_env_overrides
+        result = _sandbox_env_overrides({
+            "deepseek_api_key": "sk-e***2b7b",
+            "deepseek_model": "deepseek-v4-flash",
+        })
+        self.assertNotIn("DEEPSEEK_API_KEY", result)
+        self.assertEqual(result["DEEPSEEK_MODEL"], "deepseek-v4-flash")
+
+    def test_real_secrets_are_applied(self):
+        from src.web.server import _sandbox_env_overrides
+        result = _sandbox_env_overrides({"deepseek_api_key": "sk-real-key"})
+        self.assertEqual(result["DEEPSEEK_API_KEY"], "sk-real-key")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -637,6 +637,7 @@ todo_delete_keywords: list[str] = [
 | `_config_updates_from_payload(config)` | 把 /api/config 请求体映射为 .env 更新；**只更新请求体中出现的字段** | `config: dict` | `dict[str, str \| None]` |
 | `_feishu_updates_from_config(config)` | 飞书配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 | `_todo_updates_from_config(config)` | 待办配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
+| `_sandbox_env_overrides(data)` | 沙箱请求 → 临时环境变量覆盖（跳过含 `***` 的脱敏密钥） | `data: dict` | `dict` |
 
 ### 2.34 前端组件 (`ui/src/components/`)
 
@@ -1170,6 +1171,9 @@ MessageRouter.handle(msg) → [无 @mention]
 > （如 `WECHAT_GROUPS`、`VOICE_*`）保持不变。这避免了保存一个面板时
 > 把「只监控指定群」悄悄重置成「监控全部群」。`/api/config/import` 同样
 > 只更新导入文件里出现的字段，并跳过导出文件中的脱敏密钥。
+>
+> `/api/sandbox/test` 只测试 AI 对话/总结，**不执行群指令**（活跃查询、抽签、
+> 待办等）。请求里带 `***` 的脱敏密钥会被忽略，实际使用 `.env` 中的真实密钥。
 
 #### WebSocket 消息类型
 
