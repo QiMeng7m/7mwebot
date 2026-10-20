@@ -85,8 +85,11 @@ def _strip_invisible(text: str) -> str:
 
 
 def _clean_for_commands(content: str, bot_name: str = "") -> str:
-    """Strip the bot's own @mention but keep the reply-quote prefix."""
+    """Strip the bot's own @mention and WCDB's ``wxid_xxx:`` prefix."""
     text = str(content or "")
+    # WCDB returns group text as "wxid_xxx:\n消息内容"; without this the
+    # command would never match EXACT_COMMANDS.
+    text = re.sub(r"^\s*wxid_[a-zA-Z0-9]+:\s*", "", text)
     if bot_name:
         text = re.sub(
             re.escape(f"@{bot_name}") + r"[^\w]*", "", text,
@@ -633,7 +636,11 @@ class PointHandler:
         if not getattr(self._config, "duel_enabled", False):
             return "切磋功能未开启。"
 
-        target_id, target_name = self._reply_target(chat_id, text)
+        # Reply target comes from the RAW content: _clean_for_commands
+        # strips the "wxid_xxx:" prefix that identifies the quoted member.
+        target_id, target_name = self._reply_target(
+            chat_id, str(msg.get("content", "")),
+        )
         if not target_id:
             name = _strip_invisible(rest).lstrip("@").strip()
             name = re.sub(rf"{_WS}*切磋$", "", name).strip()

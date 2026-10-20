@@ -156,6 +156,22 @@ class QueryTests(HandlerTestBase):
 
 
 class CheckinTests(HandlerTestBase):
+    def test_checkin_strips_wcdb_wxid_prefix(self):
+        """WCDB prefixes group text with "wxid_xxx:\\n"."""
+        from src.points.handler import _clean_for_commands
+        self.assertEqual(
+            _clean_for_commands("wxid_vvi4cxesb04k22:\n签到"), "签到",
+        )
+
+    def test_checkin_with_wcdb_prefix_is_recognised(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        msg = self.msg("签到", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n签到"
+        self.assertEqual(
+            self.handler.handle(msg["content"], msg),
+            "@张三 签到成功，积分+10",
+        )
+
     def test_checkin_awards_and_confirms(self):
         self.add_member("wxid_a", "张三", earned=0)
         reply = self.run_cmd("签到", sender_id="wxid_a", name="张三")
