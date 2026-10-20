@@ -595,6 +595,28 @@ class ValidateConfigTests(unittest.TestCase):
             _validate_config({"sticky_mention_ttl_sec": 500})
         self.assertIn("STICKY_MENTION_TTL_SEC", str(ctx.exception))
 
+    def test_inactive_kick_minutes_below_minimum_raises(self):
+        """inactive_kick_minutes < 1 → RuntimeError."""
+        from src.config import _validate_config
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _validate_config({"inactive_kick_minutes": 0})
+        self.assertIn("INACTIVE_KICK_MINUTES", str(ctx.exception))
+
+    def test_inactive_kick_minutes_above_maximum_raises(self):
+        """inactive_kick_minutes > 1440 → RuntimeError."""
+        from src.config import _validate_config
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _validate_config({"inactive_kick_minutes": 1441})
+        self.assertIn("INACTIVE_KICK_MINUTES", str(ctx.exception))
+
+    def test_inactive_kick_minutes_valid_range_ok(self):
+        from src.config import _validate_config
+
+        _validate_config({"inactive_kick_minutes": 1})
+        _validate_config({"inactive_kick_minutes": 1440})
+
     def test_proactive_rate_window_sec_below_minimum_raises(self):
         """proactive_rate_window_sec < 30 → RuntimeError."""
         from src.config import _validate_config

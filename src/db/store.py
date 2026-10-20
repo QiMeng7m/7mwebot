@@ -135,6 +135,19 @@ class MessageStore:
             ).fetchone()
             return row["sender_name"] if row else None
 
+    def has_sender_message_since(self, chat_id: str, sender_id: str,
+                                 since_ts: int) -> bool:
+        """Return True if *sender_id* posted anything in *chat_id* since
+        *since_ts* (used to cancel an inactive-member kick)."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM messages
+                   WHERE chat_id = ? AND sender_id = ? AND timestamp >= ?
+                   LIMIT 1""",
+                (chat_id, sender_id, since_ts),
+            ).fetchone()
+            return row is not None
+
     def get_user_last_timestamp(self, chat_id: str,
                                 sender_id: str) -> Optional[int]:
         """Get the Unix timestamp of a user's most recent message in a chat."""

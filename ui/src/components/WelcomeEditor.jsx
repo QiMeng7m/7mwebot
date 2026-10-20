@@ -138,7 +138,7 @@ export default function WelcomeSection({ form, update }) {
 
   function addTemplate() {
     const id = 'tpl_' + Date.now()
-    setTemplates(prev => [...prev, { id, name: '新模板', message: '欢迎 @{new_member} 加入群聊！🎉' }])
+    setTemplates(prev => [...prev, { id, name: '新模板', message: '欢迎 @{new_member} 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~' }])
     setActiveTab(templates.length)
   }
 
@@ -251,7 +251,7 @@ export default function WelcomeSection({ form, update }) {
                   </div>
                   <textarea ref={textareaRef} value={currentTemplate.message || ''} onChange={e => updateTemplate(activeTab, 'message', e.target.value)}
                     rows={3} className="w-full bg-bg-main border border-border-main rounded-xl p-3 text-[13px] text-text-main leading-relaxed focus:outline-none focus:border-brand-green focus:ring-1 focus:ring-brand-green/15 transition-all resize-y font-mono"
-                    placeholder="欢迎 @{new_member} 加入群聊！🎉" />
+                    placeholder="欢迎 @{new_member} 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~" />
                 </div>
               </div>
             </div>

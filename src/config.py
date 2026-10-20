@@ -229,6 +229,12 @@ class BotConfig:
     # are stored in data/welcome_templates.json.
     welcome_enabled: bool = False
 
+    # === Inactive Member Kick ===
+    # Remove a newly joined member who never speaks within N minutes.
+    # Requires the logged-in account to have admin/owner rights.
+    inactive_kick_enabled: bool = False
+    inactive_kick_minutes: int = 10  # 1-1440
+
     # === Sticky Mention ===
     # When a user sends @bot with no message text, enter sticky listening
     # mode.  The user's next message in the same group is treated as if it
@@ -344,6 +350,14 @@ def _validate_config(kwargs: dict) -> None:
         errors.append(
             f"STICKY_MENTION_TTL_SEC must be between 10 and 300, "
             f"got {sticky_mention_ttl_sec}"
+        )
+
+    # inactive_kick_minutes
+    inactive_kick_minutes = kwargs.get("inactive_kick_minutes", 10)
+    if not (1 <= inactive_kick_minutes <= 1440):
+        errors.append(
+            f"INACTIVE_KICK_MINUTES must be between 1 and 1440, "
+            f"got {inactive_kick_minutes}"
         )
 
     # proactive_rate_window_sec
@@ -510,6 +524,8 @@ def load_config() -> BotConfig:
         "proactive_rate_lively": _safe_float(os.getenv("PROACTIVE_RATE_LIVELY", "6.5"), 6.5, "PROACTIVE_RATE_LIVELY"),
         "proactive_rate_burst": _safe_float(os.getenv("PROACTIVE_RATE_BURST", "8.5"), 8.5, "PROACTIVE_RATE_BURST"),
         "welcome_enabled": os.getenv("WELCOME_ENABLED", "false").strip().lower() == "true",
+        "inactive_kick_enabled": os.getenv("INACTIVE_KICK_ENABLED", "false").strip().lower() == "true",
+        "inactive_kick_minutes": _safe_int(os.getenv("INACTIVE_KICK_MINUTES", "10"), 10, "INACTIVE_KICK_MINUTES"),
         "sticky_mention_enabled": os.getenv("STICKY_MENTION_ENABLED", "true").strip().lower() == "true",
         "sticky_mention_ttl_sec": _safe_int(os.getenv("STICKY_MENTION_TTL_SEC", "60"), 60, "STICKY_MENTION_TTL_SEC"),
         # Group Todo

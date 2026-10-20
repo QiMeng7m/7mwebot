@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from .base import AbstractWeChatBackend, MessageCallback
+from .inactive_kick import InactiveKickTracker
 from .wcdb_client import WcdbNativeClient
 from .window_controller import WeChatWindowController
 from .helpers import DedupSet
@@ -117,22 +118,32 @@ def _is_recent_join(msg: dict, now: float | None = None) -> bool:
 
 
 def _extract_join_member(content: str, resolve_name=None) -> str:
-    """Return the new member's display name from a join system message.
+    """Return the new member's display name from a join system message."""
+    name, _wxid = _extract_join_member_info(content, resolve_name=resolve_name)
+    return name
+
+
+def _extract_join_member_info(
+    content: str, resolve_name=None,
+) -> tuple[str, str]:
+    """Return ``(display_name, wxid)`` for a join system message.
 
     Handles both plain-text messages ("张三"加入了群聊) and the XML
     ``sysmsgtemplate`` used by WeChat 4.x, where the template embeds a
     placeholder (``$names$``) and the real member sits in a ``<link>``
     block such as ``<link name="names"><memberlist><member>...``.  Links
     describing the inviter/revoker (``from``/``revoke``) are ignored.
+
+    The wxid is empty for plain-text messages (it is only present in XML).
     """
     if not content or "加入" not in content or "群聊" not in content:
-        return ""
+        return "", ""
 
     def _clean(value: str) -> str:
         value = str(value or "").strip()
         return "" if _PLACEHOLDER_RE.match(value) else value
 
-    def _member_from_link(block: str) -> str:
+    def _member_from_link(block: str) -> tuple[str, str]:
         # A link may hold several members; inspect the first <member> only
         # so the revoke block's <usernamelist> can't leak in.
         member_match = _MEMBER_BLOCK_RE.search(block)
@@ -145,19 +156,19 @@ def _extract_join_member(content: str, resolve_name=None) -> str:
             try:
                 resolved = resolve_name(username)
                 if resolved and resolved != username:
-                    return resolved
+                    return resolved, username
             except Exception:
                 pass
-        return nickname or username
+        return (nickname or username), username
 
     link = _ADDER_LINK_RE.search(content)
     if link:
-        member = _member_from_link(link.group(1))
+        member, wxid = _member_from_link(link.group(1))
         if member:
-            return member
+            return member, wxid
 
-    preferred: list[str] = []
-    others: list[str] = []
+    preferred: list[tuple[str, str]] = []
+    others: list[tuple[str, str]] = []
     for raw_attrs, block in _LINK_BLOCK_RE.findall(content):
         attrs = dict(_LINK_ATTR_RE.findall(raw_attrs))
         name = attrs.get("name", "")
@@ -166,13 +177,13 @@ def _extract_join_member(content: str, resolve_name=None) -> str:
         # Only member links carry <member> entries or a direct profile.
         if "<member" not in block and attrs.get("type") != "link_profile":
             continue
-        member = _member_from_link(block)
+        member, wxid = _member_from_link(block)
         if not member:
             continue
         if name in _MEMBER_LINK_NAMES:
-            preferred.append(member)
+            preferred.append((member, wxid))
         else:
-            others.append(member)
+            others.append((member, wxid))
 
     if preferred:
         return preferred[0]
@@ -183,13 +194,13 @@ def _extract_join_member(content: str, resolve_name=None) -> str:
     if match:
         member = _clean(match.group(1))
         if member:
-            return member
+            return member, ""
 
     match = _PLAIN_JOIN_RE.search(content)
     if match:
-        return _clean(match.group(1))
+        return _clean(match.group(1)), ""
 
-    return ""
+    return "", ""
 
 
 class WcdbBackend(AbstractWeChatBackend):
@@ -231,6 +242,26 @@ class WcdbBackend(AbstractWeChatBackend):
         # Voice recognition pipeline (lazy-init when voice_asr_enabled)
         self._voice: Optional[object] = None
         self._voice_config = config
+        # Inactive-member kick timer (welcome + removal)
+        self._kick_tracker: InactiveKickTracker | None = None
+        self._kick_thread: threading.Thread | None = None
+        self._kick_failures: dict[tuple[str, str], int] = {}
+        # Serialise window operations (sends vs. member removal) so two
+        # keyboard/mouse sequences never interleave.
+        self._window_lock = threading.Lock()
+
+    # ── Inactive kick config ───────────────────────────────────────
+
+    def _inactive_kick_enabled(self) -> bool:
+        return bool(
+            self._voice_config is not None
+            and getattr(self._voice_config, "inactive_kick_enabled", False)
+        )
+
+    def _inactive_kick_minutes(self) -> int:
+        if self._voice_config is None:
+            return 10
+        return int(getattr(self._voice_config, "inactive_kick_minutes", 10))
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -288,6 +319,19 @@ class WcdbBackend(AbstractWeChatBackend):
         )
         self._running = True
         consecutive_errors = 0
+
+        if self._inactive_kick_enabled():
+            self._kick_tracker = InactiveKickTracker(
+                timeout_sec=self._inactive_kick_minutes() * 60,
+            )
+            self._kick_thread = threading.Thread(
+                target=self._kick_loop, name="inactive-kick", daemon=True,
+            )
+            self._kick_thread.start()
+            logger.info(
+                "Inactive kick enabled: silent joiners are removed after %d min",
+                self._inactive_kick_minutes(),
+            )
 
         # Import once to avoid per-iteration overhead
         from src.web.server import is_shutting_down as _is_shutting_down
@@ -612,6 +656,23 @@ class WcdbBackend(AbstractWeChatBackend):
                     "New member joined: %s in '%s'",
                     standardized.get("new_member_id"), group_name,
                 )
+                if self._kick_tracker is not None:
+                    wxid = standardized.get("new_member_wxid", "")
+                    if wxid:
+                        self._kick_tracker.note_join(
+                            talker, group_name, wxid,
+                            standardized.get("new_member_id", ""),
+                            joined_at=standardized.get("timestamp"),
+                        )
+                    else:
+                        logger.warning(
+                            "Join event for %s has no wxid — cannot enforce "
+                            "inactive kick", standardized.get("new_member_id"),
+                        )
+            elif self._kick_tracker is not None:
+                self._kick_tracker.note_activity(
+                    talker, standardized.get("sender_id", ""),
+                )
 
             if self._bot_name and self._bot_name in standardized["sender_name"]:
                 continue
@@ -630,6 +691,84 @@ class WcdbBackend(AbstractWeChatBackend):
                 self._handle_message(
                     group_name, talker, standardized, callback,
                 )
+
+    # ── Inactive kick loop ────────────────────────────────────────
+
+    def _kick_loop(self) -> None:
+        """Check pending join deadlines and remove silent members."""
+        while self._running:
+            try:
+                self._process_due_kicks()
+            except Exception:
+                logger.exception("Inactive kick loop failed")
+            time.sleep(5.0)
+
+    def _process_due_kicks(self) -> None:
+        tracker = self._kick_tracker
+        if tracker is None:
+            return
+        for entry in tracker.due():
+            if not self._running:
+                return
+            chat_id = entry["chat_id"]
+            wxid = entry["wxid"]
+            group_name = entry["group_name"]
+            name = entry["display_name"]
+
+            # The tracker is updated by the poll loop, but a message may
+            # land just before the deadline and not be polled yet.  Ask
+            # the store directly before doing anything irreversible.
+            if self._member_spoke_since(chat_id, wxid, entry.get("joined_at", 0)):
+                tracker.remove(chat_id, wxid)
+                logger.info("Inactive kick skipped: %s spoke", name)
+                continue
+
+            key = (chat_id, wxid)
+            logger.warning(
+                "Inactive kick: removing %s (%s) from '%s' — silent for %d min",
+                name, wxid, group_name[:20], self._inactive_kick_minutes(),
+            )
+            with self._window_lock:
+                ok = self._window.remove_group_member(group_name, name)
+            if ok:
+                tracker.remove(chat_id, wxid)
+                self._kick_failures.pop(key, None)
+                logger.info(
+                    "Inactive kick succeeded: %s removed from '%s'",
+                    name, group_name[:20],
+                )
+                continue
+
+            failures = self._kick_failures.get(key, 0) + 1
+            self._kick_failures[key] = failures
+            logger.error(
+                "Inactive kick FAILED for %s (%s) in '%s' (attempt %d)",
+                name, wxid, group_name[:20], failures,
+            )
+            if failures >= 3:
+                tracker.remove(chat_id, wxid)
+                self._kick_failures.pop(key, None)
+                logger.error(
+                    "Giving up on inactive kick for %s (%s) after %d attempts",
+                    name, wxid, failures,
+                )
+
+    def _member_spoke_since(self, chat_id: str, wxid: str,
+                            since_ts: int) -> bool:
+        """Fail-safe check: did the member send anything since joining?"""
+        tracker = self._kick_tracker
+        if tracker is not None and tracker.has_spoken(chat_id, wxid):
+            return True
+        if self._store is None:
+            return False
+        try:
+            return bool(
+                self._store.has_sender_message_since(chat_id, wxid, since_ts)
+            )
+        except Exception:
+            # If we cannot verify, err on the side of not kicking anyone.
+            logger.exception("Failed to verify activity for %s — skipping kick", wxid)
+            return True
 
     def _handle_message(self, group_name: str, talker: str,
                         standardized: dict, callback: MessageCallback) -> None:
@@ -656,9 +795,10 @@ class WcdbBackend(AbstractWeChatBackend):
                 # _client (WCDB).  Don't hold _client_lock during send —
                 # it blocks the poll loop from reading new messages.
                 mention = _mention_name_for(reply, standardized)
-                success = self._send_and_confirm(
-                    group_name, talker, reply, mention_name=mention,
-                )
+                with self._window_lock:
+                    success = self._send_and_confirm(
+                        group_name, talker, reply, mention_name=mention,
+                    )
                 if success:
                     logger.info(
                         "Reply sent: group='%s' (%d chars)",
@@ -736,21 +876,24 @@ class WcdbBackend(AbstractWeChatBackend):
         # Only active when WELCOME_ENABLED=true; otherwise join messages
         # are silently filtered out like other system messages.
         new_member_id: str = ""
+        new_member_wxid: str = ""
         is_system_join: bool = False
         welcome_on = (
             self._voice_config is not None
             and getattr(self._voice_config, "welcome_enabled", False)
         )
-        join_member = _extract_join_member(
+        kick_on = self._inactive_kick_enabled()
+        join_member, join_wxid = _extract_join_member_info(
             content,
             resolve_name=getattr(self._client, "resolve_nickname", None),
         )
         if join_member:
-            if welcome_on:
+            if welcome_on or kick_on:
                 new_member_id = join_member
+                new_member_wxid = join_wxid
                 is_system_join = True
             else:
-                # Welcome disabled — silently drop join messages
+                # Neither welcome nor kick needs this event — drop it.
                 return None
         elif local_type == 10000 and (
             "加入群聊" in content or "加入了群聊" in content
@@ -836,6 +979,7 @@ class WcdbBackend(AbstractWeChatBackend):
             "is_group": True,
             "is_system_join": is_system_join,
             "new_member_id": new_member_id,
+            "new_member_wxid": new_member_wxid,
         }
 
     def _trim_dedup(self) -> None:

@@ -311,6 +311,8 @@ def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
     put("PROACTIVE_RATE_LIVELY", "proactive_rate_lively")
     put("PROACTIVE_RATE_BURST", "proactive_rate_burst")
     put("WELCOME_ENABLED", "welcome_enabled", transform=as_bool)
+    put("INACTIVE_KICK_ENABLED", "inactive_kick_enabled", transform=as_bool)
+    put("INACTIVE_KICK_MINUTES", "inactive_kick_minutes")
     put("STICKY_MENTION_ENABLED", "sticky_mention_enabled", transform=as_bool)
     put("STICKY_MENTION_TTL_SEC", "sticky_mention_ttl_sec")
     put("SUMMARIZE_ENABLED", "summarize_enabled", transform=as_bool)
@@ -1262,6 +1264,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 "proactive_rate_lively": _float_env(raw.get("PROACTIVE_RATE_LIVELY", "6.5"), 6.5),
                 "proactive_rate_burst": _float_env(raw.get("PROACTIVE_RATE_BURST", "8.5"), 8.5),
                 "welcome_enabled": raw.get("WELCOME_ENABLED", "false").lower() == "true",
+                "inactive_kick_enabled": raw.get("INACTIVE_KICK_ENABLED", "false").lower() == "true",
+                "inactive_kick_minutes": _int_env(raw.get("INACTIVE_KICK_MINUTES", "10"), 10),
                 "sticky_mention_enabled": raw.get("STICKY_MENTION_ENABLED", "true").lower() == "true",
                 "sticky_mention_ttl_sec": _int_env(raw.get("STICKY_MENTION_TTL_SEC", "60"), 60),
                 "summarize_enabled": raw.get("SUMMARIZE_ENABLED", "true").lower() == "true",
@@ -1322,6 +1326,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     "proactive_rate_lively": _float_env(raw.get("PROACTIVE_RATE_LIVELY", "6.5"), 6.5),
                     "proactive_rate_burst": _float_env(raw.get("PROACTIVE_RATE_BURST", "8.5"), 8.5),
                     "welcome_enabled": raw.get("WELCOME_ENABLED", "false").lower() == "true",
+                "inactive_kick_enabled": raw.get("INACTIVE_KICK_ENABLED", "false").lower() == "true",
+                "inactive_kick_minutes": _int_env(raw.get("INACTIVE_KICK_MINUTES", "10"), 10),
                     "sticky_mention_enabled": raw.get("STICKY_MENTION_ENABLED", "true").lower() == "true",
                     "sticky_mention_ttl_sec": _int_env(raw.get("STICKY_MENTION_TTL_SEC", "60"), 60),
                     "summarize_enabled": raw.get("SUMMARIZE_ENABLED", "true").lower() == "true",

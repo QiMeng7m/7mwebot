@@ -71,6 +71,7 @@ a = Analysis(
         'src.wechat.wcdb_client', 'src.wechat.mac_hybrid_backend',
         'src.wechat.mac_ui_backend', 'src.wechat.window_controller',
         'src.wechat.keyboard', 'src.wechat.helpers', 'src.wechat.extract_key',
+        'src.wechat.inactive_kick',
         'src.wechat.native', 'src.wechat.native.injector',
         'src.web', 'src.web.server',
         'src.router', 'src.welcome',

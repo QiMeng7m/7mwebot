@@ -112,6 +112,8 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `PROACTIVE_RATE_LIVELY` | `float` | `6.5` | `src/config.py` | `src/proactive/modes.py` |
 | `PROACTIVE_RATE_BURST` | `float` | `8.5` | `src/config.py` | `src/proactive/modes.py` |
 | `WELCOME_ENABLED` | `bool` | `False` | `src/config.py` | `src/router.py:handle()` |
+| `INACTIVE_KICK_ENABLED` | `bool` | `False` | `src/config.py` | `src/wechat/wcdb_backend.py:_inactive_kick_enabled()` |
+| `INACTIVE_KICK_MINUTES` | `int` | `10` | `src/config.py` | `src/wechat/wcdb_backend.py:_kick_loop()` |
 | `STICKY_MENTION_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:MessageRouter.__init__()` |
 | `STICKY_MENTION_TTL_SEC` | `int` | `60` | `src/config.py` | `src/proactive/sticky.py:StickyMentionTracker.__init__()` |
 | `TODO_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:MessageRouter.__init__()` |
@@ -349,8 +351,14 @@ todo_delete_keywords: list[str] = [
 | `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
+| `_extract_join_member_info(content, resolve_name=None)` | 同 `_extract_join_member`，额外返回新成员 wxid | 同上 | `tuple[str, str]` |
 | `_is_recent_join(msg, now=None)` | 判断入群事件是否足够新（≤ `MAX_JOIN_AGE_SEC`=120s），避免重启时回放历史消息重复欢迎 | `msg: dict, now: float \| None` | `bool` |
 | `_mention_name_for(reply, standardized)` | 决定回复中要真实 @ 的成员：入群事件→新成员，其他回复→文本中包含 `@发送者` 时用发送者 | `reply: str, standardized: dict` | `str \| None` |
+| `_inactive_kick_enabled()` | 读取 `INACTIVE_KICK_ENABLED` 配置 | 无 | `bool` |
+| `_inactive_kick_minutes()` | 读取 `INACTIVE_KICK_MINUTES`（默认 10） | 无 | `int` |
+| `_kick_loop()` | 后台线程：每 5 秒检查到期条目 | 无 | `None` |
+| `_process_due_kicks()` | 对到期且未发言的新成员执行移出（最多重试 3 次） | 无 | `None` |
+| `_member_spoke_since(chat_id, wxid, since_ts)` | 踢人前二次确认（tracker + messages 表），查不到时按“已发言”处理 | `chat_id, wxid: str, since_ts: int` | `bool` |
 | `_send_and_confirm(group_name, talker, content, mention_name=None)` | 通过键盘发送并确认，可指定真实 @ 成员 | `group_name, talker, content, mention_name: str \| None` | `bool` |
 | `_get_voice()` | 懒初始化语音识别管道 | 无 | `VoicePipeline \| None \| False` |
 | `_try_voice(msg)` | 尝试语音识别 | `msg: dict` | `str \| None` |
@@ -392,6 +400,13 @@ todo_delete_keywords: list[str] = [
 | `_mention_picker_open(hwnd)` | 判断 @ 选择器是否已打开 | `hwnd: int` | `bool` |
 | `_type_mention_filter(hwnd, text)` | 用 WM_CHAR 逐字过滤选择器（跳过非 BMP 表情字符） | `hwnd: int, text: str` | `None` |
 | `_clear_input(hwnd)` | 清空输入框（选择器打开时才按 Esc，避免 Esc 把微信隐藏到托盘） | `hwnd: int` | `None` |
+| `remove_group_member(group_name, display_name)` | 通过「聊天信息 → 移出」选择器移出群成员 | `group_name: str, display_name: str` | `bool` |
+| `_find_removal_window(pid)` | 查找 `微信移出群成员` 选择器窗口（UIA） | `pid: int \| None` | `Control \| None` |
+| `_find_member_row(window, display_name)` | 在虚拟化列表中滚动查找**精确同名**成员 | `window: Control, display_name: str` | `Control \| None` |
+| `_complete_member_removal(window, display_name)` | 选中成员→校验已选数量→点击移出→处理确认框 | 见签名 | `bool` |
+| `_confirm_member_removal(window, display_name, pid, before_hwnds)` | 查找并点击确认按钮；选择器关闭视为成功 | 见签名 | `bool` |
+| `_cancel_removal(window)` | 点击选择器的「取消」 | `window: Control` | `None` |
+| `_click_relative(hwnd, dx, dy)` | 相对窗口右上角点击（仅用于打开聊天信息/移出入口） | `hwnd: int, dx: int, dy: int` | `None` |
 | `send_to_chat(group_name, text, max_retries=2, mention_name=None)` | 完整发送管道(主入口；`mention_name` 存在时走真实 @) | `group_name: str, text: str, max_retries: int, mention_name: str \| None` | `bool` |
 | `_score_window(hwnd)` | 给窗口打分(模块级) | `hwnd: int` | `WindowCandidate` |
 | `_get_process_name(pid)` | 获取进程名(模块级) | `pid: int` | `str` |
@@ -481,6 +496,7 @@ todo_delete_keywords: list[str] = [
 | `log_trigger(chat_id, requester_id, trigger_msg_id)` | 记录触发事件 | `chat_id, requester_id, trigger_msg_id: str` | `None` |
 | `cleanup_old_triggers()` | 清理7天前的触发记录 | 无 | `int` |
 | `get_sender_display_name(sender_id)` | 查找已知显示名 | `sender_id: str` | `str \| None` |
+| `has_sender_message_since(chat_id, sender_id, since_ts)` | 某成员在指定时间后是否发过消息（用于取消踢人） | `chat_id, sender_id: str, since_ts: int` | `bool` |
 | `get_user_last_timestamp(chat_id, sender_id)` | 获取用户最后发言时间 | `chat_id, sender_id: str` | `int \| None` |
 | `get_user_previous_timestamp(chat_id, sender_id, before_ts)` | 获取用户在某时间前的最后发言 | `chat_id, sender_id: str, before_ts: int` | `int \| None` |
 | `get_messages_since(chat_id, since_ts, until_ts, limit)` | 获取时间窗口内消息 | `chat_id, since_ts, until_ts, limit` | `list[dict]` |
@@ -547,8 +563,9 @@ todo_delete_keywords: list[str] = [
 > `_extract_join_member()` 提取新成员：优先 `<link name="adder">`，其次
 > `<link name="names"><memberlist><member>`（如 `你邀请"$names$"加入了群聊`），
 > 跳过 `from`（邀请人）和 `revoke`（撤销）链接；模板中的 `$names$` 等
-> 占位符不会被当作成员名。同时兼容纯文本 `"张三"加入了群聊`。仅当
-> `WELCOME_ENABLED=true` 时保留事件，否则静默丢弃。
+> 占位符不会被当作成员名。同时兼容纯文本 `"张三"加入了群聊`。当
+> `WELCOME_ENABLED=true` 或 `INACTIVE_KICK_ENABLED=true` 时保留入群事件，
+> 否则静默丢弃。
 >
 > `_standardize()` 每秒会对同一批消息重复执行，因此入群日志只在
 > `_poll_group()` 去重后记录一次（`New member joined: ...`），避免刷屏。
@@ -559,6 +576,20 @@ todo_delete_keywords: list[str] = [
 > 欢迎语中的 `@新成员` 会由 `window_controller.send_message_with_mention()`
 > 通过微信成员选择器插入为**真实 @**（会触发对方提醒），而不是粘贴普通
 > 文本。查找失败时自动回退为纯文本，消息不会丢失。
+>
+> **10 分钟未发言移出**（`INACTIVE_KICK_ENABLED=true`）：
+> 1. `_poll_group()` 对新入群事件调用 `InactiveKickTracker.note_join()`，
+>    以事件时间戳 + `INACTIVE_KICK_MINUTES` 为 deadline，持久化到
+>    `data/pending_kicks.json`
+> 2. 该成员在群内发送任意消息 → `note_activity()` 取消倒计时
+> 3. `_kick_loop()` 每 5 秒取 `due()`；踢人前再用
+>    `MessageStore.has_sender_message_since()` 二次确认（防止消息尚未
+>    被轮询到）。查询失败按“已发言”处理，绝不误踢
+> 4. `window_controller.remove_group_member()`：导航到群 → 点「聊天信息」
+>    → 点「移出」打开 `mmui::SessionPickerWindow` → 在虚拟化列表中滚动
+>    查找**精确同名**的 `CheckBoxControl` → 校验“已选择1个联系人” →
+>    点「移出」。必须精确匹配，找不到/重名则放弃并取消
+> 5. 移出失败最多重试 3 次，之后放弃并记录错误日志
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -693,6 +724,21 @@ todo_delete_keywords: list[str] = [
 模块常量：`DEFAULT_DAYS=15`、`MAX_DAYS=90`、`DISPLAY_TOP_N=5`、
 `MAX_DORMANT_NAMES=3`、`DAILY_NAME_WIDTH=10`、`NAME_MAX_WIDTH=14`、
 `MAX_REPORT_CHARS=4000`。
+
+### 2.36 `src/wechat/inactive_kick.py` (InactiveKickTracker)
+
+| 函数 | 描述 | 参数 | 返回值 |
+|---|---|---|---|
+| `InactiveKickTracker.__init__(timeout_sec=600, path=DEFAULT_STATE_PATH, clock=time.time)` | 初始化踢人计时器并加载磁盘状态 | 见签名 | `None` |
+| `note_join(chat_id, group_name, wxid, display_name, joined_at=None)` | 为新成员启动倒计时 | 见签名 | `bool` |
+| `note_activity(chat_id, wxid)` | 成员发言 → 取消倒计时 | `chat_id, wxid: str` | `None` |
+| `due(now=None)` | 返回已到期且仍未发言的条目 | `now: float \| None` | `list[dict]` |
+| `remove(chat_id, wxid)` | 移除条目（踢出成功 / 放弃） | `chat_id, wxid: str` | `dict \| None` |
+| `has_spoken(chat_id, wxid)` | 该成员是否已发言 | `chat_id, wxid: str` | `bool` |
+| `pending()` | 当前所有待处理条目 | 无 | `list[dict]` |
+
+状态持久化到 `data/pending_kicks.json`（原子写入）。启动时丢弃 deadline
+已过期的条目，避免机器人离线很久后补踢。
 
 ---
 
@@ -937,6 +983,7 @@ AbstractSummarizer (base.py)
 | `extract_key.py` | `src/wechat/extract_key.py` | 密钥提取 (wx_key.dll Hook) |
 | `base.py` | `src/wechat/base.py` | 抽象基类 (接口定义) |
 | `helpers.py` | `src/wechat/helpers.py` | 去重集合 (DedupSet) |
+| `inactive_kick.py` | `src/wechat/inactive_kick.py` | 新成员 10 分钟未发言踢出计时器 |
 
 #### 调用链和关键函数
 
@@ -1730,6 +1777,8 @@ PROACTIVE_RATE_BURST=8.5
 
 # === 欢迎新成员 ===
 WELCOME_ENABLED=false
+INACTIVE_KICK_ENABLED=false
+INACTIVE_KICK_MINUTES=10
 
 # === 粘性 @mention ===
 STICKY_MENTION_ENABLED=true
@@ -1846,6 +1895,7 @@ WCDB_KEY=
 | `data/group_names.json` | `src/wechat/wcdb_backend.py` | chat_id → {name, member_count} |
 | `data/group_members.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: display_name} |
 | `data/welcome_templates.json` | `src/welcome.py` | 欢迎模板 + 群映射 |
+| `data/pending_kicks.json` | `src/wechat/inactive_kick.py` | 待执行的未发言成员踢出计时器 |
 | `data/lots.json` | `src/fun.py` | 自定义抽签配置 |
 | `data/feishu_resources.json` | `src/integrations/feishu/knowledge.py` | 飞书知识库资源 ID |
 | `data/voice_cache.json` | `src/voice/pipeline.py` | 语音识别缓存 |

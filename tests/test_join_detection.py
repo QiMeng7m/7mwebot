@@ -10,6 +10,7 @@ from src.wechat.wcdb_backend import (
     WcdbBackend,
     _decode_wcdb_content,
     _extract_join_member,
+    _extract_join_member_info,
     _is_recent_join,
     _mention_name_for,
 )
@@ -87,6 +88,11 @@ class ExtractJoinMemberTests(unittest.TestCase):
 
     def test_extracts_member_from_names_link(self):
         self.assertEqual(_extract_join_member(SAMPLE_NAMES_XML), "小柒")
+
+    def test_join_info_includes_wxid(self):
+        name, wxid = _extract_join_member_info(SAMPLE_NAMES_XML)
+        self.assertEqual(name, "小柒")
+        self.assertEqual(wxid, "wxid_vvi4cxesb04k22")
 
     def test_names_link_ignores_revoke_link(self):
         # Only a revoke link (no member link): don't return its username.
@@ -198,6 +204,7 @@ class StandardizeJoinTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result["is_system_join"])
         self.assertEqual(result["new_member_id"], "小柒")
+        self.assertEqual(result["new_member_wxid"], "wxid_vvi4cxesb04k22")
 
     def test_join_dropped_when_welcome_disabled(self):
         result = _backend(welcome_enabled=False)._standardize(
@@ -262,7 +269,7 @@ class WelcomeResolveTests(unittest.TestCase):
             wm = WelcomeManager(path=Path(tmp) / "welcome.json")
             self.assertEqual(
                 wm.resolve_message("123@chatroom", "小柒"),
-                "欢迎 @小柒 加入群聊！🎉",
+                "欢迎 @小柒 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~",
             )
 
     def test_bare_placeholder_still_mentions(self):

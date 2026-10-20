@@ -28,12 +28,12 @@ DEFAULT_TEMPLATES: list[dict] = [
     {
         "id": "tpl_default",
         "name": "默认",
-        "message": "欢迎 @{new_member} 加入群聊！🎉",
+        "message": "欢迎 @{new_member} 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~",
     },
     {
         "id": "tpl_warm",
         "name": "热情版",
-        "message": "欢迎 @{new_member} 加入！大家出来接客了！🔥",
+        "message": "欢迎 @{new_member} 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~",
     },
     {
         "id": "tpl_serious",

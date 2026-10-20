@@ -1009,6 +1009,415 @@ class WeChatWindowController:
                 pass
             return False
 
+    # ── Group member removal ──────────────────────────────────────
+
+    # The info-panel "移出" button is only reachable by coordinates (the
+    # main window's UIA tree is often a 2-node skeleton in Weixin 4.x).
+    # These offsets are from the window's top/right edge for the standard
+    # 726x636 layout; the resulting SessionPickerWindow is UIA-driven.
+    CHAT_INFO_DX: int = 42       # "聊天信息" button center from right edge
+    CHAT_INFO_DY: int = 55       # from top edge
+    INFO_REMOVE_DX: int = 50     # "移出" (member grid) from right edge
+    INFO_REMOVE_DY: int = 359    # from top edge
+    REMOVAL_WINDOW_NAME: str = "微信移出群成员"
+
+    def _click_relative(self, hwnd: int, dx: int, dy: int) -> None:
+        """Click at (right - dx, top + dy) in *hwnd*, restoring the cursor."""
+        try:
+            left, top, right, _bottom = win32gui.GetWindowRect(hwnd)
+        except Exception:
+            return
+        x, y = right - dx, top + dy
+        try:
+            pos = win32gui.GetCursorPos()
+        except Exception:
+            pos = None
+        ctypes.windll.user32.SetCursorPos(x, y)
+        time.sleep(0.15)
+        ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+        time.sleep(0.05)
+        ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+        time.sleep(0.3)
+        if pos:
+            try:
+                ctypes.windll.user32.SetCursorPos(*pos)
+            except Exception:
+                pass
+
+    def _wechat_pid(self, hwnd: int) -> Optional[int]:
+        try:
+            return win32process.GetWindowThreadProcessId(hwnd)[1]
+        except Exception:
+            return None
+
+    def _visible_wechat_hwnds(self, pid: int) -> set[int]:
+        handles: set[int] = set()
+
+        def collect(h, _ctx):
+            try:
+                _, p = win32process.GetWindowThreadProcessId(h)
+                if p == pid and win32gui.IsWindowVisible(h):
+                    handles.add(h)
+            except Exception:
+                pass
+
+        try:
+            win32gui.EnumWindows(collect, None)
+        except Exception:
+            pass
+        return handles
+
+    def _find_removal_window(self, pid: int | None):
+        """Return the UIA control for the "移出群成员" picker, or None."""
+        if pid is None:
+            return None
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return None
+        handles: list[int] = []
+
+        def collect(h, _ctx):
+            try:
+                _, p = win32process.GetWindowThreadProcessId(h)
+                if p == pid and win32gui.IsWindowVisible(h):
+                    handles.append(h)
+            except Exception:
+                pass
+
+        try:
+            win32gui.EnumWindows(collect, None)
+        except Exception:
+            return None
+        for h in handles:
+            try:
+                ctrl = uia.ControlFromHandle(h)
+                if ctrl and (ctrl.Name or "") == self.REMOVAL_WINDOW_NAME:
+                    return ctrl
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _click_control(ctrl) -> bool:
+        try:
+            ctrl.Click()
+            return True
+        except Exception:
+            logger.debug("UIA click failed", exc_info=True)
+            return False
+
+    def _cancel_removal(self, window) -> None:
+        """Click 取消 in the removal picker (never presses Esc)."""
+        try:
+            import uiautomation as uia
+            for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+                try:
+                    if (
+                        ctrl.ControlTypeName == "ButtonControl"
+                        and (ctrl.Name or "") == "取消"
+                    ):
+                        rect = ctrl.BoundingRectangle
+                        if rect.right - rect.left > 80:
+                            self._click_control(ctrl)
+                            return
+                except Exception:
+                    continue
+        except Exception:
+            logger.debug("Failed to cancel removal window", exc_info=True)
+
+    def remove_group_member(self, group_name: str,
+                            display_name: str) -> bool:
+        """Remove *display_name* from the group via WeChat's member picker.
+
+        Only the two entry clicks (聊天信息 → 移出) use coordinates; every
+        irreversible action (selecting the member, confirming) is driven
+        and verified through UIA.  Returns True only when the selected
+        member matched exactly and the removal was submitted.
+        """
+        if not group_name or not display_name:
+            logger.error("remove_group_member: empty group/member")
+            return False
+
+        hwnd = self.find_hwnd(force=True)
+        if not hwnd:
+            logger.error("remove_group_member: no WeChat window")
+            return False
+        if not self.activate(hwnd):
+            logger.error("remove_group_member: activation failed")
+            return False
+
+        nav = self.navigate_to_chat(hwnd, group_name)
+        if not nav:
+            logger.error("remove_group_member: navigation failed for '%s'", group_name)
+            return False
+        if isinstance(nav, int):
+            hwnd = nav
+        time.sleep(0.5)
+
+        window = self._find_removal_window(self._wechat_pid(hwnd))
+        if window is None:
+            # Open the chat-info panel, then its "移出" button.
+            self._click_relative(hwnd, self.CHAT_INFO_DX, self.CHAT_INFO_DY)
+            time.sleep(0.9)
+            self._click_relative(hwnd, self.INFO_REMOVE_DX, self.INFO_REMOVE_DY)
+            time.sleep(1.0)
+            window = self._find_removal_window(self._wechat_pid(hwnd))
+
+        if window is None:
+            logger.error(
+                "remove_group_member: could not open the member picker "
+                "for '%s'", group_name,
+            )
+            return False
+
+        logger.info(
+            "Removing group member '%s' from '%s' via member picker",
+            display_name, group_name[:20],
+        )
+        try:
+            return self._complete_member_removal(window, display_name)
+        except Exception:
+            logger.exception("remove_group_member failed")
+            try:
+                self._cancel_removal(window)
+            except Exception:
+                pass
+            return False
+
+    def _member_rows(self, window) -> list:
+        """Return visible CheckBox rows (name-carrying) in the picker."""
+        import uiautomation as uia
+        rows = []
+        for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+            try:
+                if (
+                    ctrl.ControlTypeName == "CheckBoxControl"
+                    and (ctrl.Name or "")
+                ):
+                    rows.append(ctrl)
+            except Exception:
+                continue
+        return rows
+
+    def _find_member_row(self, window, display_name: str):
+        """Find the exact member row, scrolling the virtualised list.
+
+        The picker's filtered rows lose their UIA name, so we deliberately
+        scroll the unfiltered list and match the exact display name.
+        """
+        import uiautomation as uia
+
+        for row in self._member_rows(window):
+            if (row.Name or "") == display_name:
+                return row
+
+        list_ctrl = None
+        for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+            try:
+                if "StickyHeaderRecyclerListView" in (ctrl.ClassName or ""):
+                    list_ctrl = ctrl
+                    break
+            except Exception:
+                continue
+        if list_ctrl is None:
+            return None
+
+        try:
+            rect = list_ctrl.BoundingRectangle
+            cx, cy = rect.xcenter(), rect.ycenter()
+        except Exception:
+            return None
+        try:
+            pos = win32gui.GetCursorPos()
+        except Exception:
+            pos = None
+        try:
+            win32gui.SetForegroundWindow(int(window.NativeWindowHandle))
+        except Exception:
+            pass
+
+        seen = {(row.Name or "") for row in self._member_rows(window)}
+        stable = 0
+        try:
+            for _ in range(60):
+                ctypes.windll.user32.SetCursorPos(cx, cy)
+                for _ in range(3):
+                    ctypes.windll.user32.mouse_event(0x0800, 0, 0, -120, 0)
+                    time.sleep(0.08)
+                time.sleep(0.25)
+                rows = self._member_rows(window)
+                for row in rows:
+                    if (row.Name or "") == display_name:
+                        return row
+                names = {(row.Name or "") for row in rows}
+                if names and names <= seen:
+                    stable += 1
+                    if stable >= 3:
+                        break
+                else:
+                    stable = 0
+                seen |= names
+        finally:
+            if pos:
+                try:
+                    ctypes.windll.user32.SetCursorPos(*pos)
+                except Exception:
+                    pass
+        return None
+
+    def _complete_member_removal(self, window, display_name: str) -> bool:
+        import uiautomation as uia
+
+        # 1. Find the exact member row (scrolls the virtualised list).
+        row = self._find_member_row(window, display_name)
+        if row is None:
+            logger.error(
+                "Member picker has no exact row for '%s' — aborting",
+                display_name,
+            )
+            self._cancel_removal(window)
+            return False
+
+        self._click_control(row)
+        time.sleep(0.4)
+
+        selected_text = ""
+        for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+            try:
+                name = ctrl.Name or ""
+                if (
+                    ctrl.ControlTypeName == "TextControl"
+                    and name.startswith("已选择")
+                ):
+                    selected_text = name
+                    break
+            except Exception:
+                continue
+        if selected_text and "1" not in selected_text:
+            logger.error(
+                "Member selection not confirmed (%s) — aborting", selected_text
+            )
+            self._cancel_removal(window)
+            return False
+
+        # 3. Submit.  The button is the wide "移出" in the picker footer.
+        remove_btn = None
+        for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+            try:
+                if (
+                    ctrl.ControlTypeName == "ButtonControl"
+                    and (ctrl.Name or "") == "移出"
+                ):
+                    rect = ctrl.BoundingRectangle
+                    if rect.right - rect.left > 80:
+                        remove_btn = ctrl
+                        break
+            except Exception:
+                continue
+        if remove_btn is None:
+            logger.error("Member picker has no 移出 button")
+            self._cancel_removal(window)
+            return False
+
+        try:
+            pid = int(window.ProcessId)
+        except Exception:
+            pid = None
+        before = self._visible_wechat_hwnds(pid) if pid else set()
+
+        self._click_control(remove_btn)
+        logger.info("Submitted removal of '%s'; checking confirmation", display_name)
+        time.sleep(1.0)
+        return self._confirm_member_removal(
+            window, display_name, pid, before,
+        )
+
+    def _confirm_member_removal(self, window, display_name: str,
+                                pid: int | None,
+                                before_hwnds: set[int]) -> bool:
+        """Confirm the removal dialog if one appeared.
+
+        WeChat may ask for confirmation in a new top-level window (or an
+        embedded dialog); if the picker closed instead, the removal was
+        already submitted.
+        """
+        import uiautomation as uia
+
+        confirm = None
+        # 1. Embedded confirmation button inside the picker.
+        for ctrl, _ in uia.WalkControl(window, maxDepth=10):
+            try:
+                if (
+                    ctrl.ControlTypeName == "ButtonControl"
+                    and (ctrl.Name or "") == "确定"
+                ):
+                    confirm = ctrl
+                    break
+            except Exception:
+                continue
+
+        # 2. A new top-level dialog (modal confirmation).
+        if confirm is None and pid:
+            for _attempt in range(3):
+                new_hwnds = self._visible_wechat_hwnds(pid) - before_hwnds
+                for h in new_hwnds:
+                    try:
+                        dlg = uia.ControlFromHandle(h)
+                        if not dlg:
+                            continue
+                        if (dlg.Name or "") == self.REMOVAL_WINDOW_NAME:
+                            continue
+                        for ctrl, _ in uia.WalkControl(dlg, maxDepth=10):
+                            try:
+                                if (
+                                    ctrl.ControlTypeName == "ButtonControl"
+                                    and (ctrl.Name or "") in ("确定", "移出")
+                                ):
+                                    rect = ctrl.BoundingRectangle
+                                    if rect.right - rect.left >= 40:
+                                        confirm = ctrl
+                                        break
+                            except Exception:
+                                continue
+                    except Exception:
+                        continue
+                    if confirm is not None:
+                        break
+                if confirm is not None:
+                    break
+                time.sleep(0.5)
+
+        if confirm is not None:
+            self._click_control(confirm)
+            time.sleep(1.0)
+            try:
+                if not window.Exists(0.3):
+                    logger.info("Member '%s' removed", display_name)
+                    return True
+            except Exception:
+                return True
+            logger.warning(
+                "Picker still open after confirming removal of '%s'",
+                display_name,
+            )
+            return False
+
+        # 3. No dialog: success only if the picker closed by itself.
+        try:
+            if not window.Exists(0.3):
+                logger.info("Member picker closed — '%s' removed", display_name)
+                return True
+        except Exception:
+            return True
+
+        logger.error(
+            "No confirmation dialog after removing '%s' — picker still open; "
+            "cancelling", display_name,
+        )
+        self._cancel_removal(window)
+        return False
+
     # ── Full send pipeline ────────────────────────────────────────
 
     def send_to_chat(self, group_name: str, text: str,
