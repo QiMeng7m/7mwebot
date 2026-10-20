@@ -68,6 +68,92 @@ CREATE TABLE IF NOT EXISTS group_memory (
 
 CREATE INDEX IF NOT EXISTS idx_trigger_chat_time
     ON trigger_log(chat_id, processed_at DESC);
+
+-- ── Activity points (“活跃积分”) ───────────────────────────────────
+-- Append-only ledger.  One row per scoring component, plus transfers
+-- (duels), spending (shop / shield) and manual admin adjustments.
+-- UNIQUE(message_id, reason) makes replaying a message idempotent.
+CREATE TABLE IF NOT EXISTS point_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    message_id  TEXT    NOT NULL,
+    reason      TEXT    NOT NULL,
+    category    TEXT    NOT NULL DEFAULT 'earn',
+    points      INTEGER NOT NULL,
+    day         TEXT    NOT NULL,
+    season      TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(message_id, reason)
+);
+
+CREATE INDEX IF NOT EXISTS idx_points_chat_season
+    ON point_events(chat_id, season, sender_id);
+CREATE INDEX IF NOT EXISTS idx_points_chat_day
+    ON point_events(chat_id, day, sender_id);
+CREATE INDEX IF NOT EXISTS idx_points_chat_sender
+    ON point_events(chat_id, sender_id, created_at DESC);
+
+-- Closed seasons (written lazily when a new month starts).
+CREATE TABLE IF NOT EXISTS point_seasons (
+    chat_id       TEXT    NOT NULL,
+    season        TEXT    NOT NULL,
+    winner_id     TEXT    NOT NULL DEFAULT '',
+    winner_name   TEXT    NOT NULL DEFAULT '',
+    winner_points INTEGER NOT NULL DEFAULT 0,
+    closed_at     INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, season)
+);
+
+-- ── Equipment ─────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS equipment_owned (
+    chat_id      TEXT    NOT NULL,
+    sender_id    TEXT    NOT NULL,
+    item_id      TEXT    NOT NULL,
+    purchased_at INTEGER NOT NULL,
+    equipped     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, sender_id, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_equipment_member
+    ON equipment_owned(chat_id, sender_id);
+
+-- Timed “免战” shields (duel immunity).
+CREATE TABLE IF NOT EXISTS duel_shields (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+-- Duel audit log.
+CREATE TABLE IF NOT EXISTS duels (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id        TEXT    NOT NULL,
+    message_id     TEXT    NOT NULL DEFAULT '',
+    attacker_id    TEXT    NOT NULL,
+    attacker_name  TEXT    NOT NULL DEFAULT '',
+    defender_id    TEXT    NOT NULL,
+    defender_name  TEXT    NOT NULL DEFAULT '',
+    attacker_power INTEGER NOT NULL,
+    defender_power INTEGER NOT NULL,
+    win_prob       REAL    NOT NULL,
+    attacker_win   INTEGER NOT NULL,
+    points_moved   INTEGER NOT NULL DEFAULT 0,
+    shield_blocked INTEGER NOT NULL DEFAULT 0,
+    created_at     INTEGER NOT NULL,
+    day            TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_duels_attacker_day
+    ON duels(chat_id, day, attacker_id);
+CREATE INDEX IF NOT EXISTS idx_duels_defender_day
+    ON duels(chat_id, day, defender_id);
+CREATE INDEX IF NOT EXISTS idx_duels_pair
+    ON duels(chat_id, attacker_id, defender_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_duels_message
+    ON duels(chat_id, message_id);
 """
 
 

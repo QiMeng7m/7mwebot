@@ -91,6 +91,47 @@ class MessageRouter:
             self._todo_handler = TodoHandler(
                 self._todo_store, config,
             )
+
+        # Points / equipment / duels: share the message store's connection
+        # so everything runs on one serialized SQLite connection.
+        self._points_store = None
+        self._points_engine = None
+        self._points_handler = None
+        if getattr(config, "points_enabled", False) and \
+                getattr(store, "conn", None) is not None:
+            try:
+                from .points.store import PointStore
+                from .points.engine import PointEngine
+                from .points.levels import LevelTable
+                from .points.equipment import EquipmentCatalog
+                from .points.duel import DuelService
+                from .points.handler import PointHandler
+
+                self._points_store = PointStore(
+                    store.conn, lock=getattr(store, "lock", None),
+                )
+                levels = LevelTable(
+                    getattr(config, "points_levels_path",
+                            "data/point_levels.json")
+                )
+                catalog = EquipmentCatalog(
+                    getattr(config, "equipment_path", "data/equipment.json")
+                )
+                self._points_engine = PointEngine(self._points_store, config)
+                duels = DuelService(
+                    self._points_store, config, levels, catalog,
+                )
+                self._points_handler = PointHandler(
+                    self._points_store, config, levels, catalog, duels,
+                    engine=self._points_engine,
+                    nickname_service=nickname_service,
+                )
+            except Exception:
+                logger.exception("Points system initialization failed")
+                self._points_store = None
+                self._points_engine = None
+                self._points_handler = None
+
         # Health monitoring: count unique messages processed (post-dedup)
         self.messages_processed: int = 0
 
@@ -144,6 +185,18 @@ class MessageRouter:
                     )
             return None  # Duplicate or DB error — nothing more to do
         self.messages_processed += 1
+
+        # ── Award activity points ─────────────────────────────────
+        # Runs for every fresh message; idempotent via the ledger's
+        # UNIQUE(message_id, reason) and guarded by a staleness check.
+        if self._points_engine is not None:
+            try:
+                self._points_engine.award_for_message(msg)
+            except Exception:
+                logger.exception(
+                    "Point award failed (msg_id=%s, chat=%s)",
+                    msg.get("message_id", "?"), msg.get("chat_id", "?"),
+                )
 
         # Check memory consolidation trigger (fast no-op unless threshold hit)
         self._memory.check_and_consolidate(msg["chat_id"])
@@ -212,6 +265,34 @@ class MessageRouter:
                         f"@{msg['sender_name']} "
                         "活跃报告生成失败，请稍后再试。"
                     )
+
+        # ── Points / equipment / duel commands (bare text) ────────
+        # Weak command: the handler returns None when the text is not
+        # actually a command (e.g. "查询一下天气") so normal routing
+        # continues untouched.
+        if self._points_handler is not None and msg.get("msg_type") != 10000:
+            from .points.handler import looks_like_command
+            if looks_like_command(
+                clean_command_text(msg.get("content", ""), bot_name)
+            ):
+                msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
+                if msg_age_sec > AT_MENTION_MAX_AGE_SEC:
+                    logger.info(
+                        "Ignoring stale points command from '%s' "
+                        "(age=%ds, max=%ds)",
+                        msg["sender_name"], msg_age_sec,
+                        AT_MENTION_MAX_AGE_SEC,
+                    )
+                    return None
+                try:
+                    reply = self._points_handler.handle(
+                        msg.get("content", ""), msg,
+                    )
+                except Exception:
+                    logger.exception("Points command failed")
+                    reply = None
+                if reply is not None:
+                    return reply
 
         if is_at:
             # ── @mention path (existing logic) ───────────────────

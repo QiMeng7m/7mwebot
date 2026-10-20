@@ -22,6 +22,11 @@ class MessageStore:
         self._lock = threading.Lock()
         self._trigger_count = 0
 
+    @property
+    def lock(self) -> threading.Lock:
+        """Shared lock for other stores using the same connection."""
+        return self._lock
+
     # ── Write operations ──────────────────────────────────────────
 
     def insert_message(self, msg: dict) -> bool:

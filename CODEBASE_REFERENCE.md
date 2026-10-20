@@ -698,6 +698,9 @@ todo_delete_keywords: list[str] = [
 | `_feishu_updates_from_config(config)` | 飞书配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 | `_todo_updates_from_config(config)` | 待办配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 | `_sandbox_env_overrides(data)` | 沙箱请求 → 临时环境变量覆盖（跳过含 `***` 的脱敏密钥） | `data: dict` | `dict` |
+| `_points_db_path()` | 读取 .env 中的 DB_PATH 供积分 API 使用 | 无 | `str` |
+| `_points_config()` | 加载 BotConfig（失败时回退默认值） | 无 | `BotConfig` |
+| `_points_stack(conn, config)` | 构建单次请求的积分/装备/切磋对象 | `conn, config` | `(PointStore, LevelTable, EquipmentCatalog, DuelService)` |
 
 ### 2.34 前端组件 (`ui/src/components/`)
 
@@ -709,6 +712,7 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `LiveIndicator` | 实时状态指示灯(脉冲动画) |
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
+| `PointsPanel.jsx` | `PointsPanel` | 群活跃积分面板(榜单/装备商店/切磋记录/概览/成员详情/管理员调整) |
 
 ### 2.35 `src/activity.py`
 
@@ -739,6 +743,48 @@ todo_delete_keywords: list[str] = [
 
 状态持久化到 `data/pending_kicks.json`（原子写入）。启动时丢弃 deadline
 已过期的条目，避免机器人离线很久后补踢。
+
+### 2.37 `src/points/` (活跃积分 / 装备 / 切磋)
+
+| 文件 | 符号 | 描述 | 参数 | 返回值 |
+|---|---|---|---|---|
+| `util.py` | `local_day(ts=None)` | 本地日期 `YYYY-MM-DD` | `ts: int \| None` | `str` |
+| `util.py` | `local_season(ts=None)` | 本地赛季 `YYYY-MM` | `ts: int \| None` | `str` |
+| `util.py` | `previous_season(ts=None)` | 上一个赛季 | `ts: int \| None` | `str` |
+| `util.py` | `season_end_day(season)` | 赛季最后一天 | `season: str` | `str` |
+| `util.py` | `days_until_season_end(ts=None)` | 距赛季结束天数 | `ts: int \| None` | `int` |
+| `util.py` | `is_group_enabled(chat_id, group_name, groups)` | 群白名单匹配（`*` 全部） | 见签名 | `bool` |
+| `rules.py` | `reply_target(content)` | 从 `wxid_xxx:` 回复前缀提取被引用者 | `content: str` | `str \| None` |
+| `rules.py` | `strip_reply_prefix(content)` | 去掉回复前缀 | `content: str` | `str` |
+| `rules.py` | `normalize_text(text)` | 去空白/标点，用于重复检测 | `text: str` | `str` |
+| `rules.py` | `distinct_char_count(text)` | 去重字符数 | `text: str` | `int` |
+| `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
+| `levels.py` | `LevelTable(path=None).load()/save(levels)/for_points(points)/next_for(points)/label(points)` | 等级表读写与查询（`data/point_levels.json`） | 见签名 | 见签名 |
+| `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`） | 见签名 | 见签名 |
+| `store.py` | `PointStore(conn, lock=None)` | 积分流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
+| `store.py` | `record_events(chat_id, message_id, awards, now_ts=None)` | 幂等写入流水（`UNIQUE(message_id, reason)`） | 见签名 | `int` |
+| `store.py` | `board(chat_id, scope='total', limit=10, now_ts=None)` | 榜单（total/season/day，含余额与并列名次） | 见签名 | `list[dict]` |
+| `store.py` | `member_stats(chat_id, sender_id, sender_name='', now_ts=None)` | 个人累计/余额/赛季/今日/名次/连续天数 | 见签名 | `MemberStats` |
+| `store.py` | `earned_of(chat_id, sender_id)` / `balance_of(...)` | 累计获得 / 可用余额 | 见签名 | `int` |
+| `store.py` | `buy_item(...)` | 条件扣款购买装备（余额不足不写入） | 见签名 | `(bool, code, balance, equipped)` |
+| `store.py` | `equip_item(...)` / `owned_items(...)` | 装备切换 / 已购清单 | 见签名 | 见签名 |
+| `store.py` | `buy_shield(...)` / `shield_expires_at(...)` | 购买/查询限时免战 | 见签名 | 见签名 |
+| `store.py` | `duel_attempts/duel_stolen/defender_received/last_pair_at/last_loss_at` | 切磋次数与冷却查询 | 见签名 | `int` |
+| `store.py` | `record_duel(...)` | 原子写入切磋记录与积分转移 | 见签名 | `bool` |
+| `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
+| `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日积分（含 0） | 见签名 | `list[dict]` |
+| `store.py` | `delete_earn_events(chat_id)` / `messages_since(...)` / `adjust(...)` | 回溯重建支持 / 管理员调整 | 见签名 | 见签名 |
+| `engine.py` | `PointEngine(store, config).award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励） | 见签名 | `int`（本人得分） |
+| `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
+| `duel.py` | `win_probability(a, d, k=1.15, min_prob=0.08, max_prob=0.92)` | 胜率公式（tanh 曲线，上下限夹取） | 见签名 | `float` |
+| `duel.py` | `steal_amount(a, d, defender_balance, ...)` | 抢分公式（差距越大抢得越少） | 见签名 | `int` |
+| `duel.py` | `DuelService.power(chat_id, sender_id)` | 武力值 = 10 + 等级×5 + 装备 | 见签名 | `PowerBreakdown` |
+| `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
+| `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
+| `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
+
+模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
+`BASE_POWER=10`、`POWER_PER_LEVEL=5`。
 
 ---
 
@@ -912,11 +958,26 @@ AbstractSummarizer (base.py)
          │
 6. MessageRouter.handle(msg)
          │
+         ├─→ [积分结算 — 每条新消息，入库后立即执行]
+         │      └─ PointEngine.award_for_message()
+         │            ├─ rules.score_components()   (base/长度/媒体/首条)
+         │            ├─ rules.reply_target()       (被回复者 +2)
+         │            ├─ 频率/重复/日封顶 防刷
+         │            └─ PointStore.record_events() → point_events
+         │
          ├─→ [活跃查询路径 — 裸文本或 @bot 均可]
          │      ├─ clean_command_text() → parse_activity_query()  [src/activity.py]
          │      └─ build_activity_report()
          │            └─ MessageStore.get_activity_report_data()
          │                  (每人总数 / 未发言)
+         │
+         ├─→ [积分/装备/切磋指令 — 裸文本]
+         │      └─ PointHandler.handle()
+         │            ├─ 积分 / 我的信息 / 查询 名字
+         │            ├─ 积分榜 / 月榜 / 今日榜 / 积分规则
+         │            ├─ 商店 / 购买 / 装备 / 卸下 / 武力值 / 战力榜
+         │            ├─ 切磋 @某人 / 引用后切磋 / 买免战券
+         │            └─ PointStore / DuelService / LevelTable / EquipmentCatalog
          │
          ├─→ [@mention 路径]
          │      │
@@ -1728,6 +1789,73 @@ MessageRouter.handle(msg)
 
 ---
 
+### 功能M: 群活跃积分 / 装备 / 切磋
+
+#### 涉及文件
+
+| 文件 | 路径 | 角色 |
+|---|---|---|
+| `points/__init__.py` | `src/points/__init__.py` | 包导出 |
+| `points/util.py` | `src/points/util.py` | 日期/赛季/群白名单工具 |
+| `points/models.py` | `src/points/models.py` | `PointAward`/`Command`/`PowerBreakdown`/`MemberStats`/`DuelResult` |
+| `points/rules.py` | `src/points/rules.py` | 纯计分规则（无 I/O） |
+| `points/levels.py` | `src/points/levels.py` | 等级表（`data/point_levels.json`） |
+| `points/equipment.py` | `src/points/equipment.py` | 装备目录（`data/equipment.json`） |
+| `points/store.py` | `src/points/store.py` | 流水/榜单/装备/护盾/切磋持久化 |
+| `points/engine.py` | `src/points/engine.py` | 计分入口与防刷、回溯重建 |
+| `points/duel.py` | `src/points/duel.py` | 武力值、胜率、抢分、切磋结算 |
+| `points/handler.py` | `src/points/handler.py` | 群内指令解析与文案 |
+| `schema.py` | `src/db/schema.py` | 新增 `point_events`/`point_seasons`/`equipment_owned`/`duel_shields`/`duels` |
+| `router.py` | `src/router.py` | 入库后计分 + 裸指令分流 |
+| `server.py` | `src/web/server.py` | `/api/points*`、`/api/equipment*`、`/api/duels` |
+
+#### 数据表
+
+| 表 | 说明 |
+|---|---|
+| `point_events` | append-only 流水；`category` ∈ earn/transfer/spend/adjust；`UNIQUE(message_id, reason)` 幂等 |
+| `point_seasons` | 已结算赛季冠军 |
+| `equipment_owned` | 每人每群已购装备与装备状态 |
+| `duel_shields` | 限时免战到期时间 |
+| `duels` | 切磋审计日志；`UNIQUE(chat_id, message_id)` |
+
+#### 指令
+
+| 输入 | 行为 |
+|---|---|
+| `积分` / `我的积分` / `积分卡` | 个人详细卡片（等级/名次/连续天数/武力值） |
+| `我的信息` | 一行快照：积分、余额、武力值 |
+| `查询 名字` / `查询 我` | 一行查询他人（无需 @；匹配不到成员时保持沉默） |
+| `积分榜` / `月榜` / `积分榜 今日` | 总榜 / 赛季榜 / 今日榜 |
+| `积分规则` | 规则摘要 |
+| `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统 |
+| `武力值` / `战力榜` | 武力值拆解 / 战力排行 |
+| `切磋 @某人` / 引用后 `切磋` | 发起切磋 |
+| `买免战券` / `免战` | 购买 4 小时免战 |
+| `切磋记录` | 自己最近 10 场 |
+| `积分调整 名字 ±N [理由]` / `积分重算` | 管理员专用 |
+
+#### 计分与切磋公式
+
+```
+胜率 p   = clamp(0.5 + 0.5·tanh(1.15·ln(A/D)), 0.08, 0.92)
+基础抢分  = clamp(round(对方余额 × 0.08), 2, 20)
+差距衰减  = clamp(1/(1+1.2·max(0, ln(A/D))), 0.2, 1.0)
+实际抢分  = clamp(round(基础抢分 × 衰减), 1, min(对方余额, 20))
+武力值    = 10 + 等级×5 + Σ已装备武力
+```
+
+#### 关键约定
+
+- **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**余额**（全部 category）用于消费与被抢
+- 切磋只转移余额，不计入累计获得，避免打架刷榜
+- 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
+- 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
+- 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`
+- 所有群内回复为纯文本直接返回，不经过 Markdown 清洗
+
+---
+
 ## 5. 配置文件和环境变量
 
 ### 5.1 `.env` 文件完整配置项
@@ -1790,6 +1918,47 @@ TODO_GROUPS=*
 TODO_MAX_PER_GROUP=50
 TODO_COMPLETED_RETENTION_DAYS=30
 TODO_DELETED_RETENTION_DAYS=30
+
+# === 活跃积分 ===
+POINTS_ENABLED=true
+POINTS_GROUPS=*
+POINTS_BASE_SCORE=1
+POINTS_LENGTH_MIN_CHARS=20
+POINTS_LENGTH_BONUS=1
+POINTS_LONG_LENGTH_MIN_CHARS=100
+POINTS_LONG_LENGTH_BONUS=1
+POINTS_MEDIA_BONUS=1
+POINTS_REPLY_BONUS=2
+POINTS_DAILY_FIRST_BONUS=10
+POINTS_PER_MESSAGE_CAP=5
+POINTS_RATE_LIMIT_PER_MIN=8
+POINTS_DAILY_CAP=80
+POINTS_MAX_AGE_SEC=300
+POINTS_BOARD_SIZE=10
+POINTS_LEVELS_PATH=data/point_levels.json
+
+# === 装备商店 ===
+EQUIPMENT_ENABLED=true
+EQUIPMENT_PATH=data/equipment.json
+
+# === 切磋 ===
+DUEL_ENABLED=true
+DUEL_GROUPS=*
+DUEL_PROB_K=1.15
+DUEL_MIN_PROB=0.08
+DUEL_MAX_PROB=0.92
+DUEL_BASE_STEAL_RATIO=0.08
+DUEL_REWARD_K=1.2
+DUEL_PER_FIGHT_CAP=20
+DUEL_DAILY_ATTEMPTS=10
+DUEL_DAILY_RECEIVED=3
+DUEL_DAILY_STEAL_CAP=50
+DUEL_PAIR_COOLDOWN_SEC=1800
+DUEL_LOSS_COOLDOWN_SEC=300
+DUEL_NOVICE_PROTECTION_POINTS=20
+SHIELD_PRICE=20
+SHIELD_DURATION_SEC=14400
+SHIELD_MAX_SEC=86400
 
 # === 调优 ===
 POLL_INTERVAL_SEC=1.0

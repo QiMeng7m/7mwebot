@@ -267,6 +267,48 @@ class TestPostAllowlist:
         assert resp.status == 405
 
 
+class TestPointsApi:
+    """Verify the points/equipment/duel APIs are wired up."""
+
+    def test_points_board_returns_rows(self, server):
+        status, data = _api_get("/api/points?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is True
+        assert data["rows"] == []
+        assert data["participants"] == 0
+        assert "day_total" in data
+
+    def test_points_overview_shape(self, server):
+        status, data = _api_get("/api/points/overview?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is True
+        assert len(data["daily"]) == 14
+        assert isinstance(data["level_distribution"], dict)
+
+    def test_equipment_catalog(self, server):
+        status, data = _api_get("/api/equipment?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is True
+        names = [item["name"] for item in data["catalog"]["items"]]
+        assert "木剑" in names
+        assert len(data["catalog"]["slots"]) == 3
+
+    def test_duels_endpoint(self, server):
+        status, data = _api_get("/api/duels?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is True
+        assert data["duels"] == []
+
+    def test_adjust_rejects_zero_delta(self, server):
+        status, data = _api_post("/api/points/adjust", {
+            "chat_id": "test@chatroom",
+            "sender_id": "wxid_test",
+            "delta": 0,
+        })
+        assert status == 200
+        assert data["ok"] is False
+
+
 # ── Playwright browser-level functional tests ───────────────────────────────
 
 try:
@@ -348,3 +390,34 @@ class TestConfigExportImport:
             page.wait_for_timeout(500)
             page_text = page.inner_text("body")
             assert "导出备份" in page_text or "配置备份" in page_text
+
+
+class TestPointsPanel:
+    def test_sidebar_has_points_tab(self, page):
+        page.goto(BASE_URL, timeout=10000)
+        page.wait_for_timeout(1000)
+        assert "群活跃积分" in page.inner_text("body")
+
+    def test_points_panel_renders(self, page):
+        page.goto(BASE_URL, timeout=10000)
+        page.wait_for_timeout(1000)
+        tab = page.locator("button:has-text('群活跃积分')")
+        assert tab.count() > 0
+        tab.first.click()
+        page.wait_for_timeout(800)
+        body = page.inner_text("body")
+        assert "装备商店" in body
+        assert "切磋记录" in body
+        assert "榜单" in body
+        # No blank page / error boundary.
+        assert "Something went wrong" not in body
+
+    def test_points_panel_switches_views(self, page):
+        page.goto(BASE_URL, timeout=10000)
+        page.wait_for_timeout(1000)
+        page.locator("button:has-text('群活跃积分')").first.click()
+        page.wait_for_timeout(500)
+        page.locator("button:has-text('装备商店')").first.click()
+        page.wait_for_timeout(500)
+        body = page.inner_text("body")
+        assert "武器" in body or "还没有成员数据" in body

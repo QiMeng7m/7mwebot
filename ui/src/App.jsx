@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Gear, ChartLine, Scroll, Users, Spinner, Sun, Moon, Sliders, CheckSquare } from '@phosphor-icons/react'
+import { Gear, ChartLine, Scroll, Users, Spinner, Sun, Moon, Sliders, CheckSquare, Trophy } from '@phosphor-icons/react'
 import Dashboard from './components/Dashboard'
 import ConfigPanel from './components/ConfigPanel'
 import FeaturesPanel from './components/FeaturesPanel'
 import NicknameEditor from './components/NicknameEditor'
 import LogViewer from './components/LogViewer'
 import TodoManager from './components/TodoManager'
+import PointsPanel from './components/PointsPanel'
 import Onboarding from './components/Onboarding'
 
 const iconVariants = {
@@ -39,6 +40,7 @@ const TABS = [
   },
   { id: 'nicknames', label: '群友昵称', icon: Users },
   { id: 'todo-manager', label: '群聊待办', icon: CheckSquare },
+  { id: 'points', label: '群活跃积分', icon: Trophy },
   { id: 'logs', label: '运行日志', icon: Scroll },
 ]
 
@@ -291,6 +293,7 @@ export default function App() {
             {activeTab === 'features' && <FeaturesPanel activeSection={featuresSection} onNavigate={setFeaturesSection} />}
             {activeTab === 'nicknames' && <NicknameEditor />}
             {activeTab === 'todo-manager' && <TodoManager />}
+            {activeTab === 'points' && <PointsPanel />}
             {activeTab === 'logs' && <LogViewer />}
           </motion.div>
         </AnimatePresence>

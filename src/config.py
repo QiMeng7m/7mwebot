@@ -260,6 +260,49 @@ class BotConfig:
         "删掉", "删除", "取消", "不要了",
     ])
 
+    # === Activity Points ===
+    # Master switch — award points for group messages, enable 积分 commands.
+    points_enabled: bool = True
+    # Comma-separated group names where points are active. "*" = all groups.
+    points_groups: list[str] = field(default_factory=lambda: ["*"])
+    points_base_score: int = 1
+    points_length_min_chars: int = 20
+    points_length_bonus: int = 1
+    points_long_length_min_chars: int = 100
+    points_long_length_bonus: int = 1
+    points_media_bonus: int = 1
+    points_reply_bonus: int = 2
+    points_daily_first_bonus: int = 10
+    points_per_message_cap: int = 5
+    points_rate_limit_per_min: int = 8
+    points_daily_cap: int = 80
+    points_max_age_sec: int = 300
+    points_board_size: int = 10
+    points_levels_path: str = "data/point_levels.json"
+
+    # === Equipment Shop ===
+    equipment_enabled: bool = True
+    equipment_path: str = "data/equipment.json"
+
+    # === Duels (切磋) ===
+    duel_enabled: bool = True
+    duel_groups: list[str] = field(default_factory=lambda: ["*"])
+    duel_prob_k: float = 1.15
+    duel_min_prob: float = 0.08
+    duel_max_prob: float = 0.92
+    duel_base_steal_ratio: float = 0.08
+    duel_reward_k: float = 1.2
+    duel_per_fight_cap: int = 20
+    duel_daily_attempts: int = 10
+    duel_daily_received: int = 3
+    duel_daily_steal_cap: int = 50
+    duel_pair_cooldown_sec: int = 1800
+    duel_loss_cooldown_sec: int = 300
+    duel_novice_protection_points: int = 20
+    shield_price: int = 20
+    shield_duration_sec: int = 14400
+    shield_max_sec: int = 86400
+
     # === Tuning ===
     poll_interval_sec: float = 1.0
     dedup_window_sec: int = 60
@@ -419,6 +462,44 @@ def _validate_config(kwargs: dict) -> None:
             f"got {feishu_auto_sync_cooldown_sec}"
         )
 
+    # Activity points / duels
+    points_per_message_cap = kwargs.get("points_per_message_cap", 5)
+    if not (1 <= points_per_message_cap <= 100):
+        errors.append(
+            "POINTS_PER_MESSAGE_CAP must be between 1 and 100, "
+            f"got {points_per_message_cap}"
+        )
+
+    points_rate_limit_per_min = kwargs.get("points_rate_limit_per_min", 8)
+    if not (1 <= points_rate_limit_per_min <= 120):
+        errors.append(
+            "POINTS_RATE_LIMIT_PER_MIN must be between 1 and 120, "
+            f"got {points_rate_limit_per_min}"
+        )
+
+    points_daily_cap = kwargs.get("points_daily_cap", 80)
+    if not (1 <= points_daily_cap <= 10000):
+        errors.append(
+            "POINTS_DAILY_CAP must be between 1 and 10000, "
+            f"got {points_daily_cap}"
+        )
+
+    duel_min_prob = kwargs.get("duel_min_prob", 0.08)
+    duel_max_prob = kwargs.get("duel_max_prob", 0.92)
+    if not (0.0 <= duel_min_prob < duel_max_prob <= 1.0):
+        errors.append(
+            "DUEL_MIN_PROB / DUEL_MAX_PROB must satisfy "
+            "0 <= min < max <= 1, got "
+            f"{duel_min_prob} / {duel_max_prob}"
+        )
+
+    duel_daily_attempts = kwargs.get("duel_daily_attempts", 10)
+    if not (1 <= duel_daily_attempts <= 100):
+        errors.append(
+            "DUEL_DAILY_ATTEMPTS must be between 1 and 100, "
+            f"got {duel_daily_attempts}"
+        )
+
     if errors:
         msg = "配置值无效:\n" + "\n".join(f"  - {err}" for err in errors)
         raise RuntimeError(msg)
@@ -534,6 +615,44 @@ def load_config() -> BotConfig:
         "todo_max_per_group": _safe_int(os.getenv("TODO_MAX_PER_GROUP", "50"), 50, "TODO_MAX_PER_GROUP"),
         "todo_completed_retention_days": _safe_int(os.getenv("TODO_COMPLETED_RETENTION_DAYS", "30"), 30, "TODO_COMPLETED_RETENTION_DAYS"),
         "todo_deleted_retention_days": _safe_int(os.getenv("TODO_DELETED_RETENTION_DAYS", "30"), 30, "TODO_DELETED_RETENTION_DAYS"),
+        # Activity points
+        "points_enabled": os.getenv("POINTS_ENABLED", "true").strip().lower() == "true",
+        "points_groups": [g.strip() for g in os.getenv("POINTS_GROUPS", "*").split(",") if g.strip()],
+        "points_base_score": _safe_int(os.getenv("POINTS_BASE_SCORE", "1"), 1, "POINTS_BASE_SCORE"),
+        "points_length_min_chars": _safe_int(os.getenv("POINTS_LENGTH_MIN_CHARS", "20"), 20, "POINTS_LENGTH_MIN_CHARS"),
+        "points_length_bonus": _safe_int(os.getenv("POINTS_LENGTH_BONUS", "1"), 1, "POINTS_LENGTH_BONUS"),
+        "points_long_length_min_chars": _safe_int(os.getenv("POINTS_LONG_LENGTH_MIN_CHARS", "100"), 100, "POINTS_LONG_LENGTH_MIN_CHARS"),
+        "points_long_length_bonus": _safe_int(os.getenv("POINTS_LONG_LENGTH_BONUS", "1"), 1, "POINTS_LONG_LENGTH_BONUS"),
+        "points_media_bonus": _safe_int(os.getenv("POINTS_MEDIA_BONUS", "1"), 1, "POINTS_MEDIA_BONUS"),
+        "points_reply_bonus": _safe_int(os.getenv("POINTS_REPLY_BONUS", "2"), 2, "POINTS_REPLY_BONUS"),
+        "points_daily_first_bonus": _safe_int(os.getenv("POINTS_DAILY_FIRST_BONUS", "10"), 10, "POINTS_DAILY_FIRST_BONUS"),
+        "points_per_message_cap": _safe_int(os.getenv("POINTS_PER_MESSAGE_CAP", "5"), 5, "POINTS_PER_MESSAGE_CAP"),
+        "points_rate_limit_per_min": _safe_int(os.getenv("POINTS_RATE_LIMIT_PER_MIN", "8"), 8, "POINTS_RATE_LIMIT_PER_MIN"),
+        "points_daily_cap": _safe_int(os.getenv("POINTS_DAILY_CAP", "80"), 80, "POINTS_DAILY_CAP"),
+        "points_max_age_sec": _safe_int(os.getenv("POINTS_MAX_AGE_SEC", "300"), 300, "POINTS_MAX_AGE_SEC"),
+        "points_board_size": _safe_int(os.getenv("POINTS_BOARD_SIZE", "10"), 10, "POINTS_BOARD_SIZE"),
+        "points_levels_path": os.getenv("POINTS_LEVELS_PATH", "data/point_levels.json").strip(),
+        # Equipment
+        "equipment_enabled": os.getenv("EQUIPMENT_ENABLED", "true").strip().lower() == "true",
+        "equipment_path": os.getenv("EQUIPMENT_PATH", "data/equipment.json").strip(),
+        # Duels
+        "duel_enabled": os.getenv("DUEL_ENABLED", "true").strip().lower() == "true",
+        "duel_groups": [g.strip() for g in os.getenv("DUEL_GROUPS", "*").split(",") if g.strip()],
+        "duel_prob_k": _safe_float(os.getenv("DUEL_PROB_K", "1.15"), 1.15, "DUEL_PROB_K"),
+        "duel_min_prob": _safe_float(os.getenv("DUEL_MIN_PROB", "0.08"), 0.08, "DUEL_MIN_PROB"),
+        "duel_max_prob": _safe_float(os.getenv("DUEL_MAX_PROB", "0.92"), 0.92, "DUEL_MAX_PROB"),
+        "duel_base_steal_ratio": _safe_float(os.getenv("DUEL_BASE_STEAL_RATIO", "0.08"), 0.08, "DUEL_BASE_STEAL_RATIO"),
+        "duel_reward_k": _safe_float(os.getenv("DUEL_REWARD_K", "1.2"), 1.2, "DUEL_REWARD_K"),
+        "duel_per_fight_cap": _safe_int(os.getenv("DUEL_PER_FIGHT_CAP", "20"), 20, "DUEL_PER_FIGHT_CAP"),
+        "duel_daily_attempts": _safe_int(os.getenv("DUEL_DAILY_ATTEMPTS", "10"), 10, "DUEL_DAILY_ATTEMPTS"),
+        "duel_daily_received": _safe_int(os.getenv("DUEL_DAILY_RECEIVED", "3"), 3, "DUEL_DAILY_RECEIVED"),
+        "duel_daily_steal_cap": _safe_int(os.getenv("DUEL_DAILY_STEAL_CAP", "50"), 50, "DUEL_DAILY_STEAL_CAP"),
+        "duel_pair_cooldown_sec": _safe_int(os.getenv("DUEL_PAIR_COOLDOWN_SEC", "1800"), 1800, "DUEL_PAIR_COOLDOWN_SEC"),
+        "duel_loss_cooldown_sec": _safe_int(os.getenv("DUEL_LOSS_COOLDOWN_SEC", "300"), 300, "DUEL_LOSS_COOLDOWN_SEC"),
+        "duel_novice_protection_points": _safe_int(os.getenv("DUEL_NOVICE_PROTECTION_POINTS", "20"), 20, "DUEL_NOVICE_PROTECTION_POINTS"),
+        "shield_price": _safe_int(os.getenv("SHIELD_PRICE", "20"), 20, "SHIELD_PRICE"),
+        "shield_duration_sec": _safe_int(os.getenv("SHIELD_DURATION_SEC", "14400"), 14400, "SHIELD_DURATION_SEC"),
+        "shield_max_sec": _safe_int(os.getenv("SHIELD_MAX_SEC", "86400"), 86400, "SHIELD_MAX_SEC"),
         "log_level": os.getenv("LOG_LEVEL", "INFO").strip(),
         "log_file": os.getenv("LOG_FILE", "data/bot.log").strip(),
         # Voice recognition

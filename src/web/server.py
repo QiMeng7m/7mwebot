@@ -1147,6 +1147,45 @@ def _handle_ws_upgrade(headers, conn):
     return True
 
 
+def _points_db_path() -> str:
+    """Resolve DB_PATH exactly like the todo endpoints do."""
+    from src.config import find_env_file
+    db_path = "data/messages.db"
+    env_path = find_env_file()
+    if env_path and env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("DB_PATH="):
+                db_path = line.strip().split("=", 1)[1].strip()
+                break
+    return db_path
+
+
+def _points_config():
+    """Load BotConfig, falling back to dataclass defaults."""
+    try:
+        from src.config import load_config
+        return load_config()
+    except Exception:
+        from src.config import BotConfig
+        return BotConfig()
+
+
+def _points_stack(conn, config):
+    """Build (store, levels, catalog, duels) for one request."""
+    from src.points.store import PointStore
+    from src.points.levels import LevelTable
+    from src.points.equipment import EquipmentCatalog
+    from src.points.duel import DuelService
+
+    store = PointStore(conn)
+    levels = LevelTable(getattr(
+        config, "points_levels_path", "data/point_levels.json"))
+    catalog = EquipmentCatalog(getattr(
+        config, "equipment_path", "data/equipment.json"))
+    duels = DuelService(store, config, levels, catalog)
+    return store, levels, catalog, duels
+
+
 class _UIHandler(SimpleHTTPRequestHandler):
     """HTTP handler: static files + WebSocket upgrade + API."""
 
@@ -1172,6 +1211,9 @@ class _UIHandler(SimpleHTTPRequestHandler):
                          "/api/sandbox/test",
                          "/api/lots",
                          "/api/todos/action",
+                         "/api/points/adjust", "/api/points/levels",
+                         "/api/equipment/buy", "/api/equipment/equip",
+                         "/api/equipment/catalog",
                          "/api/voice/download-model",
                          "/api/wechat-data-dir/detect"):
             self.do_GET()
@@ -1804,6 +1846,272 @@ class _UIHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 logger.exception("Todo action failed")
                 self.send_json({"ok": False, "error": str(e)})
+            return
+
+        # ── API: Points / equipment / duels ───────────────────────────
+        if self.path.startswith("/api/points") or \
+                self.path.startswith("/api/equipment") or \
+                self.path.startswith("/api/duels"):
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(self.path)
+            route = parsed.path
+            params = {
+                k: v[0] if v else ""
+                for k, v in parse_qs(parsed.query).items()
+            }
+
+            def _body() -> dict:
+                length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(length) if length else b"{}"
+                data = json.loads(raw or b"{}")
+                return data if isinstance(data, dict) else {}
+
+            conn = None
+            try:
+                from src.db.schema import initialize_db
+                conn = initialize_db(_points_db_path())
+                config = _points_config()
+                store, levels, catalog, duels = _points_stack(conn, config)
+
+                # ── GET /api/points ──────────────────────────────
+                if route == "/api/points":
+                    chat_id = params.get("chat_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    scope = params.get("scope", "total")
+                    if scope not in ("total", "season", "day"):
+                        scope = "total"
+                    limit = int(params.get("limit") or
+                                getattr(config, "points_board_size", 10))
+                    limit = max(1, min(limit, 100))
+                    rows = store.board(chat_id, scope, limit)
+                    for row in rows:
+                        row["level"] = levels.label(row["points"])
+                    self.send_json({
+                        "ok": True,
+                        "scope": scope,
+                        "rows": rows,
+                        "participants": store.participants(chat_id),
+                        "day_total": store.day_total(
+                            chat_id, time.strftime("%Y-%m-%d")),
+                    })
+                    return
+
+                # ── GET /api/points/member ───────────────────────
+                if route == "/api/points/member":
+                    chat_id = params.get("chat_id", "")
+                    sender_id = params.get("sender_id", "")
+                    if not chat_id or not sender_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id and sender_id required"})
+                        return
+                    stats = store.member_stats(chat_id, sender_id)
+                    power = duels.power(chat_id, sender_id)
+                    level = levels.for_points(stats.earned)
+                    nxt = levels.next_for(stats.earned)
+                    self.send_json({
+                        "ok": True,
+                        "member": {
+                            "sender_id": stats.sender_id,
+                            "sender_name": stats.sender_name,
+                            "earned": stats.earned,
+                            "balance": stats.balance,
+                            "season_points": stats.season_points,
+                            "day_points": stats.day_points,
+                            "total_rank": stats.total_rank,
+                            "season_rank": stats.season_rank,
+                            "streak_days": stats.streak_days,
+                            "level": level,
+                            "next_level": nxt,
+                            "power": {
+                                "total": power.total,
+                                "base": power.base,
+                                "equipment": power.equipment,
+                                "items": power.items,
+                            },
+                        },
+                        "events": store.recent_events(chat_id, sender_id, 30),
+                    })
+                    return
+
+                # ── GET /api/points/overview ─────────────────────
+                if route == "/api/points/overview":
+                    chat_id = params.get("chat_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    rows = store.board(chat_id, "total", 500)
+                    distribution: dict[str, int] = {}
+                    for row in rows:
+                        label = levels.label(row["points"])
+                        distribution[label] = distribution.get(label, 0) + 1
+                    self.send_json({
+                        "ok": True,
+                        "participants": store.participants(chat_id),
+                        "day_total": store.day_total(
+                            chat_id, time.strftime("%Y-%m-%d")),
+                        "level_distribution": distribution,
+                        "daily": store.daily_series(chat_id, 14),
+                    })
+                    return
+
+                # ── POST /api/points/adjust ──────────────────────
+                if route == "/api/points/adjust":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    try:
+                        delta = int(data.get("delta", 0))
+                    except (TypeError, ValueError):
+                        self.send_json({"ok": False,
+                                        "error": "delta must be an integer"})
+                        return
+                    if not chat_id or not sender_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id and sender_id required"})
+                        return
+                    if delta == 0 or abs(delta) > 10000:
+                        self.send_json({"ok": False,
+                                        "error": "delta must be non-zero"})
+                        return
+                    name = str(data.get("sender_name")
+                               or store.member_name(chat_id, sender_id))
+                    balance = store.adjust(
+                        chat_id, sender_id, name, delta,
+                        note=str(data.get("reason", "")),
+                    )
+                    self.send_json({"ok": True, "balance": balance})
+                    return
+
+                # ── GET/POST /api/points/levels ──────────────────
+                if route == "/api/points/levels":
+                    if self.command == "POST":
+                        data = _body()
+                        levels.save(data.get("levels") or [])
+                        self.send_json({"ok": True,
+                                        "levels": levels.load()})
+                    else:
+                        self.send_json({"ok": True,
+                                        "levels": levels.load()})
+                    return
+
+                # ── GET /api/equipment ───────────────────────────
+                if route == "/api/equipment":
+                    chat_id = params.get("chat_id", "")
+                    sender_id = params.get("sender_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    owned = (
+                        store.owned_items(chat_id, sender_id)
+                        if sender_id else []
+                    )
+                    power = (
+                        duels.power(chat_id, sender_id)
+                        if sender_id else None
+                    )
+                    self.send_json({
+                        "ok": True,
+                        "catalog": catalog.load(),
+                        "owned": owned,
+                        "power": None if power is None else {
+                            "total": power.total,
+                            "base": power.base,
+                            "equipment": power.equipment,
+                            "items": power.items,
+                        },
+                        "balance": (
+                            store.balance_of(chat_id, sender_id)
+                            if sender_id else 0
+                        ),
+                    })
+                    return
+
+                # ── POST /api/equipment/buy ──────────────────────
+                if route == "/api/equipment/buy":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    item = catalog.by_id(str(data.get("item_id", "")))
+                    if not chat_id or not sender_id or item is None:
+                        self.send_json({"ok": False,
+                                        "error": "invalid request"})
+                        return
+                    name = str(data.get("sender_name")
+                               or store.member_name(chat_id, sender_id))
+                    ok, code, balance, equipped = store.buy_item(
+                        chat_id, sender_id, name, item,
+                        catalog.same_slot_ids(item),
+                    )
+                    power = duels.power(chat_id, sender_id)
+                    self.send_json({
+                        "ok": ok, "code": code, "balance": balance,
+                        "equipped": equipped,
+                        "power": power.total,
+                    })
+                    return
+
+                # ── POST /api/equipment/equip ────────────────────
+                if route == "/api/equipment/equip":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    item = catalog.by_id(str(data.get("item_id", "")))
+                    if not chat_id or not sender_id or item is None:
+                        self.send_json({"ok": False,
+                                        "error": "invalid request"})
+                        return
+                    equip = bool(data.get("equipped", True))
+                    ok = store.equip_item(
+                        chat_id, sender_id, item["id"],
+                        catalog.same_slot_ids(item), equip=equip,
+                    )
+                    self.send_json({
+                        "ok": ok,
+                        "power": duels.power(chat_id, sender_id).total,
+                    })
+                    return
+
+                # ── GET/POST /api/equipment/catalog ──────────────
+                if route == "/api/equipment/catalog":
+                    if self.command == "POST":
+                        data = _body()
+                        catalog.save(data)
+                        self.send_json({"ok": True, "catalog": catalog.load()})
+                    else:
+                        self.send_json({"ok": True, "catalog": catalog.load()})
+                    return
+
+                # ── GET /api/duels ───────────────────────────────
+                if route == "/api/duels":
+                    chat_id = params.get("chat_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    limit = max(1, min(int(params.get("limit") or 50), 200))
+                    self.send_json({
+                        "ok": True,
+                        "duels": store.recent_duels(chat_id, limit),
+                    })
+                    return
+
+                self.send_json({"ok": False, "error": "Not found"})
+            except ValueError as exc:
+                self.send_json({"ok": False, "error": str(exc)})
+            except Exception as exc:
+                logger.exception("Points API failed (%s)", self.path)
+                self.send_json({"ok": False, "error": str(exc)})
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
             return
 
         # ── API: Get / Save welcome templates ─────────────────────────
