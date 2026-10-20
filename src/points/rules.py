@@ -26,10 +26,21 @@ MEDIA_TYPES = frozenset({MSG_IMAGE, MSG_VOICE, MSG_VIDEO})
 MIN_DISTINCT_CHARS = 6
 
 
-def reply_target(content: str) -> str | None:
-    """Return the wxid quoted by a reply, or None."""
+def reply_target(content: str, sender_id: str | None = None) -> str | None:
+    """Return the wxid quoted by a reply, or None.
+
+    WCDB prefixes every group message with the *sender's* ``wxid_xxx:``,
+    which is indistinguishable from a reply quote by shape alone.  When
+    *sender_id* is given, a prefix equal to the sender is treated as the
+    ordinary message prefix, not a reply.
+    """
     match = _REPLY_PREFIX_RE.match(str(content or ""))
-    return match.group(1) if match else None
+    if not match:
+        return None
+    target = match.group(1)
+    if sender_id and target == str(sender_id):
+        return None
+    return target
 
 
 def strip_reply_prefix(content: str) -> str:

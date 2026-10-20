@@ -1601,6 +1601,30 @@ class _UIHandler(SimpleHTTPRequestHandler):
                             "member_count": cnt_row[0] if cnt_row else 0,
                         })
 
+                # Put the bot's configured group(s) first so panels default
+                # to the group the bot actually monitors instead of an
+                # arbitrary session-order group with no data.
+                configured = [
+                    name.strip() for name in str(groups_raw).split(",")
+                    if name.strip()
+                ]
+                all_groups = not configured or configured == ["*"]
+
+                def _is_configured(group: dict) -> bool:
+                    if all_groups:
+                        return True
+                    name = str(group.get("group_name") or "")
+                    chat_id = str(group.get("chat_id") or "")
+                    return any(
+                        want == name or want == chat_id
+                        or want.lower() in name.lower()
+                        for want in configured
+                    )
+
+                for group in groups:
+                    group["configured"] = _is_configured(group)
+                groups.sort(key=lambda g: 0 if g["configured"] else 1)
+
                 self.send_json({"ok": True, "groups": groups})
             except Exception as e:
                 logger.exception("Failed to list nickname groups")

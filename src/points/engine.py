@@ -132,7 +132,7 @@ class PointEngine:
 
         # Reply bonus goes to the quoted member.  It counts against their
         # own daily cap but not against the sender's per-message cap.
-        reply_to = rules.reply_target(msg.get("content", ""))
+        reply_to = rules.reply_target(msg.get("content", ""), sender_id)
         if reply_to and reply_to != sender_id:
             target_name = self._store.member_name(chat_id, reply_to)
             if bot_name and (

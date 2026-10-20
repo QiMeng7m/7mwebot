@@ -271,6 +271,21 @@ class DuelCommandTests(HandlerTestBase):
         reply = self.run_cmd("wxid_b:\n切磋")
         self.assertIn("胜率", reply)
 
+    def test_duel_at_mention_ignores_sender_prefix(self):
+        """WCDB prefixes the sender's wxid; it must not become the target."""
+        msg = self.msg("切磋 @李四", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n切磋 @李四"
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("胜率", reply)
+        self.assertNotIn("不能和自己", reply)
+
+    def test_duel_prefix_at_mention_ignores_sender_prefix(self):
+        msg = self.msg("@李四 切磋", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@李四 切磋"
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("胜率", reply)
+        self.assertNotIn("不能和自己", reply)
+
     def test_duel_shield(self):
         self.store.buy_shield(
             self.chat, "wxid_b", "李四", 20, 14400, 86400,

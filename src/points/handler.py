@@ -282,9 +282,10 @@ class PointHandler:
         sid = ids[0]
         return sid, self._display_name(chat_id, sid), []
 
-    def _reply_target(self, chat_id: str, text: str) -> tuple[str, str]:
+    def _reply_target(self, chat_id: str, text: str,
+                      sender_id: str = "") -> tuple[str, str]:
         """Use the WeChat reply-quote wxid when present."""
-        wxid = rules.reply_target(text)
+        wxid = rules.reply_target(text, sender_id)
         if not wxid:
             return "", ""
         return wxid, self._display_name(chat_id, wxid)
@@ -639,7 +640,7 @@ class PointHandler:
         # Reply target comes from the RAW content: _clean_for_commands
         # strips the "wxid_xxx:" prefix that identifies the quoted member.
         target_id, target_name = self._reply_target(
-            chat_id, str(msg.get("content", "")),
+            chat_id, str(msg.get("content", "")), sender_id,
         )
         if not target_id:
             name = _strip_invisible(rest).lstrip("@").strip()

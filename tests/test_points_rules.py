@@ -27,6 +27,16 @@ class ReplyPrefixTests(unittest.TestCase):
         self.assertIsNone(reply_target("好的"))
         self.assertIsNone(reply_target(""))
 
+    def test_sender_prefix_is_not_a_reply(self):
+        # WCDB prefixes every message with the sender's wxid.
+        self.assertIsNone(
+            reply_target("wxid_abc123:\n切磋", sender_id="wxid_abc123")
+        )
+        self.assertEqual(
+            reply_target("wxid_abc123:\n切磋", sender_id="wxid_other"),
+            "wxid_abc123",
+        )
+
     def test_strip_prefix(self):
         self.assertEqual(
             strip_reply_prefix("wxid_abc:\n" + _long_text(20)),

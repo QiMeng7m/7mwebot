@@ -1290,7 +1290,7 @@ MessageRouter.handle(msg) → [无 @mention]
 | `POST` | `/api/config/import` | 导入 JSON 配置文件 | 无 |
 | `GET` | `/api/nicknames?chat_id=xxx` | 获取群成员昵称列表 | 无 |
 | `POST` | `/api/nicknames` | 保存/删除昵称映射 | 无 |
-| `GET` | `/api/nicknames/groups` | 获取群组列表 | 无 |
+| `GET` | `/api/nicknames/groups` | 获取群组列表（`WECHAT_GROUPS` 配置的群排在前面，附 `configured` 标记） | 无 |
 | `GET` | `/api/welcome/templates` | 获取欢迎模板配置 | 无 |
 | `POST` | `/api/welcome/templates` | 保存欢迎模板配置 | 无 |
 | `GET` | `/api/todos?status=active&chat_id=xxx` | 获取待办列表 | 无 |
