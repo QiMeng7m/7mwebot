@@ -385,9 +385,17 @@ class MessageRouter:
             path = Path("data/group_names.json")
             if path.exists():
                 try:
-                    self._group_names_cache = json.loads(
-                        path.read_text(encoding="utf-8")
-                    )
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    # group_names.json stores {chat_id: {name, member_count}}
+                    # (older versions stored {chat_id: name}); normalise to
+                    # chat_id -> display name so callers can compare strings.
+                    names: dict[str, str] = {}
+                    for chat_id, value in raw.items():
+                        if isinstance(value, dict):
+                            value = value.get("name", "")
+                        if value:
+                            names[chat_id] = str(value)
+                    self._group_names_cache = names
                 except (json.JSONDecodeError, OSError):
                     self._group_names_cache = {}
         return self._group_names_cache or {}

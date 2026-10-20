@@ -252,7 +252,7 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter.__init__()` | ~45 | 初始化消息路由器 | `store, detector, summarizer, admin_handler, nickname_service, config, feishu_export_service=None` | `None` |
 | `MessageRouter._strip_markdown(text)` | ~65 | 去除 Markdown 格式(静态方法) | `text: str` | `str` |
 | `MessageRouter.handle(msg)` | ~70 | 处理传入群聊消息的主入口 | `msg: dict` | `str \| None` (回复文本) |
-| `MessageRouter._load_group_names()` | ~115 | 加载 chat_id → 群名映射(懒加载) | 无 | `dict[str, str]` |
+| `MessageRouter._load_group_names()` | ~115 | 加载 chat_id → 群名映射(懒加载；兼容 `{name, member_count}` 与旧版纯字符串) | 无 | `dict[str, str]` |
 | `MessageRouter._is_todo_group(chat_id)` | ~125 | 判断群聊是否启用待办功能 | `chat_id: str` | `bool` |
 | `MessageRouter._get_group_memory(chat_id)` | ~140 | 获取群聊记忆文本 | `chat_id: str` | `str` |
 | `MessageRouter._handle_summary(msg)` | ~145 | 生成聊天总结 | `msg: dict` | `str \| None` |
@@ -348,7 +348,7 @@ todo_delete_keywords: list[str] = [
 | `_handle_message(group_name, talker, standardized, callback)` | 处理单条消息(线程池) | `group_name, talker, standardized, callback` | `None` |
 | `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
-| `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员 | `content: str, resolve_name: Callable \| None` | `str` |
+| `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_send_and_confirm(group_name, talker, content)` | 通过键盘发送并确认 | `group_name, talker, content` | `bool` |
 | `_get_voice()` | 懒初始化语音识别管道 | 无 | `VoicePipeline \| None \| False` |
 | `_try_voice(msg)` | 尝试语音识别 | `msg: dict` | `str \| None` |
@@ -475,7 +475,7 @@ todo_delete_keywords: list[str] = [
 | `get_user_last_timestamp(chat_id, sender_id)` | 获取用户最后发言时间 | `chat_id, sender_id: str` | `int \| None` |
 | `get_user_previous_timestamp(chat_id, sender_id, before_ts)` | 获取用户在某时间前的最后发言 | `chat_id, sender_id: str, before_ts: int` | `int \| None` |
 | `get_messages_since(chat_id, since_ts, until_ts, limit)` | 获取时间窗口内消息 | `chat_id, since_ts, until_ts, limit` | `list[dict]` |
-| `get_activity_report_data(chat_id, since_ts, exclude_message_id=None)` | 聚合活跃报告数据(每人总数/每日/时段/未发言) | `chat_id: str, since_ts: int, exclude_message_id: str \| None` | `dict` |
+| `get_activity_report_data(chat_id, since_ts, exclude_message_id=None)` | 聚合活跃报告数据(每人总数/未发言) | `chat_id: str, since_ts: int, exclude_message_id: str \| None` | `dict` |
 | `was_recently_triggered(chat_id, window_sec)` | 检查最近是否触发过 | `chat_id: str, window_sec: int` | `bool` |
 | `get_group_memory(chat_id)` | 获取群聊记忆 | `chat_id: str` | `dict \| None` |
 | `upsert_group_memory(chat_id, memory_text, message_count, last_message_id)` | 更新/插入群聊记忆 | `chat_id, memory_text, message_count, last_message_id` | `None` |
@@ -530,14 +530,19 @@ todo_delete_keywords: list[str] = [
 | `WelcomeManager.__init__(path)` | 初始化欢迎管理器 | `path: Path \| str` | `None` |
 | `WelcomeManager.load()` | 加载配置 | 无 | `dict` |
 | `WelcomeManager.save(data)` | 原子写入配置 | `data: dict` | `None` |
-| `WelcomeManager.resolve_message(chat_id, new_member_id)` | 解析欢迎消息 | `chat_id: str, new_member_id: str` | `str \| None` |
+| `WelcomeManager.resolve_message(chat_id, new_member_id)` | 解析欢迎消息（`@{new_member}` 与裸 `{new_member}` 都只生成一个 `@`） | `chat_id: str, new_member_id: str` | `str \| None` |
 | `get_welcome_manager()` | 获取模块单例(模块级) | 无 | `WelcomeManager` |
 
 > 入群事件由 `wcdb_backend._standardize()` 识别：WeChat 4.x 的系统消息是
 > zstd 压缩 XML，先用 `_decode_wcdb_content()` 解压，再由
-> `_extract_join_member()` 从 `<link name="adder">` 提取新成员（同时兼容
-> 纯文本 `"张三"加入了群聊`）。仅当 `WELCOME_ENABLED=true` 时保留事件，
-> 否则静默丢弃。
+> `_extract_join_member()` 提取新成员：优先 `<link name="adder">`，其次
+> `<link name="names"><memberlist><member>`（如 `你邀请"$names$"加入了群聊`），
+> 跳过 `from`（邀请人）和 `revoke`（撤销）链接；模板中的 `$names$` 等
+> 占位符不会被当作成员名。同时兼容纯文本 `"张三"加入了群聊`。仅当
+> `WELCOME_ENABLED=true` 时保留事件，否则静默丢弃。
+>
+> `_standardize()` 每秒会对同一批消息重复执行，因此入群日志只在
+> `_poll_group()` 去重后记录一次（`New member joined: ...`），避免刷屏。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -670,8 +675,8 @@ todo_delete_keywords: list[str] = [
 | `format_activity_report(data, nickname_service, *, chat_id, group_name, requester_name, days, now_ts, since_ts)` | 将聚合数据格式化为报告(纯函数) | 见签名 | `str` |
 
 模块常量：`DEFAULT_DAYS=15`、`MAX_DAYS=90`、`DISPLAY_TOP_N=5`、
-`MAX_DAILY_LINES=5`、`MAX_TIME_BUCKETS=2`、`MAX_DORMANT_NAMES=3`、
-`NAME_MAX_WIDTH=14`、`MAX_REPORT_CHARS=4000`。
+`MAX_DORMANT_NAMES=3`、`DAILY_NAME_WIDTH=10`、`NAME_MAX_WIDTH=14`、
+`MAX_REPORT_CHARS=4000`。
 
 ---
 
@@ -849,7 +854,7 @@ AbstractSummarizer (base.py)
          │      ├─ clean_command_text() → parse_activity_query()  [src/activity.py]
          │      └─ build_activity_report()
          │            └─ MessageStore.get_activity_report_data()
-         │                  (每人总数 / 每日 / 时段 / 未发言)
+         │                  (每人总数 / 未发言)
          │
          ├─→ [@mention 路径]
          │      │
@@ -977,7 +982,7 @@ WcdbBackend.start(callback)
     "is_at_mentioned": bool, # 是否 @机器人
     "is_group": bool,       # 是否群聊(始终 True)
     "is_system_join": bool, # 是否"xxx 加入了群聊"事件
-    "new_member_id": str,   # 新成员 wxid
+    "new_member_id": str,   # 新成员显示名（解析失败时可能是 wxid）
 }
 ```
 
@@ -1633,15 +1638,10 @@ MessageRouter.handle(msg)
         ├── MessageStore.get_activity_report_data(chat_id, since_ts,
         │                                          exclude_message_id)
         │     ├── 每人总数 + MAX(timestamp)（GROUP BY sender_id）
-        │     ├── 每人每日（date(...,'unixepoch','localtime')）
-        │     ├── 每时段 24 小时直方图（strftime('%H',...)）
         │     └── 窗口内未发言成员（user_last_message + 相关子查询 MAX）
         └── format_activity_report()
               ├── 总览：条数 / 活跃人数 / 日均
               ├── 发言 TOP5（条数、占比、最后发言；其余合并一行）
-              ├── 每日：只列有消息的活跃日（最多 5 行）
-              │     每人后附 Top5 当日条数 + 「其他」合计
-              ├── 活跃时段：只列非零时段，最多 2 个
               └── 窗口内未发言：人数 + 最多 3 个名字
 ```
 

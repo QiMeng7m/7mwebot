@@ -138,11 +138,13 @@ class WelcomeManager:
                 logger.warning("Welcome: no templates defined")
                 return None
 
-        # 3. Replace variable
+        # 3. Replace variable.  Default templates already write
+        # "@{new_member}", so replace that form first — otherwise the
+        # generic branch below would produce a double "@@".
         message = template.get("message", "")
         if not message:
             return None
-
+        message = message.replace("@{new_member}", f"@{new_member_id}")
         return message.replace("{new_member}", f"@{new_member_id}")
 
 

@@ -37,7 +37,9 @@ except ImportError:  # pragma: no cover - covered by requirements.txt
     _zstd = None
 
 _ADDER_LINK_RE = re.compile(r'<link\s+name="adder"[^>]*>(.*?)</link>', re.S)
-_LINK_BLOCK_RE = re.compile(r'<link\s+name="([^"]+)"[^>]*>(.*?)</link>', re.S)
+_LINK_BLOCK_RE = re.compile(r"<link\b([^>]*)>(.*?)</link>", re.S)
+_LINK_ATTR_RE = re.compile(r'([A-Za-z_][\w:.-]*)\s*=\s*"([^"]*)"')
+_MEMBER_BLOCK_RE = re.compile(r"<member>(.*?)</member>", re.S)
 _XML_USERNAME_RE = re.compile(
     r"<username>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</username>", re.S,
 )
@@ -50,6 +52,13 @@ _INVITE_JOIN_RE = re.compile(
 _PLAIN_JOIN_RE = re.compile(
     r'"([^"]+)"(?:通过[^"]*)?加入了?群聊'
 )
+# WeChat 4.x templates keep placeholders like $names$ in <template>; the
+# real values live in <link> blocks.  Never treat a placeholder as a name.
+_PLACEHOLDER_RE = re.compile(r"^\$[A-Za-z0-9_]+\$$")
+# Links that describe someone other than the new member.
+_NON_MEMBER_LINK_NAMES = ("from", "revoke")
+# Links that hold the new member, in priority order.
+_MEMBER_LINK_NAMES = ("adder", "names", "username", "member")
 
 
 def _decode_wcdb_content(content: str) -> str:
@@ -79,17 +88,27 @@ def _extract_join_member(content: str, resolve_name=None) -> str:
     """Return the new member's display name from a join system message.
 
     Handles both plain-text messages ("张三"加入了群聊) and the XML
-    ``sysmsgtemplate`` used by WeChat 4.x, where the new member is stored in
-    ``<link name="adder">``.
+    ``sysmsgtemplate`` used by WeChat 4.x, where the template embeds a
+    placeholder (``$names$``) and the real member sits in a ``<link>``
+    block such as ``<link name="names"><memberlist><member>...``.  Links
+    describing the inviter/revoker (``from``/``revoke``) are ignored.
     """
     if not content or "加入" not in content or "群聊" not in content:
         return ""
 
+    def _clean(value: str) -> str:
+        value = str(value or "").strip()
+        return "" if _PLACEHOLDER_RE.match(value) else value
+
     def _member_from_link(block: str) -> str:
-        username_match = _XML_USERNAME_RE.search(block)
-        nickname_match = _XML_NICKNAME_RE.search(block)
-        username = username_match.group(1).strip() if username_match else ""
-        nickname = nickname_match.group(1).strip() if nickname_match else ""
+        # A link may hold several members; inspect the first <member> only
+        # so the revoke block's <usernamelist> can't leak in.
+        member_match = _MEMBER_BLOCK_RE.search(block)
+        scope = member_match.group(1) if member_match else block
+        username_match = _XML_USERNAME_RE.search(scope)
+        nickname_match = _XML_NICKNAME_RE.search(scope)
+        username = _clean(username_match.group(1)) if username_match else ""
+        nickname = _clean(nickname_match.group(1)) if nickname_match else ""
         if resolve_name and username:
             try:
                 resolved = resolve_name(username)
@@ -105,24 +124,38 @@ def _extract_join_member(content: str, resolve_name=None) -> str:
         if member:
             return member
 
-    # Some templates name the link differently but only contain one member.
-    links = _LINK_BLOCK_RE.findall(content)
-    members = [
-        _member_from_link(block)
-        for name, block in links
-        if name != "from"
-    ]
-    members = [m for m in members if m]
-    if len(members) == 1:
-        return members[0]
+    preferred: list[str] = []
+    others: list[str] = []
+    for raw_attrs, block in _LINK_BLOCK_RE.findall(content):
+        attrs = dict(_LINK_ATTR_RE.findall(raw_attrs))
+        name = attrs.get("name", "")
+        if name in _NON_MEMBER_LINK_NAMES or attrs.get("type") == "link_revoke":
+            continue
+        # Only member links carry <member> entries or a direct profile.
+        if "<member" not in block and attrs.get("type") != "link_profile":
+            continue
+        member = _member_from_link(block)
+        if not member:
+            continue
+        if name in _MEMBER_LINK_NAMES:
+            preferred.append(member)
+        else:
+            others.append(member)
+
+    if preferred:
+        return preferred[0]
+    if others:
+        return others[0]
 
     match = _INVITE_JOIN_RE.search(content)
     if match:
-        return match.group(1).strip()
+        member = _clean(match.group(1))
+        if member:
+            return member
 
     match = _PLAIN_JOIN_RE.search(content)
     if match:
-        return match.group(1).strip()
+        return _clean(match.group(1))
 
     return ""
 
@@ -531,6 +564,14 @@ class WcdbBackend(AbstractWeChatBackend):
                 continue
             self._known_ids.add(msg_id)
 
+            # Log only for newly seen messages — _standardize runs on every
+            # poll for the same rows, so logging there flooded the console.
+            if standardized.get("is_system_join"):
+                logger.info(
+                    "New member joined: %s in '%s'",
+                    standardized.get("new_member_id"), group_name,
+                )
+
             if self._bot_name and self._bot_name in standardized["sender_name"]:
                 continue
 
@@ -664,16 +705,17 @@ class WcdbBackend(AbstractWeChatBackend):
             if welcome_on:
                 new_member_id = join_member
                 is_system_join = True
-                logger.info(
-                    "Join event detected: new_member=%s group=%s",
-                    new_member_id, group_name[:20],
-                )
             else:
                 # Welcome disabled — silently drop join messages
                 return None
-        elif "加入群聊" in content or "加入了群聊" in content:
-            logger.warning(
-                "Join-like system message could not be parsed: %s",
+        elif local_type == 10000 and (
+            "加入群聊" in content or "加入了群聊" in content
+        ):
+            # Not a join event (could be chat text like "欢迎…加入群聊").
+            # Log at debug: _standardize runs on every poll for the same
+            # messages, so INFO/WARNING here would flood the log.
+            logger.debug(
+                "Join-like message not treated as join event: %s",
                 content[:200],
             )
             return None
