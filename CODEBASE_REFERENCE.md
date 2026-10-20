@@ -104,6 +104,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `TRIGGER_KEYWORDS` | `list[str]` | 见下方默认值 | `src/config.py` | `src/trigger/detector.py:TriggerDetector.__init__()` |
 | `SUMMARIZE_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:_handle_summary()` |
 | `FALLBACK_WINDOW_HOURS` | `int` | `8` | `src/config.py` | `src/router.py:_handle_summary()` |
+| `MAX_RETRIES` | `int` | `3` | `src/config.py` | `src/summarize/__init__.py:create_summarizer()` (1-10) |
 | `FUN_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:handle()` (抽签) |
 | `PROACTIVE_ENABLED` | `bool` | `False` | `src/config.py` | `src/proactive/gate.py:ProactiveGate.should_speak()` |
 | `PROACTIVE_RATE_WINDOW_SEC` | `int` | `120` | `src/config.py` | `src/proactive/rate_tracker.py:RateTracker.__init__()` |
@@ -1899,6 +1900,7 @@ TRIGGER_KEYWORDS=总结一下,之前发了什么,错过了什么
 # === 摘要配置 ===
 SUMMARIZE_ENABLED=true
 FALLBACK_WINDOW_HOURS=8
+MAX_RETRIES=3
 
 # === 主动发言 ===
 PROACTIVE_ENABLED=false

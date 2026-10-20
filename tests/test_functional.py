@@ -192,7 +192,8 @@ class TestSummarizerBaseUrl:
         captured = {}
 
         class FakeClaudeSummarizer:
-            def __init__(self, api_key, model, base_url, chunk_size):
+            def __init__(self, api_key, model, base_url, chunk_size,
+                         max_retries=3):
                 captured.update({
                     "api_key": api_key,
                     "model": model,
@@ -224,7 +225,8 @@ class TestSummarizerBaseUrl:
         captured = {}
 
         class FakeOpenAISummarizer:
-            def __init__(self, api_key, model, base_url, chunk_size):
+            def __init__(self, api_key, model, base_url, chunk_size,
+                         max_retries=3):
                 captured.update({
                     "api_key": api_key,
                     "model": model,

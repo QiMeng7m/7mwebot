@@ -174,6 +174,8 @@
 
 ### macOS（实验）
 
+macOS 通过 WeFlow 读取微信数据库，**不需要额外启动消息读取服务**。WeFlow 会把数据库密钥导出为 `all_keys.json`，webot 直接读取该文件。
+
 ```bash
 git clone https://github.com/cancelGuMu/webot.git
 cd webot
@@ -181,7 +183,23 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-macos.txt
 cd ui && npm install && npm run build && cd ..
+
+# 检查环境与 WeFlow 数据库
+python tools/macos/weflow_setup.py diagnose
+# 需要时提取 / 导入密钥（生成 all_keys.json）
+python tools/macos/weflow_setup.py extract-keys
+python tools/macos/weflow_setup.py import-keys
+# 权限受限时可尝试重启钩子方式
+python tools/macos/weflow_setup.py extract-keys-restart-hook
+
 python desktop_mac.py
+```
+
+在 `.env` 中选择微信后端：
+
+```bash
+WECHAT_BACKEND=mac_ui       # UI 自动化，兼容性更好
+# WECHAT_BACKEND=mac_hybrid # WCDB 直读，速度更快，依赖 all_keys.json
 ```
 
 需要在系统设置中给终端授权「辅助功能」权限。

@@ -182,6 +182,8 @@ class BotConfig:
     # === Summarization ===
     summarize_enabled: bool = True
     fallback_window_hours: int = 8
+    # API retry attempts (1-10) for summarizer/chat calls.
+    max_retries: int = 3
 
     # === Feishu / Lark Export ===
     feishu_export_enabled: bool = False
@@ -378,6 +380,13 @@ def _validate_config(kwargs: dict) -> None:
     if fallback_window_hours < 1:
         errors.append(
             f"FALLBACK_WINDOW_HOURS must be >= 1, got {fallback_window_hours}"
+        )
+
+    # max_retries
+    max_retries = kwargs.get("max_retries", 3)
+    if not (1 <= max_retries <= 10):
+        errors.append(
+            f"MAX_RETRIES must be between 1 and 10, got {max_retries}"
         )
 
     # dedup_window_sec
@@ -581,6 +590,7 @@ def load_config() -> BotConfig:
         "max_messages_for_summary": _safe_int(os.getenv("MAX_MESSAGES_FOR_SUMMARY", "5000"), 5000, "MAX_MESSAGES_FOR_SUMMARY"),
         "chunk_size": _safe_int(os.getenv("CHUNK_SIZE", "400"), 400, "CHUNK_SIZE"),
         "fallback_window_hours": _safe_int(os.getenv("FALLBACK_WINDOW_HOURS", "8"), 8, "FALLBACK_WINDOW_HOURS"),
+        "max_retries": _safe_int(os.getenv("MAX_RETRIES", "3"), 3, "MAX_RETRIES"),
         "feishu_export_enabled": os.getenv("FEISHU_EXPORT_ENABLED", "false").strip().lower() == "true",
         "feishu_app_id": os.getenv("FEISHU_APP_ID", "").strip(),
         "feishu_app_secret": os.getenv("FEISHU_APP_SECRET", "").strip(),

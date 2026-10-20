@@ -1147,7 +1147,9 @@ class ApiConfigEndpointTests(unittest.TestCase):
         config = body["config"]
         self.assertTrue(config["feishu_export_enabled"])
         self.assertEqual(config["feishu_app_id"], "cli_test")
-        self.assertEqual(config["feishu_app_secret"], "secret_test")
+        # Secrets are intentionally masked in /api/load-config.
+        self.assertNotEqual(config["feishu_app_secret"], "secret_test")
+        self.assertIn("***", config["feishu_app_secret"])
         self.assertEqual(config["feishu_export_mode"], "knowledge")
         self.assertEqual(config["feishu_export_window_hours"], 6)
         self.assertTrue(config["feishu_auto_sync_enabled"])

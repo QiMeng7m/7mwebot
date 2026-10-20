@@ -49,6 +49,7 @@ def create_summarizer(config) -> AbstractSummarizer:
             model=config.deepseek_model,
             base_url=config.deepseek_base_url,
             chunk_size=config.chunk_size,
+            max_retries=config.max_retries,
         )
 
     elif backend == "claude":
@@ -58,6 +59,7 @@ def create_summarizer(config) -> AbstractSummarizer:
             model=config.summarize_model,
             base_url=config.anthropic_base_url,
             chunk_size=config.chunk_size,
+            max_retries=config.max_retries,
         )
 
     elif backend == "openai":
@@ -67,6 +69,7 @@ def create_summarizer(config) -> AbstractSummarizer:
             model=config.openai_model,
             base_url=config.openai_base_url,
             chunk_size=config.chunk_size,
+            max_retries=config.max_retries,
         )
 
     else:

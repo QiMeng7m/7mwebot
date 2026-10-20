@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -114,6 +115,7 @@ WeChat 17947 user 101r REG 1,16 565248 /Users/me/Library/Containers/com.tencent.
                     str(new_db.parent.parent.parent),
                 )
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS path semantics")
     def test_count_open_db_files_counts_db_storage_handles(self):
         setup = _load_setup_module()
         data_dir = "/Users/me/xwechat_files/wxid_abc"
@@ -143,6 +145,7 @@ WeChat 123 me 80r REG 1,16 1 /tmp/other.db
         self.assertIn("/Users/me/xwechat_files/wxid_abc", cmd)
         self.assertNotIn("enc_key", " ".join(cmd))
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS path semantics")
     def test_build_lldb_extract_command_uses_sudo_env_and_never_embeds_key_material(self):
         setup = _load_setup_module()
 
@@ -163,6 +166,7 @@ WeChat 123 me 80r REG 1,16 1 /tmp/other.db
         self.assertIn("/Users/me/xwechat_files/wxid_abc", cmd)
         self.assertNotIn("enc_key", " ".join(cmd))
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS path semantics")
     def test_build_lldb_env_prepends_lldb_python_path(self):
         setup = _load_setup_module()
 
@@ -329,6 +333,7 @@ WeChat 123 me 80r REG 1,16 1 /tmp/other.db
         chatlog_restart.assert_called_once_with("http://127.0.0.1:5030")
         verify_read.assert_called_once_with("http://127.0.0.1:5030", limit=5)
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS path semantics")
     def test_chatlog_build_command_targets_cmd_chatlog(self):
         setup = _load_setup_module()
 
