@@ -389,7 +389,9 @@ todo_delete_keywords: list[str] = [
 | `_get_input_control(hwnd)` | 用 UIA 获取聊天输入框(`mmui::ChatInputField`) | `hwnd: int` | `Control \| None` |
 | `_get_input_value(hwnd)` | 读取输入框当前文本 | `hwnd: int` | `str` |
 | `_mention_picker_names(hwnd)` | 读取已打开的 @ 选择器成员列表 | `hwnd: int` | `list[str]` |
-| `_clear_input(hwnd)` | 清空输入框(Esc→Ctrl+A→Backspace) | `hwnd: int` | `None` |
+| `_mention_picker_open(hwnd)` | 判断 @ 选择器是否已打开 | `hwnd: int` | `bool` |
+| `_type_mention_filter(hwnd, text)` | 用 WM_CHAR 逐字过滤选择器（跳过非 BMP 表情字符） | `hwnd: int, text: str` | `None` |
+| `_clear_input(hwnd)` | 清空输入框（选择器打开时才按 Esc，避免 Esc 把微信隐藏到托盘） | `hwnd: int` | `None` |
 | `send_to_chat(group_name, text, max_retries=2, mention_name=None)` | 完整发送管道(主入口；`mention_name` 存在时走真实 @) | `group_name: str, text: str, max_retries: int, mention_name: str \| None` | `bool` |
 | `_score_window(hwnd)` | 给窗口打分(模块级) | `hwnd: int` | `WindowCandidate` |
 | `_get_process_name(pid)` | 获取进程名(模块级) | `pid: int` | `str` |
@@ -1282,7 +1284,7 @@ WeChatWindowController.send_to_chat(group_name, text)  ← 主入口
 | `WHITE_SCREEN_MEAN_THRESHOLD` | `248` | 白屏检测亮度均值阈值 |
 | `WHITE_SCREEN_STDDEV_THRESHOLD` | `3.5` | 白屏检测标准差阈值 |
 | `MENTION_OPEN_DELAY` | `0.6s` | 粘贴 `@` 后等待选择器出现 |
-| `MENTION_FILTER_CHAR_DELAY` | `0.12s` | 每个成员名字符的 WM_CHAR 间隔 |
+| `MENTION_FILTER_CHAR_DELAY` | `0.2s` | 每个成员名字符的 WM_CHAR 间隔 |
 | `MENTION_RESULT_DELAY` | `0.6s` | 输入成员名后等待列表过滤 |
 | `MENTION_SELECT_DELAY` | `0.25s` | Enter 选中成员后等待 |
 | `MENTION_TOKEN` | `"￼"` | 输入框中 mention 占位符 |

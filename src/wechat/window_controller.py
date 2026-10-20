@@ -178,7 +178,7 @@ class WeChatWindowController:
     # WeChat 4.x inserts real @mentions only through its member picker:
     # pasting "@name" is plain text and does not notify the member.
     MENTION_OPEN_DELAY: float = 0.6        # after pasting "@", picker appears
-    MENTION_FILTER_CHAR_DELAY: float = 0.12  # per char typed into picker
+    MENTION_FILTER_CHAR_DELAY: float = 0.2   # per char typed into picker
     MENTION_RESULT_DELAY: float = 0.6      # after typing the member name
     MENTION_SELECT_DELAY: float = 0.25     # after Enter selects the member
     MENTION_POPOVER_ID: str = "MentionPopover"
@@ -842,10 +842,30 @@ class WeChatWindowController:
             logger.debug("UIA mention picker lookup failed", exc_info=True)
             return []
 
+    def _mention_picker_open(self, hwnd: int) -> bool:
+        """Return True when WeChat's @mention popover is open."""
+        try:
+            import uiautomation as uia
+            root = uia.ControlFromHandle(hwnd)
+            if not root:
+                return False
+            for ctrl, _ in uia.WalkControl(root, maxDepth=22):
+                try:
+                    if (ctrl.AutomationId or "") == self.MENTION_POPOVER_ID:
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            logger.debug("UIA mention popover check failed", exc_info=True)
+        return False
+
     def _clear_input(self, hwnd: int) -> None:
         """Clear the chat input (used when mention insertion fails)."""
-        press_key(0x1B)  # Esc closes the mention picker
-        time.sleep(0.15)
+        # Only press Esc while the picker is open — Esc on the main window
+        # can hide WeChat to the tray, which would break sending entirely.
+        if self._mention_picker_open(hwnd):
+            press_key(0x1B)
+            time.sleep(0.15)
         send_combo(0x11, 0x41)  # Ctrl+A
         time.sleep(0.1)
         press_key(0x08)         # Backspace
@@ -874,6 +894,20 @@ class WeChatWindowController:
                 win32gui.SetCursorPos(*pos)
             except Exception:
                 pass
+
+    def _type_mention_filter(self, hwnd: int, text: str) -> None:
+        """Type *text* into the mention picker via WM_CHAR.
+
+        WM_CHAR carries one UTF-16 code unit, so non-BMP characters
+        (emoji such as 🌴) cannot be injected this way.  They are skipped:
+        the remaining prefix is still enough to filter the member list,
+        and the exact member name is verified against the picker anyway.
+        """
+        for ch in text:
+            if ord(ch) > 0xFFFF:
+                continue
+            win32gui.PostMessage(hwnd, win32con.WM_CHAR, ord(ch), 1)
+            time.sleep(self.MENTION_FILTER_CHAR_DELAY)
 
     def send_message_with_mention(self, hwnd: int, text: str,
                                   mention_name: str) -> bool:
@@ -928,9 +962,7 @@ class WeChatWindowController:
             time.sleep(self.MENTION_OPEN_DELAY)
 
             # 3. Type the member name to filter the picker.
-            for ch in mention_name:
-                win32gui.PostMessage(hwnd, win32con.WM_CHAR, ord(ch), 1)
-                time.sleep(self.MENTION_FILTER_CHAR_DELAY)
+            self._type_mention_filter(hwnd, mention_name)
             time.sleep(self.MENTION_RESULT_DELAY)
 
             # 4. Never press Enter unless the picker shows the exact member:
