@@ -225,6 +225,30 @@ class PointStore:
             ).fetchone()
         return row is not None
 
+    def event_points(self, chat_id: str, message_id: str,
+                     reason: str) -> int:
+        """Points awarded for one message and reason (0 when absent)."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(SUM(points), 0) FROM point_events
+                   WHERE chat_id = ? AND message_id = ? AND reason = ?
+                     AND category = 'earn'""",
+                (str(chat_id), str(message_id), reason),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def has_reason_on_day(self, chat_id: str, sender_id: str,
+                          reason: str, day: str) -> bool:
+        """True when this member already earned *reason* on *day*."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM point_events
+                   WHERE chat_id = ? AND sender_id = ? AND reason = ?
+                     AND day = ? AND category = 'earn' LIMIT 1""",
+                (str(chat_id), str(sender_id), reason, day),
+            ).fetchone()
+        return row is not None
+
     def recent_events(self, chat_id: str, sender_id: str,
                       limit: int = 20) -> list[dict]:
         with self._lock:

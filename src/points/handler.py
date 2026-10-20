@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _WS = r"[\s ​﻿]"
 
 EXACT_COMMANDS = {
+    "签到": ("checkin", ""),
     "积分": ("member_card", ""),
     "我的积分": ("member_card", ""),
     "积分卡": ("member_card", ""),
@@ -183,6 +184,8 @@ class PointHandler:
     def _dispatch(self, kind: str, arg: str, text: str, msg: dict,
                   chat_id: str, sender_id: str, sender_name: str,
                   is_admin: bool) -> str | None:
+        if kind == "checkin":
+            return self._checkin(chat_id, sender_id, sender_name, msg)
         if kind == "member_card":
             return self._member_card(chat_id, sender_id, sender_name)
         if kind == "my_info":
@@ -282,6 +285,38 @@ class PointHandler:
         if not wxid:
             return "", ""
         return wxid, self._display_name(chat_id, wxid)
+
+    # ── Check-in ──────────────────────────────────────────────────
+
+    def _checkin(self, chat_id: str, sender_id: str, sender_name: str,
+                 msg: dict) -> str:
+        """Explicit 签到: confirm today's daily-first bonus."""
+        message_id = str(msg.get("message_id") or "")
+        day = local_day(int(time.time()))
+
+        # The router awards points before commands.  If this very message
+        # was the member's first scored message of the day, daily_first is
+        # already on the ledger — report it.
+        points = self._store.event_points(
+            chat_id, message_id, "daily_first",
+        )
+        if not points and not self._store.has_reason_on_day(
+            chat_id, sender_id, "daily_first", day,
+        ):
+            # The message itself was not scored (rate limit / repeated
+            # text): award the check-in explicitly if still due.
+            if self._engine is not None:
+                points = self._engine.check_in(
+                    chat_id, sender_id, sender_name, message_id,
+                )
+
+        if points:
+            return f"@{sender_name} 签到成功，积分+{points}"
+        if self._store.has_reason_on_day(
+            chat_id, sender_id, "daily_first", day,
+        ):
+            return f"@{sender_name} 今天已经签到过啦，明天再来~"
+        return f"@{sender_name} 签到失败，请稍后再试"
 
     # ── Personal views ────────────────────────────────────────────
 

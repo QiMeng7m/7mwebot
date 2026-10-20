@@ -16,6 +16,7 @@ from src.points.handler import PointHandler, looks_like_command
 from src.points.levels import LevelTable
 from src.points.models import PointAward
 from src.points.store import PointStore
+from src.points.util import local_day
 
 
 class HandlerTestBase(unittest.TestCase):
@@ -65,8 +66,9 @@ class HandlerTestBase(unittest.TestCase):
             )
 
     def msg(self, content, sender_id="wxid_a", name="张三"):
+        self._seq = getattr(self, "_seq", 0) + 1
         return {
-            "message_id": f"cmd-{time.time_ns()}",
+            "message_id": f"cmd-{time.time_ns()}-{getattr(self, '_seq', 0)}",
             "chat_id": self.chat,
             "group_name": "测试群",
             "sender_id": sender_id,
@@ -82,7 +84,8 @@ class HandlerTestBase(unittest.TestCase):
 
 class LookLikeCommandTests(unittest.TestCase):
     def test_exact_commands(self):
-        for text in ("积分", "我的信息", "积分榜", "商店", "武力值", "切磋记录"):
+        for text in ("签到", "积分", "我的信息", "积分榜", "商店", "武力值",
+                     "切磋记录"):
             self.assertTrue(looks_like_command(text), text)
 
     def test_prefix_commands(self):
@@ -150,6 +153,36 @@ class QueryTests(HandlerTestBase):
     def test_rules(self):
         reply = self.run_cmd("积分规则")
         self.assertIn("每日封顶", reply)
+
+
+class CheckinTests(HandlerTestBase):
+    def test_checkin_awards_and_confirms(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        reply = self.run_cmd("签到", sender_id="wxid_a", name="张三")
+        self.assertEqual(reply, "@张三 签到成功，积分+10")
+        self.assertTrue(self.store.has_reason_on_day(
+            self.chat, "wxid_a", "daily_first", local_day(int(time.time())),
+        ))
+
+    def test_checkin_reports_daily_first_already_on_message(self):
+        """The router awards daily_first before the command handler runs."""
+        self.add_member("wxid_a", "张三", earned=0)
+        msg = self.msg("签到", "wxid_a", "张三")
+        self.store.record_events(self.chat, msg["message_id"], [
+            PointAward("wxid_a", "张三", "daily_first", 10),
+        ])
+        self.assertEqual(
+            self.handler.handle("签到", msg),
+            "@张三 签到成功，积分+10",
+        )
+
+    def test_checkin_twice_reports_already_done(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        self.run_cmd("签到", sender_id="wxid_a", name="张三")
+        self.assertEqual(
+            self.run_cmd("签到", sender_id="wxid_a", name="张三"),
+            "@张三 今天已经签到过啦，明天再来~",
+        )
 
 
 class ShopTests(HandlerTestBase):

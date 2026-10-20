@@ -166,6 +166,40 @@ class PointEngine:
             )
         return gained
 
+    # ── Explicit check-in ─────────────────────────────────────────
+
+    def check_in(self, chat_id: str, sender_id: str, sender_name: str,
+                 message_id: str) -> int:
+        """Award the daily check-in bonus if the member hasn't earned it.
+
+        Used by the explicit 「签到」 command when the command message
+        itself was not scored (rate limit / repeated text).  Returns the
+        points actually awarded (0 when already checked in).
+        """
+        now = int(time.time())
+        day = local_day(now)
+        if self._store.has_reason_on_day(
+            chat_id, sender_id, "daily_first", day,
+        ):
+            return 0
+        bonus = int(getattr(self._config, "points_daily_first_bonus", 10))
+        if bonus <= 0:
+            return 0
+        daily_cap = int(getattr(self._config, "points_daily_cap", 80))
+        earned = self._store.day_earned(chat_id, sender_id, day)
+        bonus = min(bonus, max(0, daily_cap - earned))
+        if bonus <= 0:
+            return 0
+        inserted = self._store.record_events(
+            chat_id, message_id,
+            [PointAward(sender_id, sender_name, "daily_first", bonus, "earn")],
+            now_ts=now,
+        )
+        if inserted:
+            self._add_day_points(chat_id, sender_id, day, bonus)
+            return bonus
+        return 0
+
     # ── Backfill ──────────────────────────────────────────────────
 
     def rebuild(self, chat_id: str, days: int = 90) -> dict:

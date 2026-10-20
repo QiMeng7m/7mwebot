@@ -774,8 +774,12 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `record_duel(...)` | 原子写入切磋记录与积分转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
 | `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日积分（含 0） | 见签名 | `list[dict]` |
+| `store.py` | `has_earned_on_day(chat_id, sender_id, day)` | 当天是否已有计分 | 见签名 | `bool` |
+| `store.py` | `event_points(chat_id, message_id, reason)` | 查某条消息某个加分项的分数 | 见签名 | `int` |
+| `store.py` | `has_reason_on_day(chat_id, sender_id, reason, day)` | 当天是否已获得某项加分（如 `daily_first`） | 见签名 | `bool` |
 | `store.py` | `delete_earn_events(chat_id)` / `messages_since(...)` / `adjust(...)` | 回溯重建支持 / 管理员调整 | 见签名 | 见签名 |
-| `engine.py` | `PointEngine(store, config).award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励） | 见签名 | `int`（本人得分） |
+| `engine.py` | `PointEngine.award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励） | 见签名 | `int`（本人得分） |
+| `engine.py` | `PointEngine.check_in(chat_id, sender_id, sender_name, message_id)` | 显式「签到」补发当天 `daily_first`（已签返回 0） | 见签名 | `int` |
 | `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
 | `duel.py` | `win_probability(a, d, k=1.15, min_prob=0.08, max_prob=0.92)` | 胜率公式（tanh 曲线，上下限夹取） | 见签名 | `float` |
 | `duel.py` | `steal_amount(a, d, defender_balance, ...)` | 抢分公式（差距越大抢得越少） | 见签名 | `int` |
@@ -783,6 +787,7 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：确认/补发当天首条加分，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
 `BASE_POWER=10`、`POWER_PER_LEVEL=5`。
@@ -978,6 +983,7 @@ AbstractSummarizer (base.py)
          │
          ├─→ [积分/装备/切磋指令 — 裸文本]
          │      └─ PointHandler.handle()
+         │            ├─ 签到（确认/补发 daily_first，回复 @成员）
          │            ├─ 积分 / 我的信息 / 查询 名字
          │            ├─ 积分榜 / 月榜 / 今日榜 / 积分规则
          │            ├─ 商店 / 购买 / 装备 / 卸下 / 武力值 / 战力榜
@@ -1828,6 +1834,7 @@ MessageRouter.handle(msg)
 
 | 输入 | 行为 |
 |---|---|
+| `签到` | 确认当天首条签到分；回复 `@成员 签到成功，积分+10`（已签到则提示明天再来；无需 @ 机器人） |
 | `积分` / `我的积分` / `积分卡` | 个人详细卡片（等级/名次/连续天数/武力值） |
 | `我的信息` | 一行快照：积分、余额、武力值 |
 | `查询 名字` / `查询 我` | 一行查询他人（无需 @；匹配不到成员时保持沉默） |
