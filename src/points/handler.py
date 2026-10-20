@@ -311,11 +311,23 @@ class PointHandler:
                 )
 
         if points:
+            logger.info(
+                "Check-in: %s (%s) +%d in %s",
+                sender_name, sender_id, points, chat_id[:20],
+            )
             return f"@{sender_name} 签到成功，积分+{points}"
         if self._store.has_reason_on_day(
             chat_id, sender_id, "daily_first", day,
         ):
+            logger.info(
+                "Check-in: %s (%s) already signed today in %s",
+                sender_name, sender_id, chat_id[:20],
+            )
             return f"@{sender_name} 今天已经签到过啦，明天再来~"
+        logger.warning(
+            "Check-in failed: %s (%s) in %s (message=%s)",
+            sender_name, sender_id, chat_id[:20], message_id[:12],
+        )
         return f"@{sender_name} 签到失败，请稍后再试"
 
     # ── Personal views ────────────────────────────────────────────

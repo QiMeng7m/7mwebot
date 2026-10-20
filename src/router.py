@@ -272,9 +272,8 @@ class MessageRouter:
         # continues untouched.
         if self._points_handler is not None and msg.get("msg_type") != 10000:
             from .points.handler import looks_like_command
-            if looks_like_command(
-                clean_command_text(msg.get("content", ""), bot_name)
-            ):
+            command_text = clean_command_text(msg.get("content", ""), bot_name)
+            if looks_like_command(command_text):
                 msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
                 if msg_age_sec > AT_MENTION_MAX_AGE_SEC:
                     logger.info(
@@ -284,6 +283,10 @@ class MessageRouter:
                         AT_MENTION_MAX_AGE_SEC,
                     )
                     return None
+                logger.info(
+                    "Points command from '%s': %s",
+                    msg["sender_name"], command_text[:30],
+                )
                 try:
                     reply = self._points_handler.handle(
                         msg.get("content", ""), msg,
