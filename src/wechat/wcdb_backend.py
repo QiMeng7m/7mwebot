@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_POLL_SEC = 1.0
 MAX_DEDUP_SIZE = 5000
 MAX_CONSECUTIVE_ERRORS = 5   # trigger reinit after this many consecutive failures
+# On startup the poller replays the last 50 messages, including old join
+# events.  Welcome only joins that happened recently, otherwise every
+# restart would welcome people who joined long ago.
+MAX_JOIN_AGE_SEC = 120
 
 # WCDB stores some system messages zstd-compressed; the DLL returns the frame
 # as a hex string.  Join events (and many other sysmsg notifications) use it.
@@ -82,6 +86,17 @@ def _decode_wcdb_content(content: str) -> str:
     except Exception:
         logger.debug("Failed to decode compressed WCDB content", exc_info=True)
         return text
+
+
+def _is_recent_join(msg: dict, now: float | None = None) -> bool:
+    """Return True when a join event is fresh enough to welcome."""
+    try:
+        ts = int(msg.get("timestamp") or 0)
+    except (TypeError, ValueError):
+        return False
+    if ts <= 0:
+        return False
+    return (now if now is not None else time.time()) - ts <= MAX_JOIN_AGE_SEC
 
 
 def _extract_join_member(content: str, resolve_name=None) -> str:
@@ -567,6 +582,15 @@ class WcdbBackend(AbstractWeChatBackend):
             # Log only for newly seen messages — _standardize runs on every
             # poll for the same rows, so logging there flooded the console.
             if standardized.get("is_system_join"):
+                if not _is_recent_join(standardized):
+                    # Startup replay of an old join event — don't welcome
+                    # someone minutes/hours after they joined.
+                    logger.debug(
+                        "Skipping stale join event: %s in '%s' (ts=%s)",
+                        standardized.get("new_member_id"), group_name,
+                        standardized.get("timestamp"),
+                    )
+                    continue
                 logger.info(
                     "New member joined: %s in '%s'",
                     standardized.get("new_member_id"), group_name,

@@ -10,6 +10,7 @@ from src.wechat.wcdb_backend import (
     WcdbBackend,
     _decode_wcdb_content,
     _extract_join_member,
+    _is_recent_join,
 )
 
 try:
@@ -210,6 +211,19 @@ class StandardizeJoinTests(unittest.TestCase):
         )
         self.assertIsNotNone(result)
         self.assertFalse(result["is_system_join"])
+
+
+class RecentJoinTests(unittest.TestCase):
+    def test_fresh_join_is_welcomed(self):
+        now = 1_800_000_000
+        self.assertTrue(_is_recent_join({"timestamp": now - 30}, now=now))
+
+    def test_old_join_is_skipped(self):
+        now = 1_800_000_000
+        self.assertFalse(_is_recent_join({"timestamp": now - 600}, now=now))
+
+    def test_missing_timestamp_is_not_welcomed(self):
+        self.assertFalse(_is_recent_join({"timestamp": 0}))
 
 
 class WelcomeResolveTests(unittest.TestCase):

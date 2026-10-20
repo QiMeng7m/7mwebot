@@ -349,6 +349,7 @@ todo_delete_keywords: list[str] = [
 | `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
+| `_is_recent_join(msg, now=None)` | 判断入群事件是否足够新（≤ `MAX_JOIN_AGE_SEC`=120s），避免重启时回放历史消息重复欢迎 | `msg: dict, now: float \| None` | `bool` |
 | `_send_and_confirm(group_name, talker, content)` | 通过键盘发送并确认 | `group_name, talker, content` | `bool` |
 | `_get_voice()` | 懒初始化语音识别管道 | 无 | `VoicePipeline \| None \| False` |
 | `_try_voice(msg)` | 尝试语音识别 | `msg: dict` | `str \| None` |
@@ -543,6 +544,9 @@ todo_delete_keywords: list[str] = [
 >
 > `_standardize()` 每秒会对同一批消息重复执行，因此入群日志只在
 > `_poll_group()` 去重后记录一次（`New member joined: ...`），避免刷屏。
+> 去重后还会用 `_is_recent_join()` 检查事件时间：超过
+> `MAX_JOIN_AGE_SEC`（120 秒）的历史入群消息会被跳过，防止重启时回放
+> 最近 50 条消息、给很久以前入群的人重复发欢迎语。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
