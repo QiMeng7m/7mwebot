@@ -11,7 +11,7 @@
 
 1. 把「群成员发言」量化为积分，按群独立累计。
 2. 总榜 + 月赛季双轨：总榜做长期等级，月榜制造短期竞争。
-3. 积分只用于**排名与等级称号**，不消耗、不兑换（兑换留作后续扩展位）。
+3. 积分同时是玩法货币：**累计获得**决定排名与等级，**可用余额**用于购买装备和免战券（见 [DUEL_EQUIPMENT_DESIGN.md](DUEL_EQUIPMENT_DESIGN.md)）。
 4. 群内纯文本指令即可查询，无需 @机器人。
 5. Web UI 提供榜单、成员明细、规则配置。
 
@@ -19,7 +19,8 @@
 
 | 不做 | 原因 |
 |---|---|
-| 积分消耗 / 兑换 | 当前定位是荣誉体系；兑换需要库存、流水、审核，单独一期 |
+| 积分消耗的具体形态在配套文档中定义（装备、免战券） | 主设计只负责「怎么赚分」 |
+| 玩家间自由转账 / 红包 | 只允许切磋产生的转移与商店产生的消耗，避免小号搬运 |
 | 跨群总榜 | 各群独立统计，避免「大群碾压小群」；`chat_id` 是天然隔离键 |
 | AI 给消息打分 | 成本高、延迟高、结果不可复现，且每条消息都要过模型 |
 | 撤回消息扣分 | 撤回后消息可能已入库，扣分口径难以自洽；简化为一律不扣 |
@@ -49,6 +50,8 @@
 | `reply` | 本条消息通过引用回复了某人 | +2 **给被回复者** | 见 2.2 |
 
 **单条消息自身封顶 5 分**（`base + length + length_long + media + daily_first`），超出的部分截断。`reply` 奖励记在被回复者账上，不受此封顶约束。
+
+> 所有计分类事件的流水 `category='earn'`。切磋转移、商店消耗的类别见配套文档 §2。
 
 ### 2.2 回复奖励的识别
 
@@ -119,8 +122,9 @@ CREATE TABLE IF NOT EXISTS point_events (
     sender_id   TEXT    NOT NULL,              -- 积分归属人
     sender_name TEXT    NOT NULL DEFAULT '',   -- 冗余快照，显示优先走 nickname_service
     message_id  TEXT    NOT NULL,              -- 触发事件的消息；手动调整用 manual:<uuid>
-    reason      TEXT    NOT NULL,              -- base|length|length_long|media|daily_first|reply|manual
-    points      INTEGER NOT NULL,              -- 可为负（仅 manual）
+    reason      TEXT    NOT NULL,              -- base|length|length_long|media|daily_first|reply|manual|steal_in|steal_out|buy_item|buy_shield
+    category    TEXT    NOT NULL DEFAULT 'earn', -- earn|transfer|spend|adjust
+    points      INTEGER NOT NULL,              -- 可为负（steal_out / spend / 扣分）
     day         TEXT    NOT NULL,              -- 本地日期 YYYY-MM-DD
     season      TEXT    NOT NULL,              -- 本地月份 YYYY-MM
     created_at  INTEGER NOT NULL,
@@ -149,28 +153,33 @@ CREATE TABLE IF NOT EXISTS point_seasons (
 ### 4.3 常用查询
 
 ```sql
--- 总榜
-SELECT sender_id, MAX(sender_name) AS sender_name, SUM(points) AS pts,
+-- 累计获得（总榜 / 等级）：只算赚分和调整，不含切磋转移与消费
+SELECT sender_id, MAX(sender_name) AS sender_name, SUM(points) AS earned,
        MAX(created_at) AS last_at
-FROM point_events WHERE chat_id = ?
-GROUP BY sender_id ORDER BY pts DESC, last_at DESC LIMIT ?;
+FROM point_events WHERE chat_id = ? AND category IN ('earn', 'adjust')
+GROUP BY sender_id ORDER BY earned DESC, last_at DESC LIMIT ?;
+
+-- 可用余额（商店 / 切磋）
+SELECT sender_id, SUM(points) AS balance
+FROM point_events WHERE chat_id = ? GROUP BY sender_id;
 
 -- 月榜（赛季）
-... WHERE chat_id = ? AND season = ? ...
+... WHERE chat_id = ? AND season = ? AND category IN ('earn', 'adjust') ...
 
--- 今日榜 / 今日已得（用于日封顶）
-... WHERE chat_id = ? AND day = ? ...
+-- 今日榜 / 今日已赚（用于日封顶）
+... WHERE chat_id = ? AND day = ? AND category = 'earn' ...
 
 -- 连续活跃天数：取该成员最近 N 天的 day 集合，在 Python 里倒推
 SELECT DISTINCT day FROM point_events
-WHERE chat_id = ? AND sender_id = ? ORDER BY day DESC LIMIT 60;
+WHERE chat_id = ? AND sender_id = ? AND category = 'earn'
+ORDER BY day DESC LIMIT 60;
 ```
 
 ---
 
 ## 5. 等级与称号
 
-等级由**本群总积分**推导，阈值存 `data/point_levels.json`（仿 `data/lots.json` 模式，可在 Web UI 编辑）：
+等级由**本群累计获得**（`category IN ('earn','adjust')` 的 SUM）推导，买东西不会掉级；阈值存 `data/point_levels.json`（仿 `data/lots.json` 模式，可在 Web UI 编辑）：
 
 | 等级 | 称号 | 门槛（总积分） |
 |---|---|---|
@@ -213,6 +222,9 @@ WHERE chat_id = ? AND sender_id = ? ORDER BY day DESC LIMIT 60;
 | `积分规则` | 计分规则摘要（给成员看） |
 | `积分调整 <名字> +20 [理由]` | 管理员专用，支持 `+` / `-` |
 | `积分重算` | 管理员专用，触发当前群回溯 |
+
+> 装备商店与切磋指令（`商店`、`购买`、`武力值`、`切磋`、`免战` 等）见
+> [DUEL_EQUIPMENT_DESIGN.md](DUEL_EQUIPMENT_DESIGN.md) §6。
 
 ### 6.1 回复样例
 
@@ -448,7 +460,9 @@ python tools/points_backfill.py --all --rebuild
 | **P1 基础** | schema、rules、store、engine、`积分`/`积分榜`/`月榜`/`积分规则`、回溯工具、单元测试 | 群内可用 |
 | **P2 管理** | 管理员调整/重算、Web API、`PointsPanel` 基础榜单 | UI 可见 |
 | **P3 体验** | 等级阈值编辑、趋势/分布图、赛季自动公告、称号自定义 | 完整形态 |
-| **P4 扩展**（可选） | 积分兑换（抽签次数、自定义头衔）、跨群总榜 | 按需 |
+| **P4 扩展**（可选） | 积分兑换实物/红包、跨群总榜、赛季主题皮肤 | 按需 |
+
+装备与切磋不占用以上阶段，按 [DUEL_EQUIPMENT_DESIGN.md](DUEL_EQUIPMENT_DESIGN.md) §13 的 D1~D4 独立推进（依赖 P1 的流水表）。
 
 ---
 
@@ -464,3 +478,4 @@ python tools/points_backfill.py --all --rebuild
 | 群内隐私 | 仅显示群内成员；Web UI 默认本机访问，不对外暴露 |
 | 指令误触发正常聊天 | 完全匹配 + 300 秒时效；`积分怎么算` 不匹配 |
 | 数据增长 | 每条消息 1~2 行流水，量级与 `messages` 相同；索引控制查询成本 |
+| 经济失衡（切磋刷分） | 切磋只转移余额、不计入累计获得；单次/每日抢分上限 + 同对冷却，见配套文档 §5 |
