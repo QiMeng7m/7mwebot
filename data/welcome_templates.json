@@ -16,6 +16,8 @@
       "message": "欢迎 @{new_member} 加入本群，有问题随时讨论。"
     }
   ],
-  "group_mapping": {},
+  "group_mapping": {
+    "46074645339@chatroom": "tpl_warm"
+  },
   "default_template": "tpl_default"
 }

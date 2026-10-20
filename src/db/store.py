@@ -215,8 +215,6 @@ class MessageStore:
             {
               "senders": [{"sender_id", "sender_name",
                            "message_count", "last_ts"}],
-              "daily": {sender_id: {"YYYY-MM-DD": count}},
-              "hours": [24 ints],
               "dormant": [{"sender_id", "sender_name", "last_ts"}],
               "total": int,
             }
@@ -251,27 +249,6 @@ class MessageStore:
                 params,
             ).fetchall()
 
-            daily_rows = self.conn.execute(
-                f"""SELECT sender_id,
-                           date(timestamp, 'unixepoch', 'localtime') AS day,
-                           COUNT(*) AS message_count
-                    FROM messages
-                    WHERE {where}
-                    GROUP BY sender_id,
-                             date(timestamp, 'unixepoch', 'localtime')""",
-                params,
-            ).fetchall()
-
-            hour_rows = self.conn.execute(
-                f"""SELECT CAST(strftime('%H', timestamp, 'unixepoch',
-                                           'localtime') AS INTEGER) AS hour,
-                           COUNT(*) AS message_count
-                    FROM messages
-                    WHERE {where}
-                    GROUP BY hour""",
-                params,
-            ).fetchall()
-
             # Candidates are everyone who has ever spoken in this chat.
             # MAX(messages.timestamp) is the authoritative last message —
             # the user_last_message cursor can regress during startup replay.
@@ -287,18 +264,6 @@ class MessageStore:
                    WHERE u.chat_id = ?""",
                 (chat_id,),
             ).fetchall()
-
-        daily: dict[str, dict[str, int]] = {}
-        for row in daily_rows:
-            daily.setdefault(row["sender_id"], {})[row["day"]] = int(
-                row["message_count"]
-            )
-
-        hours = [0] * 24
-        for row in hour_rows:
-            hour = int(row["hour"] or 0)
-            if 0 <= hour < 24:
-                hours[hour] = int(row["message_count"])
 
         dormant = []
         for row in dormant_rows:
@@ -316,8 +281,6 @@ class MessageStore:
         senders = [dict(row) for row in sender_rows]
         return {
             "senders": senders,
-            "daily": daily,
-            "hours": hours,
             "dormant": dormant,
             "total": sum(int(s["message_count"]) for s in senders),
         }

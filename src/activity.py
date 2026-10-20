@@ -2,22 +2,20 @@
 
 A bare (or @bot) message equal to ``活跃查询`` / ``活跃查询 7`` /
 ``活跃查询7天`` produces a plain-text report for the current group:
-ranking, per-person daily counts, hourly distribution and dormant members.
+ranking, the last-message time of each speaker and dormant members.
 """
 
 import logging
 import re
 import time
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS = 15
 MAX_DAYS = 90
 DISPLAY_TOP_N = 5
-MAX_DAILY_LINES = 5
-MAX_TIME_BUCKETS = 2
 MAX_DORMANT_NAMES = 3
 DAILY_NAME_WIDTH = 10
 NAME_MAX_WIDTH = 14
@@ -27,8 +25,6 @@ _WS = r"\s\u2005\u200b\ufeff"
 _ACTIVITY_RE = re.compile(
     rf"^[{_WS}]*活跃查询(?:[{_WS}:：]*(\d+)[{_WS}]*天?)?[{_WS}]*$"
 )
-
-_HOUR_BUCKETS = ((0, 3), (4, 7), (8, 11), (12, 15), (16, 19), (20, 23))
 
 
 # ── Command parsing ──────────────────────────────────────────────────
@@ -195,8 +191,6 @@ def format_activity_report(
     """Format aggregated store data into the plain-text WeChat reply."""
     senders = data.get("senders") or []
     total = int(data.get("total") or 0)
-    daily = data.get("daily") or {}
-    hours = list(data.get("hours") or [0] * 24)
     dormant = data.get("dormant") or []
 
     requester = _clean_display_name(requester_name)
@@ -248,65 +242,6 @@ def format_activity_report(
         rest = senders[len(top):]
         rest_count = sum(int(s["message_count"]) for s in rest)
         lines.append(f"其余 {len(rest)} 人共 {rest_count} 条")
-
-    # ── Daily summary: only days that actually have messages ──
-    day_totals: dict[str, int] = {}
-    for per_day in daily.values():
-        for day, count in per_day.items():
-            day_totals[day] = day_totals.get(day, 0) + int(count)
-    active_days = sorted(day for day, count in day_totals.items() if count > 0)
-
-    if active_days:
-        lines.append("")
-        lines.append("每日")
-        shown_days = active_days[-MAX_DAILY_LINES:]
-        top_ids = {s["sender_id"] for s in top}
-        for day in shown_days:
-            parts = []
-            for sender in top:
-                sender_id = sender["sender_id"]
-                count = int(daily.get(sender_id, {}).get(day, 0))
-                if count:
-                    parts.append(
-                        f"{_truncate_display(names[sender_id], DAILY_NAME_WIDTH)} {count}"
-                    )
-            other = sum(
-                int(daily.get(sender_id, {}).get(day, 0))
-                for sender_id in daily
-                if sender_id not in top_ids
-            )
-            if other:
-                parts.append(f"其他 {other}")
-            lines.append(
-                f"{day[5:]} 共{day_totals[day]}条：" + " · ".join(parts)
-            )
-        if len(active_days) > len(shown_days):
-            lines.append(
-                f"（更早的 {len(active_days) - len(shown_days)} 个活跃日未显示）"
-            )
-
-    # ── Active hours: only non-empty buckets, top 2 ──────────
-    bucket_counts = [
-        sum(hours[lo:hi + 1]) if lo < len(hours) else 0
-        for lo, hi in _HOUR_BUCKETS
-    ]
-    ranked_buckets = sorted(
-        (
-            (lo, hi, count)
-            for (lo, hi), count in zip(_HOUR_BUCKETS, bucket_counts)
-            if count > 0
-        ),
-        key=lambda item: (-item[2], item[0]),
-    )[:MAX_TIME_BUCKETS]
-    if ranked_buckets:
-        lines.append("")
-        lines.append(
-            "活跃时段：" + "、".join(
-                f"{lo:02d}-{hi:02d}点 {count}条"
-                f"({count * 100.0 / total:.0f}%)"
-                for lo, hi, count in ranked_buckets
-            )
-        )
 
     # ── Members with no messages in the window (compact) ─────
     if dormant:

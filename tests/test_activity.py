@@ -154,24 +154,6 @@ class StoreActivityTests(unittest.TestCase):
             [("wxid_a", 3), ("wxid_b", 1)],
         )
 
-    def test_daily_breakdown(self):
-        data = self.store.get_activity_report_data(self.chat, self.since)
-        today = datetime.now().date().isoformat()
-        yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
-        self.assertEqual(data["daily"]["wxid_a"][today], 2)
-        self.assertEqual(data["daily"]["wxid_a"][yesterday], 1)
-        self.assertEqual(data["daily"]["wxid_b"][today], 1)
-
-    def test_hourly_distribution(self):
-        data = self.store.get_activity_report_data(self.chat, self.since)
-        hours = data["hours"]
-        self.assertEqual(len(hours), 24)
-        self.assertEqual(hours[10], 1)
-        self.assertEqual(hours[11], 1)
-        self.assertEqual(hours[9], 1)
-        self.assertEqual(hours[22], 1)
-        self.assertEqual(hours[12], 0)  # system message excluded
-
     def test_dormant_members(self):
         data = self.store.get_activity_report_data(self.chat, self.since)
         dormant_ids = [d["sender_id"] for d in data["dormant"]]
@@ -196,7 +178,6 @@ class FormatActivityReportTests(unittest.TestCase):
     def setUp(self):
         self.now = int(time.time())
         self.since = activity_window_start(15, self.now)
-        self.today = datetime.now().date().isoformat()
         self.data = {
             "senders": [
                 {"sender_id": "wxid_a", "sender_name": "张三",
@@ -204,19 +185,12 @@ class FormatActivityReportTests(unittest.TestCase):
                 {"sender_id": "wxid_b", "sender_name": "李四",
                  "message_count": 40, "last_ts": self.now - 2 * 86400},
             ],
-            "daily": {
-                "wxid_a": {self.today: 60},
-                "wxid_b": {self.today: 40},
-            },
-            "hours": [0] * 24,
             "dormant": [
                 {"sender_id": "wxid_c", "sender_name": "王五",
                  "last_ts": self.now - 20 * 86400},
             ],
             "total": 100,
         }
-        self.data["hours"][9] = 30
-        self.data["hours"][20] = 70
 
     def _format(self, data=None, nicks=None):
         return format_activity_report(
@@ -238,46 +212,15 @@ class FormatActivityReportTests(unittest.TestCase):
         self.assertIn("发言 TOP2", report)
         self.assertIn("1. 张三 60条(60%)", report)
         self.assertIn("2. 李四 40条(40%)", report)
-        self.assertIn("每日", report)
-        self.assertIn(self.today[5:] + " 共100条：", report)
-        self.assertIn("活跃时段：20-23点 70条(70%)", report)
+        self.assertNotIn("每日", report)
+        self.assertNotIn("活跃时段", report)
         self.assertIn("窗口内未发言：1 人（王五）", report)
 
     def test_empty_window(self):
         report = self._format(data={
-            "senders": [], "daily": {}, "hours": [0] * 24,
-            "dormant": [], "total": 0,
+            "senders": [], "dormant": [], "total": 0,
         })
         self.assertIn("统计范围内暂无消息。", report)
-
-    def test_zero_days_are_not_shown(self):
-        today = datetime.now().date()
-        d0 = (today - timedelta(days=2)).isoformat()
-        d1 = (today - timedelta(days=1)).isoformat()
-        d2 = today.isoformat()
-        data = dict(self.data)
-        data["daily"] = {"wxid_a": {d0: 5, d2: 95}}
-        report = self._format(data=data)
-        daily_section = report.split("每日", 1)[1].split("活跃时段")[0]
-        self.assertIn(d0[5:], daily_section)
-        self.assertIn(d2[5:], daily_section)
-        self.assertNotIn(d1[5:], daily_section)
-
-    def test_daily_lines_are_capped(self):
-        today = datetime.now().date()
-        days = {
-            (today - timedelta(days=i)).isoformat(): 10
-            for i in range(7)
-        }
-        data = dict(self.data)
-        data["senders"] = [
-            {"sender_id": "wxid_a", "sender_name": "张三",
-             "message_count": 70, "last_ts": self.now - 60},
-        ]
-        data["daily"] = {"wxid_a": days}
-        data["total"] = 70
-        report = self._format(data=data)
-        self.assertIn("更早的 2 个活跃日未显示", report)
 
     def test_display_is_limited_to_top_five(self):
         data = dict(self.data)
@@ -286,8 +229,6 @@ class FormatActivityReportTests(unittest.TestCase):
              "message_count": 10 - i, "last_ts": self.now - 60}
             for i in range(7)
         ]
-        data["daily"] = {}
-        data["hours"] = [0] * 24
         data["total"] = sum(s["message_count"] for s in data["senders"])
         report = self._format(data=data)
         self.assertIn("发言 TOP5", report)
