@@ -786,6 +786,10 @@ todo_delete_keywords: list[str] = [
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
 `BASE_POWER=10`、`POWER_PER_LEVEL=5`。
 
+命令行：`tools/points_backfill.py --all | --chat <chat_id> --days N
+[--rebuild] [--db <path>]`——按 `messages` 表重放计分；`--rebuild`
+先删除 `category='earn'` 的流水再重算，保留管理员调整/消费/切磋转移。
+
 ---
 
 ## 3. 模块间关系图
@@ -1851,7 +1855,8 @@ MessageRouter.handle(msg)
 - 切磋只转移余额，不计入累计获得，避免打架刷榜
 - 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
 - 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
-- 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`
+- 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`，
+  或命令行工具 `tools/points_backfill.py --all --days 90 [--rebuild]`
 - 所有群内回复为纯文本直接返回，不经过 Markdown 清洗
 
 ---
