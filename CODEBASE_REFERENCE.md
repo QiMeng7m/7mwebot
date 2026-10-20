@@ -350,7 +350,8 @@ todo_delete_keywords: list[str] = [
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_is_recent_join(msg, now=None)` | 判断入群事件是否足够新（≤ `MAX_JOIN_AGE_SEC`=120s），避免重启时回放历史消息重复欢迎 | `msg: dict, now: float \| None` | `bool` |
-| `_send_and_confirm(group_name, talker, content)` | 通过键盘发送并确认 | `group_name, talker, content` | `bool` |
+| `_mention_name_for(reply, standardized)` | 决定回复中要真实 @ 的成员：入群事件→新成员，其他回复→文本中包含 `@发送者` 时用发送者 | `reply: str, standardized: dict` | `str \| None` |
+| `_send_and_confirm(group_name, talker, content, mention_name=None)` | 通过键盘发送并确认，可指定真实 @ 成员 | `group_name, talker, content, mention_name: str \| None` | `bool` |
 | `_get_voice()` | 懒初始化语音识别管道 | 无 | `VoicePipeline \| None \| False` |
 | `_try_voice(msg)` | 尝试语音识别 | `msg: dict` | `str \| None` |
 
@@ -384,7 +385,12 @@ todo_delete_keywords: list[str] = [
 | `activate(hwnd)` | 激活微信窗口(4层策略) | `hwnd: int` | `bool` |
 | `navigate_to_chat(hwnd, group_name)` | 键盘导航到指定群聊 | `hwnd: int, group_name: str` | `bool` |
 | `send_message(hwnd, text)` | 键盘发送消息(Ctrl+V→Enter) | `hwnd: int, text: str` | `bool` |
-| `send_to_chat(group_name, text, max_retries=2)` | 完整发送管道(主入口) | `group_name: str, text: str, max_retries: int` | `bool` |
+| `send_message_with_mention(hwnd, text, mention_name)` | 通过 @ 选择器插入真实 mention，再发送；失败时回退纯文本 | `hwnd: int, text: str, mention_name: str` | `bool` |
+| `_get_input_control(hwnd)` | 用 UIA 获取聊天输入框(`mmui::ChatInputField`) | `hwnd: int` | `Control \| None` |
+| `_get_input_value(hwnd)` | 读取输入框当前文本 | `hwnd: int` | `str` |
+| `_mention_picker_names(hwnd)` | 读取已打开的 @ 选择器成员列表 | `hwnd: int` | `list[str]` |
+| `_clear_input(hwnd)` | 清空输入框(Esc→Ctrl+A→Backspace) | `hwnd: int` | `None` |
+| `send_to_chat(group_name, text, max_retries=2, mention_name=None)` | 完整发送管道(主入口；`mention_name` 存在时走真实 @) | `group_name: str, text: str, max_retries: int, mention_name: str \| None` | `bool` |
 | `_score_window(hwnd)` | 给窗口打分(模块级) | `hwnd: int` | `WindowCandidate` |
 | `_get_process_name(pid)` | 获取进程名(模块级) | `pid: int` | `str` |
 | `get_foreground_info()` | 获取前台窗口诊断信息 | 无 | `str` |
@@ -547,6 +553,10 @@ todo_delete_keywords: list[str] = [
 > 去重后还会用 `_is_recent_join()` 检查事件时间：超过
 > `MAX_JOIN_AGE_SEC`（120 秒）的历史入群消息会被跳过，防止重启时回放
 > 最近 50 条消息、给很久以前入群的人重复发欢迎语。
+>
+> 欢迎语中的 `@新成员` 会由 `window_controller.send_message_with_mention()`
+> 通过微信成员选择器插入为**真实 @**（会触发对方提醒），而不是粘贴普通
+> 文本。查找失败时自动回退为纯文本，消息不会丢失。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -1248,10 +1258,15 @@ WeChatWindowController.send_to_chat(group_name, text)  ← 主入口
   │     ├── Phase 3: Enter → 选择第一个搜索结果
   │     └── _verify_chat_title() — UIA 或窗口标题验证
   │
-  └── send_message(hwnd, text)
-        ├── _set_clipboard(text) — 写入剪贴板
-        ├── Ctrl+V — 粘贴
-        └── Enter — 发送
+  ├── send_message(hwnd, text)  或  send_message_with_mention(hwnd, text, mention_name)
+  │     ├── [mention] 粘贴 @ 之前的文本 → 粘贴 "@" 打开选择器
+  │     │            → WM_CHAR 逐字输入成员名过滤 → UIA 校验成员在列表中
+  │     │            → Enter 选中（输入框变为 ￼ mention token）
+  │     │            → 粘贴剩余文本 → Enter 发送
+  │     │            （校验失败时 _clear_input 后回退纯文本发送）
+  │     ├── _set_clipboard(text) — 写入剪贴板
+  │     ├── Ctrl+V — 粘贴
+  │     └── Enter — 发送
 ```
 
 #### 关键常量
@@ -1266,6 +1281,11 @@ WeChatWindowController.send_to_chat(group_name, text)  ← 主入口
 | `SELECT_RESULT_DELAY` | `0.15s` | Enter 后等待 |
 | `WHITE_SCREEN_MEAN_THRESHOLD` | `248` | 白屏检测亮度均值阈值 |
 | `WHITE_SCREEN_STDDEV_THRESHOLD` | `3.5` | 白屏检测标准差阈值 |
+| `MENTION_OPEN_DELAY` | `0.6s` | 粘贴 `@` 后等待选择器出现 |
+| `MENTION_FILTER_CHAR_DELAY` | `0.12s` | 每个成员名字符的 WM_CHAR 间隔 |
+| `MENTION_RESULT_DELAY` | `0.6s` | 输入成员名后等待列表过滤 |
+| `MENTION_SELECT_DELAY` | `0.25s` | Enter 选中成员后等待 |
+| `MENTION_TOKEN` | `"￼"` | 输入框中 mention 占位符 |
 
 ---
 

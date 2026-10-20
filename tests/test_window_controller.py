@@ -168,6 +168,43 @@ class WeChatWindowControllerTests(unittest.TestCase):
                 "target group", "hello", "WeChat window is blank/white", 100
             )
 
+    def test_send_to_chat_uses_mention_picker_when_requested(self):
+        controller = WeChatWindowController()
+
+        with (
+            patch.object(controller, "find_hwnd", return_value=100),
+            patch.object(controller, "activate", return_value=True),
+            patch.object(controller, "_looks_like_blank_window", return_value=False),
+            patch.object(controller, "navigate_to_chat", return_value=100),
+            patch.object(
+                controller, "send_message_with_mention", return_value=True
+            ) as mention,
+            patch.object(controller, "send_message") as plain,
+            patch.object(controller, "_log_failure"),
+        ):
+            self.assertTrue(controller.send_to_chat(
+                "target group", "hello @张三", max_retries=1,
+                mention_name="张三",
+            ))
+            mention.assert_called_once_with(100, "hello @张三", "张三")
+            plain.assert_not_called()
+
+    def test_send_to_chat_without_mention_uses_plain_paste(self):
+        controller = WeChatWindowController()
+
+        with (
+            patch.object(controller, "find_hwnd", return_value=100),
+            patch.object(controller, "activate", return_value=True),
+            patch.object(controller, "_looks_like_blank_window", return_value=False),
+            patch.object(controller, "navigate_to_chat", return_value=100),
+            patch.object(controller, "send_message_with_mention") as mention,
+            patch.object(controller, "send_message", return_value=True) as plain,
+            patch.object(controller, "_log_failure"),
+        ):
+            self.assertTrue(controller.send_to_chat("target group", "hello", max_retries=1))
+            plain.assert_called_once_with(100, "hello")
+            mention.assert_not_called()
+
 
 
 if __name__ == "__main__":

@@ -174,6 +174,16 @@ class WeChatWindowController:
     PASTE_SEND_DELAY: float = 0.15         # after Ctrl+V paste in send
     TAB_SWITCH_DELAY: float = 0.25         # after switching tabs (e.g. Chat→Contacts)
 
+    # ── Mention picker timing constants ────────────────────────────
+    # WeChat 4.x inserts real @mentions only through its member picker:
+    # pasting "@name" is plain text and does not notify the member.
+    MENTION_OPEN_DELAY: float = 0.6        # after pasting "@", picker appears
+    MENTION_FILTER_CHAR_DELAY: float = 0.12  # per char typed into picker
+    MENTION_RESULT_DELAY: float = 0.6      # after typing the member name
+    MENTION_SELECT_DELAY: float = 0.25     # after Enter selects the member
+    MENTION_POPOVER_ID: str = "MentionPopover"
+    MENTION_TOKEN: str = "￼"          # object char WeChat uses in the input
+
     def __init__(self):
         self._cached_hwnd: Optional[int] = None
         self._cached_at: float = 0.0
@@ -771,19 +781,221 @@ class WeChatWindowController:
         logger.info("Message send action completed: %d chars", len(text))
         return True
 
+    # ── Real @mention support ─────────────────────────────────────
+
+    def _get_input_control(self, hwnd: int):
+        """Return the chat input UIA control, or None if unavailable."""
+        try:
+            import uiautomation as uia
+            root = uia.ControlFromHandle(hwnd)
+            if not root:
+                return None
+            for ctrl, _ in uia.WalkControl(root, maxDepth=20):
+                try:
+                    if "ChatInputField" in (ctrl.ClassName or ""):
+                        return ctrl
+                except Exception:
+                    continue
+        except Exception:
+            logger.debug("UIA chat input lookup failed", exc_info=True)
+        return None
+
+    def _get_input_value(self, hwnd: int) -> str:
+        """Read the current chat input text via UIA ('' when unavailable)."""
+        ctrl = self._get_input_control(hwnd)
+        if ctrl is None:
+            return ""
+        try:
+            return ctrl.GetValuePattern().Value or ""
+        except Exception:
+            return ""
+
+    def _mention_picker_names(self, hwnd: int) -> list[str]:
+        """Return member names shown in the open @mention picker."""
+        try:
+            import uiautomation as uia
+            root = uia.ControlFromHandle(hwnd)
+            if not root:
+                return []
+            popover = None
+            for ctrl, _ in uia.WalkControl(root, maxDepth=22):
+                try:
+                    if (ctrl.AutomationId or "") == self.MENTION_POPOVER_ID:
+                        popover = ctrl
+                        break
+                except Exception:
+                    continue
+            if popover is None:
+                return []
+            names: list[str] = []
+            for ctrl, _ in uia.WalkControl(popover, maxDepth=8):
+                try:
+                    if (
+                        ctrl.ControlTypeName == "ListItemControl"
+                        and (ctrl.Name or "")
+                    ):
+                        names.append(ctrl.Name)
+                except Exception:
+                    continue
+            return names
+        except Exception:
+            logger.debug("UIA mention picker lookup failed", exc_info=True)
+            return []
+
+    def _clear_input(self, hwnd: int) -> None:
+        """Clear the chat input (used when mention insertion fails)."""
+        press_key(0x1B)  # Esc closes the mention picker
+        time.sleep(0.15)
+        send_combo(0x11, 0x41)  # Ctrl+A
+        time.sleep(0.1)
+        press_key(0x08)         # Backspace
+        time.sleep(0.2)
+        if not self._get_input_value(hwnd):
+            return
+        # Focus did not land in the input — click it once and retry.
+        ctrl = self._get_input_control(hwnd)
+        if ctrl is None:
+            return
+        try:
+            pos = win32gui.GetCursorPos()
+        except Exception:
+            pos = None
+        try:
+            ctrl.Click()
+        except Exception:
+            return
+        time.sleep(0.2)
+        send_combo(0x11, 0x41)
+        time.sleep(0.1)
+        press_key(0x08)
+        time.sleep(0.2)
+        if pos:
+            try:
+                win32gui.SetCursorPos(*pos)
+            except Exception:
+                pass
+
+    def send_message_with_mention(self, hwnd: int, text: str,
+                                  mention_name: str) -> bool:
+        """Send *text* with a real WeChat @mention of *mention_name*.
+
+        Sequence: paste the text before the @ → paste "@" to open WeChat's
+        member picker → type the member name (WM_CHAR, works with Chinese)
+        → verify the picker shows that exact member → Enter to insert the
+        mention → paste the remaining text → Enter to send.
+
+        Falls back to plain text (``send_message``) whenever the picker or
+        the member cannot be verified, so a message is never lost.
+        """
+        needle = f"@{mention_name}"
+        idx = text.find(needle) if mention_name else -1
+        if idx < 0:
+            return self.send_message(hwnd, text)
+
+        prefix = text[:idx]
+        suffix = text[idx + len(needle):]
+
+        if not self._validate_hwnd(hwnd):
+            logger.error("send_message_with_mention: invalid HWND=%s", hwnd)
+            return False
+        if not self._foreground_matches(hwnd):
+            if not self.activate(hwnd):
+                logger.error(
+                    "send_message_with_mention: activation failed. %s",
+                    self.get_foreground_info(),
+                )
+                return False
+            active = self._current_wechat_foreground_hwnd()
+            if active:
+                hwnd = self._adopt_foreground_hwnd(hwnd, "mention send")
+
+        logger.info(
+            "Sending message with real @%s: %d chars", mention_name, len(text)
+        )
+
+        try:
+            # 1. Text before the mention (e.g. "欢迎 ").
+            if prefix:
+                self._set_clipboard(prefix)
+                time.sleep(self.CLIPBOARD_DELAY)
+                send_combo(0x11, 0x56)  # Ctrl+V
+                time.sleep(self.PASTE_DELAY)
+
+            # 2. "@" opens the mention picker.
+            self._set_clipboard("@")
+            time.sleep(self.CLIPBOARD_DELAY)
+            send_combo(0x11, 0x56)
+            time.sleep(self.MENTION_OPEN_DELAY)
+
+            # 3. Type the member name to filter the picker.
+            for ch in mention_name:
+                win32gui.PostMessage(hwnd, win32con.WM_CHAR, ord(ch), 1)
+                time.sleep(self.MENTION_FILTER_CHAR_DELAY)
+            time.sleep(self.MENTION_RESULT_DELAY)
+
+            # 4. Never press Enter unless the picker shows the exact member:
+            # Enter with no picker would send a half-written message.
+            names = self._mention_picker_names(hwnd)
+            if mention_name not in names:
+                logger.warning(
+                    "Mention picker has no exact match for '%s' (visible: %s) "
+                    "— falling back to plain text",
+                    mention_name, names[:5],
+                )
+                self._clear_input(hwnd)
+                return self.send_message(hwnd, text)
+
+            # 5. Enter selects the highlighted (filtered) member.
+            press_key(0x0D)
+            time.sleep(self.MENTION_SELECT_DELAY)
+
+            value = self._get_input_value(hwnd)
+            if self.MENTION_TOKEN not in value:
+                logger.warning(
+                    "Mention was not inserted (input=%r) — falling back "
+                    "to plain text", value[:40],
+                )
+                self._clear_input(hwnd)
+                return self.send_message(hwnd, text)
+
+            # 6. Remaining text, then send.
+            if suffix:
+                self._set_clipboard(suffix)
+                time.sleep(self.CLIPBOARD_DELAY)
+                send_combo(0x11, 0x56)
+                time.sleep(self.PASTE_SEND_DELAY)
+
+            press_key(0x0D)
+            time.sleep(self.ENTER_SEND_DELAY)
+            logger.info("Message with real @%s sent", mention_name)
+            return True
+        except Exception:
+            logger.exception("send_message_with_mention failed")
+            try:
+                self._clear_input(hwnd)
+            except Exception:
+                pass
+            return False
+
     # ── Full send pipeline ────────────────────────────────────────
 
     def send_to_chat(self, group_name: str, text: str,
-                     max_retries: int = 2) -> bool:
+                     max_retries: int = 2,
+                     mention_name: str | None = None) -> bool:
         """Complete send pipeline: find → activate → navigate → send.
 
         This is the main entry point for sending a message.
         Every step is verified; failures are logged.
 
+        When *mention_name* is given and ``@{mention_name}`` appears in
+        *text*, a real WeChat @mention is inserted via the member picker;
+        otherwise the text is pasted as-is.
+
         Args:
             group_name: Target group chat name.
             text: Message content.
             max_retries: Max retry attempts on failure.
+            mention_name: Member to @mention (group display name).
 
         Returns:
             True if successfully sent.
@@ -825,7 +1037,13 @@ class WeChatWindowController:
             else:
                 hwnd = self._adopt_foreground_hwnd(hwnd, "after navigation")
 
-            if not self.send_message(hwnd, text):
+            if mention_name:
+                sent = self.send_message_with_mention(
+                    hwnd, text, mention_name,
+                )
+            else:
+                sent = self.send_message(hwnd, text)
+            if not sent:
                 self._log_failure(group_name, text, "send failed", hwnd)
                 continue
 

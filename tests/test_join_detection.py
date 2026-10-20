@@ -11,6 +11,7 @@ from src.wechat.wcdb_backend import (
     _decode_wcdb_content,
     _extract_join_member,
     _is_recent_join,
+    _mention_name_for,
 )
 
 try:
@@ -211,6 +212,34 @@ class StandardizeJoinTests(unittest.TestCase):
         )
         self.assertIsNotNone(result)
         self.assertFalse(result["is_system_join"])
+
+
+class MentionTargetTests(unittest.TestCase):
+    def test_join_reply_mentions_new_member(self):
+        self.assertEqual(
+            _mention_name_for(
+                "欢迎 @小柒 加入！",
+                {"is_system_join": True, "new_member_id": "小柒"},
+            ),
+            "小柒",
+        )
+
+    def test_reply_mentions_sender_when_present(self):
+        self.assertEqual(
+            _mention_name_for(
+                "@张三 测试总结",
+                {"is_system_join": False, "sender_name": "张三"},
+            ),
+            "张三",
+        )
+
+    def test_no_mention_when_name_absent(self):
+        self.assertIsNone(
+            _mention_name_for(
+                "总结完成",
+                {"is_system_join": False, "sender_name": "张三"},
+            )
+        )
 
 
 class RecentJoinTests(unittest.TestCase):

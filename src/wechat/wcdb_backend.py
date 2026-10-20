@@ -88,6 +88,23 @@ def _decode_wcdb_content(content: str) -> str:
         return text
 
 
+def _mention_name_for(reply: str, standardized: dict) -> str | None:
+    """Return the member to @mention in *reply*, or None.
+
+    Join events mention the new member.  Other replies usually start
+    with ``@<sender>``; only claim a mention when that exact name is in
+    the text, otherwise the window controller would fall back anyway.
+    """
+    if not reply:
+        return None
+    if standardized.get("is_system_join"):
+        return standardized.get("new_member_id") or None
+    sender = str(standardized.get("sender_name") or "")
+    if sender and f"@{sender}" in reply:
+        return sender
+    return None
+
+
 def _is_recent_join(msg: dict, now: float | None = None) -> bool:
     """Return True when a join event is fresh enough to welcome."""
     try:
@@ -638,7 +655,10 @@ class WcdbBackend(AbstractWeChatBackend):
                 # _send_and_confirm uses window_controller (keyboard), not
                 # _client (WCDB).  Don't hold _client_lock during send —
                 # it blocks the poll loop from reading new messages.
-                success = self._send_and_confirm(group_name, talker, reply)
+                mention = _mention_name_for(reply, standardized)
+                success = self._send_and_confirm(
+                    group_name, talker, reply, mention_name=mention,
+                )
                 if success:
                     logger.info(
                         "Reply sent: group='%s' (%d chars)",
@@ -825,11 +845,14 @@ class WcdbBackend(AbstractWeChatBackend):
     # ── Message sending ──────────────────────────────────────────────
 
     def _send_and_confirm(self, group_name: str, talker: str,
-                          content: str) -> bool:
+                          content: str,
+                          mention_name: str | None = None) -> bool:
         """Send via WeChatWindowController (fire-and-forget).
 
         Returns True if the keyboard send action completed successfully.
         No confirmation polling — the window controller already retries
         on failure, and polling WCDB adds 3s of latency for marginal gain.
         """
-        return self._window.send_to_chat(group_name, content)
+        return self._window.send_to_chat(
+            group_name, content, mention_name=mention_name,
+        )
