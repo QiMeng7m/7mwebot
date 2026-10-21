@@ -114,6 +114,21 @@ class RouterPointsTests(unittest.TestCase):
         reply = self.router.handle(self._message("活跃查询"))
         self.assertIn("群活跃报告", reply)
 
+    def test_checkin_at_mention_with_custom_id_prefix(self):
+        """Custom WeChat IDs prefix group text just like wxid_*."""
+        reply = self.router.handle(self._message(
+            "zy-519:\n@群聊小助手 签到",
+            sender_id="zy-519", name="降娄", is_at=True,
+        ))
+        self.assertIn("签到成功", reply)
+
+    def test_draw_lots_at_mention_with_custom_id_prefix(self):
+        reply = self.router.handle(self._message(
+            "canglan1992:\n@群聊小助手 抽签",
+            sender_id="canglan1992", name="See.", is_at=True,
+        ))
+        self.assertIn("抽签结果", reply)
+
     def test_stale_points_command_ignored(self):
         reply = self.router.handle(self._message(
             "积分", ts=int(time.time()) - 3600))

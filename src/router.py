@@ -316,22 +316,11 @@ class MessageRouter:
                 msg["chat_id"], msg["sender_name"], msg["content"][:80],
             )
 
-            clean_content = msg["content"]
-            if self._config.bot_display_name:
-                # WeChat @mentions use @wxid<invisible_separator>text format.
-                # The separator (U+2005, U+200B, U+FEFF, etc.) is not removed
-                # by str.strip().  Use a regex to strip @bot_name + any
-                # trailing non-word chars in one pass.
-                clean_content = re.sub(
-                    re.escape(f"@{self._config.bot_display_name}") + r"[^\w]*",
-                    "", msg["content"]
-                ).strip()
-
-            # Strip WeChat reply-quote prefix: wxid_xxx:\n
-            # When a user replies to a message then @mentions the bot,
-            # WeChat prepends "wxid_<replied_user_id>:\n" to the content.
-            clean_content = re.sub(
-                r'^\s*wxid_[a-zA-Z0-9]+:\s*', '', clean_content,
+            # Strip the WCDB sender/reply prefix and the bot @mention.
+            # The prefix is the member's username, which may be a custom
+            # WeChat ID (zy-519, canglan1992, …) rather than wxid_*.
+            clean_content = clean_command_text(
+                msg["content"], self._config.bot_display_name,
             )
 
             reply: Optional[str] = None

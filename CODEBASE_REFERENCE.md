@@ -995,6 +995,8 @@ AbstractSummarizer (base.py)
          │
          ├─→ [@mention 路径]
          │      │
+         │      ├─ clean_command_text(content, bot_name) → clean_content
+         │      │     (剥离消息前缀/@bot；自定义微信号同样生效)
          │      ├─ trigger check → TriggerDetector.is_trigger()
          │      ├─ summary → _handle_summary()
          │      │     ├─ MessageStore.get_user_previous_timestamp()
@@ -1112,7 +1114,7 @@ WcdbBackend.start(callback)
     "message_id": str,      # MD5 哈希的稳定 ID
     "chat_id": str,         # @chatroom talker ID
     "group_name": str,      # 群显示名
-    "sender_id": str,       # wxid_xxx
+    "sender_id": str,       # 微信号（wxid_xxx 或自定义 ID，如 zy-519）
     "sender_name": str,     # 解析后的显示名
     "content": str,         # 消息文本 ("[图片]", "[语音]" 等占位符)
     "msg_type": int,        # 1=text, 3=image, 34=voice, 47=emoji, 49=link
