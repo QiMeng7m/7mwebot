@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS group_memory (
 CREATE INDEX IF NOT EXISTS idx_trigger_chat_time
     ON trigger_log(chat_id, processed_at DESC);
 
+-- Last fortune lot drawn by each member (for 「解签」).
+CREATE TABLE IF NOT EXISTS fun_draws (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    level       TEXT    NOT NULL,
+    emoji       TEXT    NOT NULL DEFAULT '',
+    phrase      TEXT    NOT NULL,
+    drawn_at    INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
 -- ── Activity points (“活跃积分”) ───────────────────────────────────
 -- Append-only ledger.  One row per scoring component, plus transfers
 -- (duels), spending (shop / shield) and manual admin adjustments.

@@ -140,6 +140,40 @@ class MessageStore:
             ).fetchone()
             return row["sender_name"] if row else None
 
+    # ── Fortune lots (抽签 / 解签) ─────────────────────────────────
+
+    def save_fun_draw(self, chat_id: str, sender_id: str, sender_name: str,
+                      level: str, emoji: str, phrase: str,
+                      now_ts: Optional[int] = None) -> None:
+        """Remember the member's latest draw in this chat."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            self.conn.execute(
+                """INSERT INTO fun_draws
+                   (chat_id, sender_id, sender_name, level, emoji, phrase,
+                    drawn_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                     sender_name = excluded.sender_name,
+                     level       = excluded.level,
+                     emoji       = excluded.emoji,
+                     phrase      = excluded.phrase,
+                     drawn_at    = excluded.drawn_at""",
+                (str(chat_id), str(sender_id), str(sender_name or ""),
+                 str(level), str(emoji or ""), str(phrase), now),
+            )
+
+    def get_fun_draw(self, chat_id: str, sender_id: str) -> Optional[dict]:
+        """Return the member's latest draw in this chat, or None."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT level, emoji, phrase, drawn_at
+                   FROM fun_draws
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return dict(row) if row else None
+
     def has_sender_message_since(self, chat_id: str, sender_id: str,
                                  since_ts: int) -> bool:
         """Return True if *sender_id* posted anything in *chat_id* since

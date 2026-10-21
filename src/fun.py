@@ -260,11 +260,8 @@ def _get_lots() -> tuple[list, list]:
 # ── 抽签 ────────────────────────────────────────────────────────
 
 
-def draw_lots(requester_name: str) -> str:
-    """抽签 — 返回带解读的运势结果。
-
-    优先使用 data/lots.json 中的自定义配置，文件不存在时使用默认签文。
-    """
+def draw_lot() -> dict:
+    """抽一支签，返回 ``{"level", "emoji", "phrase"}``。"""
     levels_data, weights = _get_lots()
 
     # 构建 (label, emoji, phrases) 元组列表，兼容 random.choices
@@ -274,8 +271,24 @@ def draw_lots(requester_name: str) -> str:
     ]
 
     (label, emoji, phrases), = random.choices(lots, weights=weights, k=1)
-    phrase = random.choice(phrases)
+    return {
+        "level": label,
+        "emoji": emoji,
+        "phrase": random.choice(phrases),
+    }
+
+
+def format_lot(requester_name: str, lot: dict) -> str:
+    """把一支签格式化为群回复文本。"""
     return (
-        f"@{requester_name} 抽签结果：{emoji} {label}\n"
-        f"{phrase}"
+        f"@{requester_name} 抽签结果：{lot.get('emoji', '')} {lot['level']}\n"
+        f"{lot['phrase']}"
     )
+
+
+def draw_lots(requester_name: str) -> str:
+    """抽签 — 返回带解读的运势结果。
+
+    优先使用 data/lots.json 中的自定义配置，文件不存在时使用默认签文。
+    """
+    return format_lot(requester_name, draw_lot())

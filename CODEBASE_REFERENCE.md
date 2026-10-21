@@ -260,6 +260,10 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter._get_group_memory(chat_id)` | ~140 | 获取群聊记忆文本 | `chat_id: str` | `str` |
 | `MessageRouter._handle_summary(msg)` | ~145 | 生成聊天总结 | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_chat(msg, clean_content)` | ~230 | 处理 @bot AI 对话 | `msg: dict, clean_content: str` | `str \| None` |
+| `MessageRouter._msg_display_name(msg)` | — | 昵称→微信号→后端名回退 | `msg: dict` | `str` |
+| `MessageRouter._handle_fun_command(msg)` | — | 解析「抽签」/「解签」（裸文本或 @bot 均可） | `msg: dict` | `str \| None` |
+| `MessageRouter._handle_draw(msg)` | — | 抽签并持久化结果，提示可「解签」 | `msg: dict` | `str` |
+| `MessageRouter._handle_read_lot(msg)` | — | 读取最近一签，带群聊上下文调用 AI 解签 | `msg: dict` | `str` |
 | `MessageRouter._handle_welcome(msg)` | ~280 | 发送新成员欢迎消息 | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_proactive_chat(msg, mode)` | ~305 | 处理主动发言 | `msg: dict, mode: ProactiveMode` | `str \| None` |
 
@@ -497,6 +501,8 @@ todo_delete_keywords: list[str] = [
 | `log_trigger(chat_id, requester_id, trigger_msg_id)` | 记录触发事件 | `chat_id, requester_id, trigger_msg_id: str` | `None` |
 | `cleanup_old_triggers()` | 清理7天前的触发记录 | 无 | `int` |
 | `get_sender_display_name(sender_id)` | 查找已知显示名 | `sender_id: str` | `str \| None` |
+| `save_fun_draw(chat_id, sender_id, sender_name, level, emoji, phrase, now_ts=None)` | 记录成员最近一次抽签（用于解签，按群+成员覆盖） | 见签名 | `None` |
+| `get_fun_draw(chat_id, sender_id)` | 获取成员最近一次抽签 | `chat_id, sender_id: str` | `dict \| None` |
 | `has_sender_message_since(chat_id, sender_id, since_ts)` | 某成员在指定时间后是否发过消息（用于取消踢人） | `chat_id, sender_id: str, since_ts: int` | `bool` |
 | `get_user_last_timestamp(chat_id, sender_id)` | 获取用户最后发言时间 | `chat_id, sender_id: str` | `int \| None` |
 | `get_user_previous_timestamp(chat_id, sender_id, before_ts)` | 获取用户在某时间前的最后发言 | `chat_id, sender_id: str, before_ts: int` | `int \| None` |
@@ -608,7 +614,9 @@ todo_delete_keywords: list[str] = [
 | `load_lots_config()` | 读取抽签配置 | 无 | `dict` |
 | `save_lots_config(data)` | 保存抽签配置 | `data: dict` | `None` |
 | `reset_lots_cache()` | 清除抽签缓存 | 无 | `None` |
-| `draw_lots(requester_name)` | 抽签 | `requester_name: str` | `str` |
+| `draw_lot()` | 抽一支签，返回 `{level, emoji, phrase}` | 无 | `dict` |
+| `format_lot(requester_name, lot)` | 把一支签格式化为群回复 | `requester_name: str, lot: dict` | `str` |
+| `draw_lots(requester_name)` | 抽签并格式化（兼容旧调用） | `requester_name: str` | `str` |
 
 ### 2.26 `src/voice/pipeline.py` (VoicePipeline)
 
@@ -1014,7 +1022,9 @@ AbstractSummarizer (base.py)
          │      ├─ admin command → AdminCommandHandler.handle()
          │      ├─ todo command → TodoHandler.handle()
          │      ├─ feishu export → FeishuExportService.export_recent_chat()
-         │      └─ fun (抽签) → draw_lots()
+         │      └─ fun (抽签/解签) → _handle_fun_command()
+         │            ├─ 抽签 → draw_lot() + save_fun_draw()
+         │            └─ 解签 → get_fun_draw() + summarizer.chat()（带上下文）
          │
          └─→ [Proactive 路径 / 裸关键词]
                 │
@@ -1878,6 +1888,60 @@ MessageRouter.handle(msg)
 - 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`，
   或命令行工具 `tools/points_backfill.py --all --days 90 [--rebuild]`
 - 所有群内回复为纯文本直接返回，不经过 Markdown 清洗
+
+---
+
+### 功能N: 趣味抽签 / 解签
+
+#### 涉及文件
+
+| 文件 | 路径 | 角色 |
+|---|---|---|
+| `fun.py` | `src/fun.py` | 签文配置（`data/lots.json`）、抽取与格式化 |
+| `router.py` | `src/router.py` | 指令分发（裸文本 / @bot 均可）、AI 解签 |
+| `store.py` | `src/db/store.py` | 最近一次抽签的持久化 |
+| `schema.py` | `src/db/schema.py` | `fun_draws` 表定义 |
+
+#### 指令
+
+| 输入 | 行为 |
+|---|---|
+| `抽签` / `@机器人 抽签` | 按 `data/lots.json` 的等级与权重随机抽签；回复签文并提示可「解签」 |
+| `解签` / `@机器人 解签` | 取该成员在本群最近一次抽签，带最近 600 秒群聊上下文调用 AI 解签 |
+| `解签`（还没抽过） | 提示先发「抽签」 |
+
+裸文本指令受 300 秒消息年龄保护（启动回放不响应）；`FUN_ENABLED=false`
+时两者都不触发。解签失败时回退为原签文文本。
+
+#### 数据表
+
+```sql
+CREATE TABLE IF NOT EXISTS fun_draws (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    level       TEXT    NOT NULL,
+    emoji       TEXT    NOT NULL DEFAULT '',
+    phrase      TEXT    NOT NULL,
+    drawn_at    INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+```
+
+同一成员在同一群只保留最近一签（UPSERT）。
+
+#### 调用链
+
+```
+MessageRouter.handle(msg)
+  ├── (is_at 分支) clean_command_text() → _handle_fun_command(msg)
+  └── (裸文本分支) _handle_fun_command(msg)
+        ├── 「抽签」→ draw_lot() → format_lot()
+        │              └── MessageStore.save_fun_draw()
+        └── 「解签」→ MessageStore.get_fun_draw()
+                       ├── MessageStore.get_messages_since(600s, limit=20)
+                       └── AbstractSummarizer.chat(prompt, context_messages, ...)
+```
 
 ---
 

@@ -356,9 +356,8 @@ class MessageRouter:
             if reply is None and clean_content.strip() in ("帮助", "help", "命令"):
                 reply = self._admin.handle(clean_content, msg["sender_name"])
 
-            if self._config.fun_enabled and clean_content.strip() == "抽签":
-                from .fun import draw_lots
-                reply = draw_lots(msg["sender_name"])
+            if reply is None:
+                reply = self._handle_fun_command(msg)
 
             if reply is None and (
                 self._config.admin_wxid
@@ -433,6 +432,15 @@ class MessageRouter:
                     self._feishu_export.maybe_auto_export(msg)
                 except Exception:
                     logger.exception("Automatic Feishu knowledge sync failed")
+
+            # ── 抽签 / 解签 (bare text, no @ needed) ──────────────
+            if (
+                self._config.fun_enabled
+                and msg_age_sec <= AT_MENTION_MAX_AGE_SEC
+            ):
+                fun_reply = self._handle_fun_command(msg)
+                if fun_reply:
+                    return self._strip_markdown(fun_reply)
 
             # ── Proactive path (rate-based ambient participation) ─
             should_speak, mode, reason = self._proactive.should_speak(msg)
@@ -667,6 +675,97 @@ class MessageRouter:
         except Exception as e:
             logger.error("AI chat failed: %s", e)
             return f"@{display_name} 大脑短路了，稍等再试～"
+
+    # ── Fun commands (抽签 / 解签) ───────────────────────────────
+
+    def _msg_display_name(self, msg: dict) -> str:
+        """Nickname → sender_id → backend name fallback chain."""
+        name = self._nicks.resolve_name(msg["sender_id"])
+        if not name or name == msg["sender_id"]:
+            name = msg.get("sender_name") or msg["sender_id"]
+        return name
+
+    def _handle_fun_command(self, msg: dict) -> str | None:
+        """Handle 「抽签」/「解签」 with or without an @mention."""
+        if not getattr(self._config, "fun_enabled", False):
+            return None
+        command = clean_command_text(
+            msg.get("content", ""), self._config.bot_display_name,
+        )
+        if command == "抽签":
+            return self._handle_draw(msg)
+        if command == "解签":
+            return self._handle_read_lot(msg)
+        return None
+
+    def _handle_draw(self, msg: dict) -> str:
+        from .fun import draw_lot, format_lot
+
+        name = self._msg_display_name(msg)
+        lot = draw_lot()
+        try:
+            self._store.save_fun_draw(
+                msg["chat_id"], msg["sender_id"], name,
+                lot["level"], lot.get("emoji", ""), lot["phrase"],
+            )
+        except Exception:
+            logger.exception("Saving fortune lot failed")
+
+        logger.info("Draw lots: %s got %s", name, lot["level"])
+        return (
+            f"{format_lot(name, lot)}\n"
+            "发「解签」可以听听 AI 怎么解读这支签"
+        )
+
+    def _handle_read_lot(self, msg: dict) -> str:
+        name = self._msg_display_name(msg)
+        try:
+            lot = self._store.get_fun_draw(
+                msg["chat_id"], msg["sender_id"],
+            )
+        except Exception:
+            logger.exception("Loading fortune lot failed")
+            lot = None
+
+        if not lot:
+            return f"@{name} 你还没有抽签，先发「抽签」吧"
+
+        since = int(time.time()) - CHAT_CONTEXT_WINDOW_SEC
+        context = self._store.get_messages_since(
+            msg["chat_id"], since, limit=20,
+        )
+        if context:
+            for m in context:
+                custom = self._nicks.resolve_name(m["sender_id"])
+                if custom != m["sender_id"]:
+                    m["sender_name"] = custom
+
+        prompt = (
+            f"我今天抽到的是「{lot['level']}」签，签文是：{lot['phrase']}。\n"
+            "请结合最近的群聊内容，用 2-3 句话帮我解签："
+            "说说这支签对今天的工作、心情或人际相处有什么提醒，语气轻松一点。"
+        )
+
+        try:
+            reading = self._summarizer.chat(
+                message=prompt,
+                context_messages=context,
+                requester_name=name,
+                bot_name=self._config.bot_display_name,
+                group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
+                group_memory=self._get_group_memory(msg["chat_id"]),
+            )
+            reading = self._nicks.resolve_wxids(reading or "").strip()
+            if not reading:
+                raise ValueError("empty AI reading")
+            logger.info("Lot reading for %s (%d chars)", name, len(reading))
+            return f"@{name} {reading}"
+        except Exception as e:
+            logger.error("Lot reading failed: %s", e)
+            return (
+                f"@{name} 解签先生暂时掉线了。你这支是"
+                f"{lot.get('emoji', '')} {lot['level']}：{lot['phrase']}"
+            )
 
     # ── Welcome handler ─────────────────────────────────────────
 

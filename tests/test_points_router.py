@@ -27,6 +27,17 @@ class _NoAi:
         return ""
 
 
+class _FakeChatAi(_NoAi):
+    def __init__(self):
+        self.last_message = ""
+        self.last_context = None
+
+    def chat(self, *, message, context_messages=None, **kwargs):
+        self.last_message = message
+        self.last_context = context_messages
+        return "AI解签：今天适合摸鱼。"
+
+
 class RouterPointsTests(unittest.TestCase):
     def setUp(self):
         self.conn = initialize_db(":memory:")
@@ -128,6 +139,26 @@ class RouterPointsTests(unittest.TestCase):
             sender_id="canglan1992", name="See.", is_at=True,
         ))
         self.assertIn("抽签结果", reply)
+
+    def test_draw_lots_bare_text(self):
+        """「抽签」 works without an @mention."""
+        reply = self.router.handle(self._message("抽签"))
+        self.assertIn("抽签结果", reply)
+        self.assertIn("解签", reply)
+
+    def test_read_lot_without_draw(self):
+        reply = self.router.handle(self._message("解签"))
+        self.assertIn("先发「抽签」", reply)
+
+    def test_read_lot_uses_ai_and_context(self):
+        self.router.handle(self._message("抽签"))
+        fake = _FakeChatAi()
+        self.router._summarizer = fake
+        reply = self.router.handle(self._message("解签"))
+        self.assertIn("AI解签", reply)
+        # The prompt carries the drawn lot, and the chat context is fed.
+        self.assertIn("抽到的是", fake.last_message)
+        self.assertIsNotNone(fake.last_context)
 
     def test_stale_points_command_ignored(self):
         reply = self.router.handle(self._message(
