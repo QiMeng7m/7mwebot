@@ -11,12 +11,18 @@ from __future__ import annotations
 import logging
 import re
 import time
+import unicodedata
 
 from . import rules
 from .duel import DuelService
 from .equipment import EquipmentCatalog
 from .levels import LevelTable
 from .models import Command
+from .rules import (
+    INVISIBLE_WS as _WS,
+    clean_command_text as _clean_for_commands,
+    strip_invisible as _strip_invisible,
+)
 from .store import PointStore
 from .util import (
     days_until_season_end,
@@ -28,7 +34,6 @@ from .util import (
 
 logger = logging.getLogger(__name__)
 
-_WS = r"[\s ​﻿]"
 
 EXACT_COMMANDS = {
     "签到": ("checkin", ""),
@@ -80,25 +85,8 @@ def looks_like_command(text: str) -> bool:
     return head in PREFIX_COMMANDS
 
 
-def _strip_invisible(text: str) -> str:
-    return re.sub(r"[\s ​﻿]+", " ", str(text or "")).strip()
-
-
-def _clean_for_commands(content: str, bot_name: str = "") -> str:
-    """Strip the bot's own @mention and WCDB's ``wxid_xxx:`` prefix."""
-    text = str(content or "")
-    # WCDB returns group text as "wxid_xxx:\n消息内容"; without this the
-    # command would never match EXACT_COMMANDS.
-    text = re.sub(r"^\s*wxid_[a-zA-Z0-9]+:\s*", "", text)
-    if bot_name:
-        text = re.sub(
-            re.escape(f"@{bot_name}") + r"[^\w]*", "", text,
-        )
-    return _strip_invisible(text)
-
-
 def _norm_key(name: str) -> str:
-    name = _strip_invisible(name)
+    name = _strip_invisible(unicodedata.normalize("NFC", name))
     name = name.lstrip("@").strip()
     return re.sub(r"\s+", " ", name).casefold()
 
@@ -274,6 +262,11 @@ class PointHandler:
                 if re.sub(r"\s+", "", candidate) == compact:
                     ids = candidate_ids
                     break
+            if not ids:
+                # Group aliases may add a prefix ("萧山-张三") that the
+                # message table does not store.  Accept a unique
+                # affix match as a fallback.
+                ids = self._affix_matches(mapping, compact)
 
         if not ids:
             return "", "", []
@@ -281,6 +274,28 @@ class PointHandler:
             return "", "", list(ids)
         sid = ids[0]
         return sid, self._display_name(chat_id, sid), []
+
+    @staticmethod
+    def _affix_matches(mapping: dict[str, list[str]],
+                       compact: str) -> list[str]:
+        """Member ids whose name shares a prefix/suffix with *compact*.
+
+        Used when a typed @name carries a group alias prefix (or the
+        stored name does) — e.g. "萧山-张三" vs "张三".
+        """
+        if len(compact) < 2:
+            return []
+        matched: list[str] = []
+        for candidate, candidate_ids in mapping.items():
+            flat = re.sub(r"\s+", "", candidate)
+            if len(flat) < 2:
+                continue
+            if not (flat.endswith(compact) or compact.endswith(flat)):
+                continue
+            for sid in candidate_ids:
+                if sid not in matched:
+                    matched.append(sid)
+        return matched
 
     def _reply_target(self, chat_id: str, text: str,
                       sender_id: str = "") -> tuple[str, str]:
@@ -290,17 +305,31 @@ class PointHandler:
             return "", ""
         return wxid, self._display_name(chat_id, wxid)
 
+    def _mention_target(self, chat_id: str, msg: dict,
+                        sender_id: str) -> tuple[str, str]:
+        """Use the wxid behind an @mention when there is exactly one.
+
+        WCDB stores mentions as ``@wxid_xxx``; the backend keeps the
+        ids so a display-name/alias mismatch cannot break commands.
+        """
+        ids = [str(i) for i in (msg.get("mentioned_ids") or []) if i]
+        if len(ids) != 1:
+            return "", ""
+        return ids[0], self._display_name(chat_id, ids[0])
+
     # ── Check-in ──────────────────────────────────────────────────
 
     def _checkin(self, chat_id: str, sender_id: str, sender_name: str,
                  msg: dict) -> str:
-        """Explicit 签到: confirm today's daily-first bonus."""
+        """Explicit 签到: award (or confirm) today's check-in bonus."""
         message_id = str(msg.get("message_id") or "")
-        day = local_day(int(time.time()))
+        # Use the message clock so a command processed just after
+        # midnight is filed under the day it was sent.
+        ts = int(msg.get("timestamp") or time.time())
+        day = local_day(ts)
 
-        # The router awards points before commands.  If this very message
-        # was the member's first scored message of the day, daily_first is
-        # already on the ledger — report it.
+        # The router scores the message before commands.  A 「签到」
+        # message therefore already carries daily_first — report it.
         points = self._store.event_points(
             chat_id, message_id, "daily_first",
         )
@@ -312,6 +341,7 @@ class PointHandler:
             if self._engine is not None:
                 points = self._engine.check_in(
                     chat_id, sender_id, sender_name, message_id,
+                    now_ts=ts,
                 )
 
         if points:
@@ -642,6 +672,10 @@ class PointHandler:
         target_id, target_name = self._reply_target(
             chat_id, str(msg.get("content", "")), sender_id,
         )
+        if not target_id:
+            target_id, target_name = self._mention_target(
+                chat_id, msg, sender_id,
+            )
         if not target_id:
             name = _strip_invisible(rest).lstrip("@").strip()
             name = re.sub(rf"{_WS}*切磋$", "", name).strip()

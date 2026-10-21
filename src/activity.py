@@ -50,18 +50,15 @@ def parse_activity_query(content: str) -> int | None:
 
 
 def clean_command_text(content: str, bot_name: str = "") -> str:
-    """Strip the @bot mention and WeChat's reply-quote prefix.
+    """Strip @bot, the WCDB sender/reply prefix and invisible spaces.
 
-    Mirrors the @mention cleanup in MessageRouter.handle so the activity
-    command can be detected outside the ``if is_at:`` branch.
+    Delegates to :func:`src.points.rules.clean_command_text` so activity
+    queries and point commands share one definition (custom WeChat IDs
+    such as ``zy-519`` are valid prefixes too).
     """
-    text = str(content or "")
-    if bot_name:
-        text = re.sub(
-            re.escape(f"@{bot_name}") + r"[^\w]*", "", text
-        ).strip()
-    text = re.sub(r"^\s*wxid_[a-zA-Z0-9]+:\s*", "", text)
-    return text.strip()
+    from .points.rules import clean_command_text as _clean
+
+    return _clean(content, bot_name)
 
 
 # ── Time helpers ─────────────────────────────────────────────────────

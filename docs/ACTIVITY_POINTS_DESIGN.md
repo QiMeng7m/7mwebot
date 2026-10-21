@@ -46,7 +46,7 @@
 | `length` | 去掉空白后长度 ≥ 20 | +1 | 20 字以上算有内容 |
 | `length_long` | 去掉空白后长度 ≥ 100 | +1 | 与 `length` 叠加 |
 | `media` | `msg_type ∈ {3 图片, 34 语音, 43 视频}` | +1 | 表情包（47）、链接（49）不加 |
-| `daily_first` | 该成员当天在本群的第一条计分消息 | **+10** | 每日签到奖励，鼓励每天回来冒泡 |
+| `daily_first` | 该成员当天在本群发出的第一条「签到」指令 | **+10** | 每日签到奖励，鼓励每天回来冒泡；普通聊天不再自动获得 |
 | `reply` | 本条消息通过引用回复了某人 | +2 **给被回复者** | 见 2.2 |
 
 **单条消息的聊天分封顶 5 分**（`base + length + length_long + media`），超出的部分截断。签到分 `daily_first` 每天只发一次，**不受单条封顶限制**；`reply` 奖励记在被回复者账上，同样不受此封顶约束。
@@ -366,7 +366,7 @@ MessageRouter.handle(msg)
 | `points_long_length_bonus` | `1` | 长文加分值 |
 | `points_media_bonus` | `1` | 图片/语音/视频加分 |
 | `points_reply_bonus` | `2` | 被回复加分 |
-| `points_daily_first_bonus` | `10` | 当天首条签到加分（不受单条封顶） |
+| `points_daily_first_bonus` | `10` | 当天首次「签到」加分（不受单条封顶） |
 | `points_per_message_cap` | `5` | 单条封顶 |
 | `points_rate_limit_per_min` | `8` | 每分钟计分消息上限 |
 | `points_daily_cap` | `80` | 每人每群每日封顶 |

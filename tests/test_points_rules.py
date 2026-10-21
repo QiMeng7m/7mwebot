@@ -6,6 +6,7 @@ from src.points.rules import (
     MSG_IMAGE,
     MSG_SYSTEM,
     MSG_TEXT,
+    clean_command_text,
     normalize_text,
     reply_target,
     score_components,
@@ -41,6 +42,25 @@ class ReplyPrefixTests(unittest.TestCase):
         self.assertEqual(
             strip_reply_prefix("wxid_abc:\n" + _long_text(20)),
             _long_text(20),
+        )
+
+    def test_custom_wechat_id_prefix(self):
+        """Members with a custom WeChat ID use it as the message prefix."""
+        self.assertEqual(reply_target("zy-519:\n好的"), "zy-519")
+        self.assertEqual(
+            reply_target("zy-519:\n切磋", sender_id="zy-519"), None,
+        )
+        self.assertEqual(
+            strip_reply_prefix("canglan1992:\n" + _long_text(20)),
+            _long_text(20),
+        )
+
+    def test_clean_command_text_strips_custom_id(self):
+        self.assertEqual(
+            clean_command_text("zy-519:\n@柒梦 签到", "柒梦"), "签到",
+        )
+        self.assertEqual(
+            clean_command_text("canglan1992:\n积分"), "积分",
         )
 
     def test_normalize_removes_punctuation_and_space(self):

@@ -175,6 +175,41 @@ def _join_msg(content: str) -> dict:
     }
 
 
+class StandardizeMentionTests(unittest.TestCase):
+    class _Client:
+        def resolve_nickname(self, wxid):
+            return {
+                "wxid_b": "萧山-李四",
+                "wxid_bot": "柒梦",
+            }.get(wxid, wxid)
+
+    def _standardize(self, content: str) -> dict:
+        backend = WcdbBackend.__new__(WcdbBackend)
+        backend._client = self._Client()
+        backend._store = None
+        backend._voice_config = BotConfig(welcome_enabled=False)
+        backend._bot_name = "柒梦"
+        return backend._standardize({
+            "sender_username": "wxid_a",
+            "message_content": content,
+            "local_type": 1,
+            "create_time": int(time.time()),
+            "server_id": "m1",
+        }, "测试群", "1@chatroom")
+
+    def test_mention_wxid_is_kept_for_commands(self):
+        result = self._standardize("wxid_a:\n@wxid_b 切磋")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], "wxid_a:\n@萧山-李四 切磋")
+        self.assertEqual(result["mentioned_ids"], ["wxid_b"])
+
+    def test_bot_mention_is_not_a_command_target(self):
+        result = self._standardize("wxid_a:\n@wxid_bot 签到")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mentioned_ids"], [])
+        self.assertTrue(result["is_at_mentioned"])
+
+
 class StandardizeJoinTests(unittest.TestCase):
     def test_xml_join_is_detected(self):
         result = _backend(welcome_enabled=True)._standardize(

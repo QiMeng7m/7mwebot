@@ -91,9 +91,14 @@ class PointEngine:
         self._remember_text(sender_key, normalized)
 
         day = local_day(clock)
-        is_first = (
-            not self._store.has_earned_on_day(chat_id, sender_id, day)
-            and not self._cached_day_points(chat_id, sender_id, day)
+        # Only an explicit 「签到」 earns the daily bonus.  Ordinary chat
+        # messages no longer count as checking in — members were being
+        # told "already signed" merely because they had spoken earlier.
+        is_checkin = (
+            rules.is_checkin_command(msg.get("content", ""), bot_name)
+            and not self._store.has_reason_on_day(
+                chat_id, sender_id, "daily_first", day,
+            )
         )
 
         components = rules.score_components(
@@ -112,7 +117,7 @@ class PointEngine:
                 self._config, "points_daily_first_bonus", 2)),
             per_message_cap=int(getattr(
                 self._config, "points_per_message_cap", 5)),
-            is_daily_first=is_first,
+            is_daily_first=is_checkin,
         )
         if not components:
             return 0
@@ -169,14 +174,14 @@ class PointEngine:
     # ── Explicit check-in ─────────────────────────────────────────
 
     def check_in(self, chat_id: str, sender_id: str, sender_name: str,
-                 message_id: str) -> int:
+                 message_id: str, now_ts: int | None = None) -> int:
         """Award the daily check-in bonus if the member hasn't earned it.
 
         Used by the explicit 「签到」 command when the command message
         itself was not scored (rate limit / repeated text).  Returns the
         points actually awarded (0 when already checked in).
         """
-        now = int(time.time())
+        now = int(time.time()) if now_ts is None else int(now_ts)
         day = local_day(now)
         if self._store.has_reason_on_day(
             chat_id, sender_id, "daily_first", day,

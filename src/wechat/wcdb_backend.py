@@ -938,13 +938,22 @@ class WcdbBackend(AbstractWeChatBackend):
             if prev:
                 sender_name = prev
 
-        # Resolve @mentions in content
+        # Resolve @mentions in content.  Keep the underlying wxids so
+        # commands (切磋/积分调整…) can target the exact member even when
+        # the display name differs from the message table's nickname
+        # (e.g. a group alias with a city prefix).
         resolved_content = content
+        mention_ids: list[str] = []
         if "@" in content:
             def _replace_at(match):
                 at_wxid = match.group(0)[1:]
                 name = self._client.resolve_nickname(at_wxid)
-                return f"@{name}" if name != at_wxid else match.group(0)
+                if name == at_wxid:
+                    return match.group(0)
+                is_bot = bool(self._bot_name) and name == self._bot_name
+                if not is_bot and at_wxid not in mention_ids:
+                    mention_ids.append(at_wxid)
+                return f"@{name}"
             resolved_content = re.sub(r'@wxid_[a-zA-Z0-9]+', _replace_at, content)
 
         # Detect @mention of bot
@@ -973,6 +982,7 @@ class WcdbBackend(AbstractWeChatBackend):
             "sender_id": str(sender),
             "sender_name": str(sender_name),
             "content": resolved_content,
+            "mentioned_ids": mention_ids,
             "msg_type": local_type,
             "timestamp": ts,
             "is_at_mentioned": is_at,

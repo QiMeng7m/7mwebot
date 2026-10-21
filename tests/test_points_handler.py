@@ -172,6 +172,16 @@ class CheckinTests(HandlerTestBase):
             "@张三 签到成功，积分+10",
         )
 
+    def test_checkin_with_custom_wechat_id_prefix(self):
+        """Custom IDs (zy-519) prefix group messages just like wxid_*."""
+        self.add_member("zy-519", "降娄", earned=0)
+        msg = self.msg("签到", "zy-519", "降娄")
+        msg["content"] = "zy-519:\n签到"
+        self.assertEqual(
+            self.handler.handle(msg["content"], msg),
+            "@降娄 签到成功，积分+10",
+        )
+
     def test_checkin_awards_and_confirms(self):
         self.add_member("wxid_a", "张三", earned=0)
         reply = self.run_cmd("签到", sender_id="wxid_a", name="张三")
@@ -179,6 +189,24 @@ class CheckinTests(HandlerTestBase):
         self.assertTrue(self.store.has_reason_on_day(
             self.chat, "wxid_a", "daily_first", local_day(int(time.time())),
         ))
+
+    def test_checkin_after_chatting_still_succeeds(self):
+        """Chatting earlier in the day is not a check-in."""
+        self.add_member("wxid_a", "张三", earned=0)
+        self.engine.award_for_message({
+            "message_id": "chat-1",
+            "chat_id": self.chat,
+            "group_name": "测试群",
+            "sender_id": "wxid_a",
+            "sender_name": "张三",
+            "content": "早上好",
+            "msg_type": 1,
+            "timestamp": int(time.time()),
+        })
+        self.assertEqual(
+            self.run_cmd("签到", sender_id="wxid_a", name="张三"),
+            "@张三 签到成功，积分+10",
+        )
 
     def test_checkin_reports_daily_first_already_on_message(self):
         """The router awards daily_first before the command handler runs."""
@@ -285,6 +313,23 @@ class DuelCommandTests(HandlerTestBase):
         reply = self.handler.handle(msg["content"], msg)
         self.assertIn("胜率", reply)
         self.assertNotIn("不能和自己", reply)
+
+    def test_duel_uses_mentioned_wxid_when_display_name_differs(self):
+        """The @ picker may show a group alias, but the wxid is exact."""
+        msg = self.msg("@萧山-李四 切磋", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@萧山-李四 切磋"
+        msg["mentioned_ids"] = ["wxid_b"]
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("胜率", reply)
+        self.assertNotIn("没找到成员", reply)
+
+    def test_duel_resolves_unique_alias_prefix(self):
+        """Without mention metadata, a unique suffix match still works."""
+        msg = self.msg("@萧山-李四 切磋", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@萧山-李四 切磋"
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("胜率", reply)
+        self.assertNotIn("没找到成员", reply)
 
     def test_duel_shield(self):
         self.store.buy_shield(

@@ -50,22 +50,40 @@ class EngineTestBase(unittest.TestCase):
 
 
 class BasicAwardTests(EngineTestBase):
-    def test_first_message_gets_daily_bonus(self):
-        self.assertEqual(self.engine.award_for_message(self.factory.make()), 11)
+    def test_normal_first_message_has_no_daily_bonus(self):
+        """Chatting does not count as signing in."""
+        self.assertEqual(self.engine.award_for_message(self.factory.make()), 1)
         self.assertEqual(self.engine.award_for_message(
             self.factory.make(content="收到")), 1)
-        self.assertEqual(self.earned(), 12)
+        self.assertEqual(self.earned(), 2)
+
+    def test_checkin_message_gets_daily_bonus(self):
+        self.assertEqual(
+            self.engine.award_for_message(
+                self.factory.make(content="签到")), 11,
+        )
+        self.assertEqual(
+            self.engine.award_for_message(
+                self.factory.make(content="签到")), 0,
+        )
+        self.assertEqual(self.earned(), 11)
+
+    def test_checkin_message_with_wcdb_prefix(self):
+        self.assertEqual(
+            self.engine.award_for_message(
+                self.factory.make(content="wxid_a:\n签到")), 11,
+        )
 
     def test_length_bonus(self):
         text = "今天一起去吃饭吧顺便看看最近的新电影怎么样"
         points = self.engine.award_for_message(
             self.factory.make(content=text))
-        self.assertEqual(points, 1 + 10 + 1)  # base + daily first + length
+        self.assertEqual(points, 1 + 1)  # base + length
 
     def test_media_bonus(self):
         points = self.engine.award_for_message(
             self.factory.make(content="", msg_type=3))
-        self.assertEqual(points, 1 + 10 + 1)
+        self.assertEqual(points, 1 + 1)
 
     def test_system_message_ignored(self):
         self.assertEqual(self.engine.award_for_message(
@@ -105,7 +123,7 @@ class AntiSpamTests(EngineTestBase):
         self.config.points_daily_cap = 12
         # base 1 + check-in 10
         self.assertEqual(self.engine.award_for_message(
-            self.factory.make(content="你好")), 11)
+            self.factory.make(content="签到")), 11)
         long_text = "今天一起去吃饭吧顺便看看最近的新电影怎么样"
         # Only 1 point of room left, so the length bonus is trimmed.
         self.assertEqual(self.engine.award_for_message(
@@ -117,7 +135,7 @@ class AntiSpamTests(EngineTestBase):
         self.config.points_daily_cap = 20
         self.engine.award_for_message(self.factory.make(sender_id="wxid_a"))
         self.assertEqual(self.engine.award_for_message(
-            self.factory.make(sender_id="wxid_b", content="你好")), 11)
+            self.factory.make(sender_id="wxid_b", content="签到")), 11)
 
 
 class ReplyBonusTests(EngineTestBase):
@@ -132,7 +150,7 @@ class ReplyBonusTests(EngineTestBase):
             content="wxid_b:\n加油",
         )
         self.engine.award_for_message(msg)
-        self.assertEqual(self.store.earned_of(self.chat, "wxid_b"), 11 + 2)
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_b"), 1 + 2)
 
     def test_self_reply_not_credited(self):
         msg = self.factory.make(
@@ -140,7 +158,7 @@ class ReplyBonusTests(EngineTestBase):
             content="wxid_a:\n自言自语",
         )
         self.engine.award_for_message(msg)
-        self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 11)
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 1)
 
 
 class RebuildTests(EngineTestBase):

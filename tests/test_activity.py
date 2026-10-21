@@ -97,6 +97,17 @@ class CleanCommandTextTests(unittest.TestCase):
             "活跃查询",
         )
 
+    def test_strips_custom_wechat_id_prefix(self):
+        """Custom WeChat IDs (not wxid_*) are valid message prefixes."""
+        self.assertEqual(
+            clean_command_text("zy-519:\n活跃查询 7", ""),
+            "活跃查询 7",
+        )
+        self.assertEqual(
+            clean_command_text("canglan1992:\n@群聊小助手 活跃查询", "群聊小助手"),
+            "活跃查询",
+        )
+
 
 class TimeHelperTests(unittest.TestCase):
     def test_window_starts_at_local_midnight(self):

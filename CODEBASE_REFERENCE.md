@@ -720,7 +720,7 @@ todo_delete_keywords: list[str] = [
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
 | `parse_activity_query(content)` | 解析「活跃查询 [N]」指令 | `content: str` | `int \| None` (天数) |
-| `clean_command_text(content, bot_name)` | 去掉 @bot / 不可见分隔符 / 引用前缀 | `content: str, bot_name: str` | `str` |
+| `clean_command_text(content, bot_name)` | 去掉 @bot / 不可见分隔符 / 消息前缀（wxid 或自定义微信号，如 `zy-519`）；委托 `points.rules.clean_command_text` | `content: str, bot_name: str` | `str` |
 | `activity_window_start(days, now_ts=None)` | 统计窗口起点(本地 00:00) | `days: int, now_ts: int \| None` | `int` (Unix 秒) |
 | `format_relative_time(ts, now_ts)` | 相对时间文本 | `ts: int, now_ts: int` | `str` |
 | `build_activity_report(store, nickname_service, chat_id, group_name, requester_name, days=15, now_ts=None, exclude_message_id=None)` | 查询并生成群活跃报告 | 见签名 | `str` |
@@ -755,8 +755,11 @@ todo_delete_keywords: list[str] = [
 | `util.py` | `season_end_day(season)` | 赛季最后一天 | `season: str` | `str` |
 | `util.py` | `days_until_season_end(ts=None)` | 距赛季结束天数 | `ts: int \| None` | `int` |
 | `util.py` | `is_group_enabled(chat_id, group_name, groups)` | 群白名单匹配（`*` 全部） | 见签名 | `bool` |
-| `rules.py` | `reply_target(content)` | 从 `wxid_xxx:` 回复前缀提取被引用者 | `content: str` | `str \| None` |
-| `rules.py` | `strip_reply_prefix(content)` | 去掉回复前缀 | `content: str` | `str` |
+| `rules.py` | `reply_target(content, sender_id=None)` | 从 `<username>:` 回复前缀提取被引用者（前缀等于发送者时视为普通消息前缀） | `content: str, sender_id: str \| None` | `str \| None` |
+| `rules.py` | `strip_reply_prefix(content)` | 去掉消息/回复前缀（`wxid_*` 或自定义微信号） | `content: str` | `str` |
+| `rules.py` | `strip_invisible(text)` | 折叠空白/零宽字符为单个空格 | `text: str` | `str` |
+| `rules.py` | `clean_command_text(content, bot_name="")` | 去掉消息前缀、@bot、不可见空白 | `content: str, bot_name: str` | `str` |
+| `rules.py` | `is_checkin_command(content, bot_name="")` | 消息正文是否恰好为「签到」 | `content: str, bot_name: str` | `bool` |
 | `rules.py` | `normalize_text(text)` | 去空白/标点，用于重复检测 | `text: str` | `str` |
 | `rules.py` | `distinct_char_count(text)` | 去重字符数 | `text: str` | `int` |
 | `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
@@ -778,8 +781,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `event_points(chat_id, message_id, reason)` | 查某条消息某个加分项的分数 | 见签名 | `int` |
 | `store.py` | `has_reason_on_day(chat_id, sender_id, reason, day)` | 当天是否已获得某项加分（如 `daily_first`） | 见签名 | `bool` |
 | `store.py` | `delete_earn_events(chat_id)` / `messages_since(...)` / `adjust(...)` | 回溯重建支持 / 管理员调整 | 见签名 | 见签名 |
-| `engine.py` | `PointEngine.award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励） | 见签名 | `int`（本人得分） |
-| `engine.py` | `PointEngine.check_in(chat_id, sender_id, sender_name, message_id)` | 显式「签到」补发当天 `daily_first`（已签返回 0） | 见签名 | `int` |
+| `engine.py` | `PointEngine.award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励）；仅正文为「签到」时加 `daily_first` | 见签名 | `int`（本人得分） |
+| `engine.py` | `PointEngine.check_in(chat_id, sender_id, sender_name, message_id, now_ts=None)` | 显式「签到」补发当天 `daily_first`（已签返回 0） | 见签名 | `int` |
 | `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
 | `duel.py` | `win_probability(a, d, k=1.15, min_prob=0.08, max_prob=0.92)` | 胜率公式（tanh 曲线，上下限夹取） | 见签名 | `float` |
 | `duel.py` | `steal_amount(a, d, defender_balance, ...)` | 抢分公式（差距越大抢得越少） | 见签名 | `int` |
@@ -787,7 +790,7 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
-| `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：确认/补发当天首条加分，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
+| `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
 `BASE_POWER=10`、`POWER_PER_LEVEL=5`。
@@ -970,7 +973,7 @@ AbstractSummarizer (base.py)
          │
          ├─→ [积分结算 — 每条新消息，入库后立即执行]
          │      └─ PointEngine.award_for_message()
-         │            ├─ rules.score_components()   (base/长度/媒体/首条)
+         │            ├─ rules.score_components()   (base/长度/媒体/签到)
          │            ├─ rules.reply_target()       (被回复者 +2)
          │            ├─ 频率/重复/日封顶 防刷
          │            └─ PointStore.record_events() → point_events
@@ -1115,6 +1118,7 @@ WcdbBackend.start(callback)
     "msg_type": int,        # 1=text, 3=image, 34=voice, 47=emoji, 49=link
     "timestamp": int,       # Unix 秒
     "is_at_mentioned": bool, # 是否 @机器人
+    "mentioned_ids": list[str], # 正文中 @ 到的成员用户名（已排除机器人）
     "is_group": bool,       # 是否群聊(始终 True)
     "is_system_join": bool, # 是否"xxx 加入了群聊"事件
     "new_member_id": str,   # 新成员显示名（解析失败时可能是 wxid）
@@ -1794,6 +1798,9 @@ MessageRouter.handle(msg)
 
 - 触发指令本身通过 `exclude_message_id` 从统计中排除
 - 系统消息（`msg_type=10000`）不计入活跃
+- 统计源是本机 `messages` 表，不是微信自身的历史库：`_poll_group()`
+  每轮只取最新 50 条（`get_messages(limit=50)`），机器人启动前的历史
+  消息不会被回填，因此报告条数可能少于微信界面显示的历史条数
 - 最后发言时间用 `MAX(messages.timestamp)`，不使用可能因启动回放倒退的游标
 - 报告为纯文本直接返回，不经过 `_strip_markdown`（避免误删名字中的符号）
 - 无配置项、无 schema 变更；常量集中在 `src/activity.py`
@@ -1834,7 +1841,7 @@ MessageRouter.handle(msg)
 
 | 输入 | 行为 |
 |---|---|
-| `签到` | 确认当天首条签到分；回复 `@成员 签到成功，积分+10`（已签到则提示明天再来；无需 @ 机器人） |
+| `签到` | 当天首次发「签到」发 `daily_first` +10（不受单条封顶）；回复 `@成员 签到成功，积分+10`，重复签到提示明天再来（无需 @ 机器人） |
 | `积分` / `我的积分` / `积分卡` | 个人详细卡片（等级/名次/连续天数/武力值） |
 | `我的信息` | 一行快照：积分、余额、武力值 |
 | `查询 名字` / `查询 我` | 一行查询他人（无需 @；匹配不到成员时保持沉默） |
@@ -1860,6 +1867,9 @@ MessageRouter.handle(msg)
 #### 关键约定
 
 - **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**余额**（全部 category）用于消费与被抢
+- `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
+- 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
+- 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称精确匹配 → 唯一前后缀匹配（兼容群昵称带城市前缀）
 - 切磋只转移余额，不计入累计获得，避免打架刷榜
 - 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
 - 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护

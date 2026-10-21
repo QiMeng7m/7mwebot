@@ -8,8 +8,21 @@ from __future__ import annotations
 
 import re
 
-# WeChat reply quotes start with ``wxid_<id>:\n`` (4.x) on the message body.
-_REPLY_PREFIX_RE = re.compile(r"^\s*(wxid_[A-Za-z0-9]+)\s*:\s*")
+# Group messages and reply quotes start with ``<username>:`` followed by
+# whitespace/newline.  Usernames are not always ``wxid_*`` — members with
+# a custom WeChat ID (``zy-519``, ``canglan1992``, …) appear verbatim.
+_USERNAME = r"[A-Za-z0-9_@.\-]{1,64}"
+_REPLY_PREFIX_RE = re.compile(rf"^\s*({_USERNAME}):\s+")
+
+# WCDB prefixes every group message with the sender's username.
+_WCDB_PREFIX_RE = re.compile(rf"^\s*{_USERNAME}:\s+")
+
+# Spaces (incl. the four-per-em and zero-width variants WeChat inserts)
+# used to separate a command from its arguments.
+INVISIBLE_WS = r"[\s ​﻿]"
+_INVISIBLE_RE = re.compile(r"[\s ​﻿]+")
+
+CHECKIN_COMMAND = "签到"
 
 # msg_type values used by the backends.
 MSG_TEXT = 1
@@ -46,6 +59,26 @@ def reply_target(content: str, sender_id: str | None = None) -> str | None:
 def strip_reply_prefix(content: str) -> str:
     """Remove the ``wxid_xxx:`` reply prefix from the body."""
     return _REPLY_PREFIX_RE.sub("", str(content or ""), count=1)
+
+
+def strip_invisible(text: str) -> str:
+    """Collapse whitespace (including zero-width chars) to single spaces."""
+    return _INVISIBLE_RE.sub(" ", str(text or "")).strip()
+
+
+def clean_command_text(content: str, bot_name: str = "") -> str:
+    """Strip WCDB's ``wxid_xxx:`` prefix and the bot's own @mention."""
+    text = _WCDB_PREFIX_RE.sub("", str(content or ""))
+    if bot_name:
+        text = re.sub(
+            re.escape(f"@{bot_name}") + r"[^\w]*", "", text,
+        )
+    return strip_invisible(text)
+
+
+def is_checkin_command(content: str, bot_name: str = "") -> bool:
+    """True when the message body is exactly the 「签到」 command."""
+    return clean_command_text(content, bot_name) == CHECKIN_COMMAND
 
 
 def normalize_text(text: str) -> str:
