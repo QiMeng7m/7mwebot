@@ -8,10 +8,14 @@ None and the message continues to the normal AI path.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 import unicodedata
+from pathlib import Path
+
+from src.config import PROJECT_ROOT
 
 from . import rules
 from .duel import DuelService
@@ -33,6 +37,11 @@ from .util import (
 )
 
 logger = logging.getLogger(__name__)
+
+# wxid -> 群昵称, written by WcdbBackend at startup.  Members @ each
+# other by group nickname ("西湖-金金"), which often differs from the
+# contact name stored on messages ("降娄").
+_GROUP_NICKNAMES_PATH = Path(PROJECT_ROOT) / "data" / "group_nicknames.json"
 
 
 EXACT_COMMANDS = {
@@ -97,7 +106,7 @@ class PointHandler:
     def __init__(self, store: PointStore, config,
                  levels: LevelTable, catalog: EquipmentCatalog,
                  duels: DuelService, engine=None,
-                 nickname_service=None):
+                 nickname_service=None, group_nicknames_path=None):
         self._store = store
         self._config = config
         self._levels = levels
@@ -105,6 +114,9 @@ class PointHandler:
         self._duels = duels
         self._engine = engine
         self._nicks = nickname_service
+        self._group_nicknames_path = Path(
+            group_nicknames_path or _GROUP_NICKNAMES_PATH,
+        )
 
     # ── Entry ─────────────────────────────────────────────────────
 
@@ -224,12 +236,17 @@ class PointHandler:
             except Exception:  # noqa: BLE001
                 nick_map = {}
 
+        group_nicks = self._load_group_nicknames(chat_id)
+
         for member in self._store.members(chat_id):
             sid = member["sender_id"]
             names = {member["sender_name"]}
             nick = nick_map.get(sid)
             if nick:
                 names.add(nick)
+            group_nick = group_nicks.get(sid)
+            if group_nick:
+                names.add(group_nick)
             for name in names:
                 key = _norm_key(name)
                 if not key:
@@ -237,7 +254,37 @@ class PointHandler:
                 bucket = mapping.setdefault(key, [])
                 if sid not in bucket:
                     bucket.append(sid)
+
+        # Group nicknames also cover members who have never spoken, so
+        # 切磋/查询 by 群昵称 works even without message history.
+        known = {sid for ids in mapping.values() for sid in ids}
+        for sid, group_nick in group_nicks.items():
+            if sid in known:
+                continue
+            key = _norm_key(group_nick)
+            if not key:
+                continue
+            bucket = mapping.setdefault(key, [])
+            if sid not in bucket:
+                bucket.append(sid)
         return mapping
+
+    def _load_group_nicknames(self, chat_id: str) -> dict[str, str]:
+        """Read ``{wxid: 群昵称}`` for one chat (empty on any error)."""
+        try:
+            data = json.loads(
+                self._group_nicknames_path.read_text(encoding="utf-8"),
+            )
+        except (OSError, ValueError):
+            return {}
+        mapping = data.get(chat_id) if isinstance(data, dict) else None
+        if not isinstance(mapping, dict):
+            return {}
+        return {
+            str(sid): str(name)
+            for sid, name in mapping.items()
+            if name and str(name).strip()
+        }
 
     def _resolve_name(self, chat_id: str,
                       raw: str) -> tuple[str, str, list[str]]:

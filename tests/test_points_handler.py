@@ -343,6 +343,24 @@ class DuelCommandTests(HandlerTestBase):
         self.assertIn("胜率", reply)
         self.assertNotIn("没找到成员", reply)
 
+    def test_duel_resolves_group_nickname(self):
+        """@群昵称 ("西湖-金金") maps to its wxid ("降娄")."""
+        import json
+
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        path.write_text(
+            json.dumps({self.chat: {"wxid_b": "西湖-金金"}},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.handler._group_nicknames_path = path
+
+        msg = self.msg("@西湖-金金 切磋", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@西湖-金金 切磋"
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("胜率", reply)
+        self.assertNotIn("没找到成员", reply)
+
     def test_duel_shield(self):
         self.store.buy_shield(
             self.chat, "wxid_b", "李四", 20, 14400, 86400,

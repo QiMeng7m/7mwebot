@@ -515,6 +515,13 @@ class WcdbNativeClient:
         except Exception:
             self._dll.wcdb_get_group_members = None
 
+        try:
+            fn = self._dll.wcdb_get_group_nicknames
+            fn.argtypes = [ct.c_int64, ct.c_char_p, ct.POINTER(ct.c_void_p)]
+            fn.restype = ct.c_int32
+        except Exception:
+            self._dll.wcdb_get_group_nicknames = None
+
         self._dll.wcdb_free_string.argtypes = [ct.c_void_p]
         self._dll.wcdb_free_string.restype = None
 
@@ -847,6 +854,33 @@ class WcdbNativeClient:
                 "wcdb_get_group_members failed: %s", e
             )
             return []
+
+    def get_group_nicknames(self, chat_id):
+        """Get {wxid: group nickname} for a group chat.
+
+        Group nicknames ("群昵称") are what other members see and what
+        WeChat inserts into @mentions — they often differ from the
+        contact display name.
+        """
+        if not getattr(self._dll, "wcdb_get_group_nicknames", None):
+            return {}
+        try:
+            result = self._call_json(
+                self._dll.wcdb_get_group_nicknames,
+                self._handle,
+                chat_id.encode("utf-8"),
+            )
+            if isinstance(result, dict):
+                # Some builds wrap the map: {"nicknames": {...}}.
+                inner = result.get("nicknames")
+                if isinstance(inner, dict):
+                    return {str(k): str(v) for k, v in inner.items() if v}
+                return {str(k): str(v) for k, v in result.items()
+                        if isinstance(v, str) and v}
+            return {}
+        except Exception as e:
+            logger.warning("wcdb_get_group_nicknames failed: %s", e)
+            return {}
 
     def resolve_nickname(self, wxid):
         """Get display name for a wxid from cache."""

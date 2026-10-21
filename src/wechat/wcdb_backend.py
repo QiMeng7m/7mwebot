@@ -537,8 +537,21 @@ class WcdbBackend(AbstractWeChatBackend):
 
         # ── Resolve and persist group members ──────────────────────────
         group_members: dict[str, dict[str, str]] = {}
+        group_nicknames: dict[str, dict[str, str]] = {}
         for username, info in all_chatrooms.items():
             try:
+                # Group nicknames (群昵称) are what @mentions contain.
+                try:
+                    nicks = self._client.get_group_nicknames(username)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to resolve group nicknames for %s: %s",
+                        username, e,
+                    )
+                    nicks = {}
+                if nicks:
+                    group_nicknames[username] = nicks
+
                 members = self._client.get_group_members(username)
                 if not members:
                     continue
@@ -563,6 +576,30 @@ class WcdbBackend(AbstractWeChatBackend):
                 logger.warning("Failed to resolve members for %s: %s", username, e)
         if group_members:
             self._save_group_members(group_members)
+        if group_nicknames:
+            self._save_group_nicknames(group_nicknames)
+
+    @staticmethod
+    def _save_group_nicknames(
+            chat_nicks: dict[str, dict[str, str]]) -> None:
+        """Persist chat_id -> {wxid: 群昵称} to data/group_nicknames.json."""
+        from ..config import PROJECT_ROOT
+        path = Path(PROJECT_ROOT) / "data" / "group_nicknames.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = path.with_suffix(".tmp")
+            tmp_path.write_text(
+                json.dumps(chat_nicks, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp_path, path)
+            total = sum(len(m) for m in chat_nicks.values())
+            logger.info(
+                "Saved %d group nicknames across %d groups to %s",
+                total, len(chat_nicks), path,
+            )
+        except OSError as e:
+            logger.warning("Failed to save group nicknames: %s", e)
 
     @staticmethod
     def _save_group_members(chat_members: dict[str, dict[str, str]]) -> None:

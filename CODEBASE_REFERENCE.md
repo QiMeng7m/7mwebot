@@ -379,7 +379,8 @@ todo_delete_keywords: list[str] = [
 | `close()` | 关闭数据库连接 | 无 | `None` |
 | `get_sessions()` | 获取所有会话列表 | 无 | `list[dict]` |
 | `get_messages(talker, limit)` | 获取指定 talker 的消息 | `talker: str, limit: int` | `list[dict]` |
-| `get_group_members(talker)` | 获取群成员列表 | `talker: str` | `list[dict] \| None` |
+| `get_group_members(talker)` | 获取群成员列表（username + avatarUrl） | `talker: str` | `list[dict] \| None` |
+| `get_group_nicknames(talker)` | 获取群昵称映射 `{wxid: 群昵称}`（@ 时显示的名字） | `talker: str` | `dict[str, str]` |
 | `resolve_nickname(wxid)` | 解析 wxid → 昵称 | `wxid: str` | `str` |
 | `get_display_names(wxids)` | 批量解析昵称 | `wxids: list[str]` | `dict[str, str]` |
 | `_apply_drm_patch(dll_handle, dll_path)` | 1 字节 DRM 补丁 | `dll_handle: int, dll_path: str` | `None` |
@@ -801,6 +802,8 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
+| `handler.py` | `PointHandler._load_group_nicknames(chat_id)` | 读取某群的 `{wxid: 群昵称}` | `chat_id: str` | `dict[str, str]` |
 | `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
@@ -1096,8 +1099,11 @@ WcdbBackend.start(callback)
   ├── _resolve_groups()
   │     ├── get_sessions() → 获取所有 @chatroom 会话
   │     ├── get_group_members() → 解析群成员
+  │     ├── get_group_nicknames() → 群昵称映射
   │     ├── get_display_names() → 批量解析昵称
-  │     └── _save_group_names() → 持久化到 data/group_names.json
+  │     └── _save_group_names() → data/group_names.json
+  │         _save_group_members() → data/group_members.json
+  │         _save_group_nicknames() → data/group_nicknames.json
   │
   └── while self._running:           # 主轮询循环
         ├── _poll_cycle(callback)
@@ -1884,7 +1890,7 @@ MessageRouter.handle(msg)
 - **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**余额**（全部 category）用于消费与被抢
 - `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
 - 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
-- 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称精确匹配 → 唯一前后缀匹配（兼容群昵称带城市前缀）
+- 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时由 `wcdb_get_group_nicknames` 刷新）
 - 切磋只转移余额，不计入累计获得，避免打架刷榜
 - 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
 - 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
@@ -2169,6 +2175,7 @@ WCDB_KEY=
 | `data/nicknames.json` | `src/nickname.py` | wxid → 昵称映射 |
 | `data/group_names.json` | `src/wechat/wcdb_backend.py` | chat_id → {name, member_count} |
 | `data/group_members.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: display_name} |
+| `data/group_nicknames.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: 群昵称}，供 @群昵称 解析/切磋目标匹配 |
 | `data/welcome_templates.json` | `src/welcome.py` | 欢迎模板 + 群映射 |
 | `data/pending_kicks.json` | `src/wechat/inactive_kick.py` | 待执行的未发言成员踢出计时器 |
 | `data/lots.json` | `src/fun.py` | 自定义抽签配置 |
