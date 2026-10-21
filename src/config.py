@@ -315,10 +315,10 @@ class BotConfig:
     duel_reward_k: float = 1.2
     duel_per_fight_cap: int = 20
     duel_daily_attempts: int = 10
-    duel_daily_received: int = 3
+    duel_daily_pair_attempts: int = 5
     duel_daily_steal_cap: int = 50
-    duel_pair_cooldown_sec: int = 1800
-    duel_loss_cooldown_sec: int = 300
+    duel_pair_cooldown_sec: int = 300
+    duel_loss_cooldown_sec: int = 120
     duel_novice_protection_points: int = 20
     shield_price: int = 20
     shield_duration_sec: int = 14400
@@ -675,10 +675,10 @@ def load_config() -> BotConfig:
         "duel_reward_k": _safe_float(os.getenv("DUEL_REWARD_K", "1.2"), 1.2, "DUEL_REWARD_K"),
         "duel_per_fight_cap": _safe_int(os.getenv("DUEL_PER_FIGHT_CAP", "20"), 20, "DUEL_PER_FIGHT_CAP"),
         "duel_daily_attempts": _safe_int(os.getenv("DUEL_DAILY_ATTEMPTS", "10"), 10, "DUEL_DAILY_ATTEMPTS"),
-        "duel_daily_received": _safe_int(os.getenv("DUEL_DAILY_RECEIVED", "3"), 3, "DUEL_DAILY_RECEIVED"),
+        "duel_daily_pair_attempts": _safe_int(os.getenv("DUEL_PAIR_DAILY_ATTEMPTS", "5"), 5, "DUEL_PAIR_DAILY_ATTEMPTS"),
         "duel_daily_steal_cap": _safe_int(os.getenv("DUEL_DAILY_STEAL_CAP", "50"), 50, "DUEL_DAILY_STEAL_CAP"),
-        "duel_pair_cooldown_sec": _safe_int(os.getenv("DUEL_PAIR_COOLDOWN_SEC", "1800"), 1800, "DUEL_PAIR_COOLDOWN_SEC"),
-        "duel_loss_cooldown_sec": _safe_int(os.getenv("DUEL_LOSS_COOLDOWN_SEC", "300"), 300, "DUEL_LOSS_COOLDOWN_SEC"),
+        "duel_pair_cooldown_sec": _safe_int(os.getenv("DUEL_PAIR_COOLDOWN_SEC", "300"), 300, "DUEL_PAIR_COOLDOWN_SEC"),
+        "duel_loss_cooldown_sec": _safe_int(os.getenv("DUEL_LOSS_COOLDOWN_SEC", "120"), 120, "DUEL_LOSS_COOLDOWN_SEC"),
         "duel_novice_protection_points": _safe_int(os.getenv("DUEL_NOVICE_PROTECTION_POINTS", "20"), 20, "DUEL_NOVICE_PROTECTION_POINTS"),
         "shield_price": _safe_int(os.getenv("SHIELD_PRICE", "20"), 20, "SHIELD_PRICE"),
         "shield_duration_sec": _safe_int(os.getenv("SHIELD_DURATION_SEC", "14400"), 14400, "SHIELD_DURATION_SEC"),

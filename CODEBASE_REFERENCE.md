@@ -785,7 +785,7 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `buy_item(...)` | 条件扣款购买装备（余额不足不写入） | 见签名 | `(bool, code, balance, equipped)` |
 | `store.py` | `equip_item(...)` / `owned_items(...)` | 装备切换 / 已购清单 | 见签名 | 见签名 |
 | `store.py` | `buy_shield(...)` / `shield_expires_at(...)` | 购买/查询限时免战 | 见签名 | 见签名 |
-| `store.py` | `duel_attempts/duel_stolen/defender_received/last_pair_at/last_loss_at` | 切磋次数与冷却查询 | 见签名 | `int` |
+| `store.py` | `duel_attempts/duel_stolen/defender_received/pair_duels/last_pair_at/last_loss_at` | 切磋次数与冷却查询（`pair_duels` 按攻击方→防守方统计当天次数） | 见签名 | `int` |
 | `store.py` | `record_duel(...)` | 原子写入切磋记录与积分转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
 | `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日积分（含 0） | 见签名 | `list[dict]` |
@@ -2063,10 +2063,10 @@ DUEL_BASE_STEAL_RATIO=0.08
 DUEL_REWARD_K=1.2
 DUEL_PER_FIGHT_CAP=20
 DUEL_DAILY_ATTEMPTS=10
-DUEL_DAILY_RECEIVED=3
+DUEL_PAIR_DAILY_ATTEMPTS=5
 DUEL_DAILY_STEAL_CAP=50
-DUEL_PAIR_COOLDOWN_SEC=1800
-DUEL_LOSS_COOLDOWN_SEC=300
+DUEL_PAIR_COOLDOWN_SEC=300
+DUEL_LOSS_COOLDOWN_SEC=120
 DUEL_NOVICE_PROTECTION_POINTS=20
 SHIELD_PRICE=20
 SHIELD_DURATION_SEC=14400

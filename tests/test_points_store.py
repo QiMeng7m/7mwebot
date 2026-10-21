@@ -275,6 +275,14 @@ class DuelRecordTests(PointStoreTestBase):
         self.assertEqual(
             self.store.defender_received(self.chat, "wxid_b", local_day()), 1,
         )
+        self.assertEqual(
+            self.store.pair_duels(
+                self.chat, "wxid_a", "wxid_b", local_day()), 1,
+        )
+        self.assertEqual(
+            self.store.pair_duels(
+                self.chat, "wxid_x", "wxid_b", local_day()), 0,
+        )
         self.assertGreater(
             self.store.last_loss_at(self.chat, "wxid_a"), 0,
         )

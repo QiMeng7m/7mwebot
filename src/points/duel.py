@@ -157,7 +157,7 @@ class DuelService:
                 attempts_limit=attempts_limit,
             )
 
-        loss_cooldown = int(getattr(cfg, "duel_loss_cooldown_sec", 300))
+        loss_cooldown = int(getattr(cfg, "duel_loss_cooldown_sec", 120))
         last_loss = self._store.last_loss_at(chat_id, attacker_id)
         if last_loss and now - last_loss < loss_cooldown:
             wait = loss_cooldown - (now - last_loss)
@@ -168,7 +168,22 @@ class DuelService:
                 attempts_used=attempts, attempts_limit=attempts_limit,
             )
 
-        pair_cooldown = int(getattr(cfg, "duel_pair_cooldown_sec", 1800))
+        # Daily per-pair cap: each attacker may fight the same defender
+        # at most N times a day.  The defender is not limited by how many
+        # *different* people attack them.
+        pair_limit = int(getattr(cfg, "duel_daily_pair_attempts", 5))
+        pair_count = self._store.pair_duels(
+            chat_id, attacker_id, target_id, day,
+        )
+        if pair_limit > 0 and pair_count >= pair_limit:
+            return DuelResult(
+                False, "pair_limit",
+                f"今天已经和 {defender_name} 切磋 {pair_count} 次了"
+                f"（每天最多 {pair_limit} 次），明天再来。",
+                attempts_used=attempts, attempts_limit=attempts_limit,
+            )
+
+        pair_cooldown = int(getattr(cfg, "duel_pair_cooldown_sec", 300))
         last_pair = self._store.last_pair_at(chat_id, attacker_id, target_id)
         if last_pair and now - last_pair < pair_cooldown:
             wait = pair_cooldown - (now - last_pair)
@@ -184,16 +199,6 @@ class DuelService:
             return DuelResult(
                 False, "attempts",
                 f"今天的切磋次数已用完（{attempts_limit} 次），明天再来。",
-                attempts_used=attempts, attempts_limit=attempts_limit,
-            )
-
-        received_limit = int(getattr(cfg, "duel_daily_received", 3))
-        received = self._store.defender_received(chat_id, target_id, day)
-        if received >= received_limit:
-            return DuelResult(
-                False, "received",
-                f"{defender_name} 今天已经被切磋 {received} 次，"
-                "暂时打不动了。",
                 attempts_used=attempts, attempts_limit=attempts_limit,
             )
 

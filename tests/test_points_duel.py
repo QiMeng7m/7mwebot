@@ -210,15 +210,38 @@ class ChallengeTests(DuelServiceTestBase):
         self.assertFalse(again.ok)
         self.assertEqual(again.code, "attempts")
 
-    def test_defender_daily_received_limit(self):
-        self.config.duel_daily_received = 1
+    def test_pair_daily_limit(self):
+        """Each attacker→defender pair is capped per day."""
+        self.config.duel_daily_pair_attempts = 1
+        self.config.duel_pair_cooldown_sec = 0
+        first = self.challenge(_Rng(0.0))
+        self.assertTrue(first.ok)
+        again = self.challenge(_Rng(0.0))
+        self.assertFalse(again.ok)
+        self.assertEqual(again.code, "pair_limit")
+        self.assertIn("每天最多 1 次", again.reply)
+
+    def test_other_attackers_are_not_blocked_by_pair_limit(self):
+        """Another attacker's duels do not consume this pair's budget."""
+        self.config.duel_daily_pair_attempts = 1
+        self.config.duel_pair_cooldown_sec = 0
+        # wxid_x already attacked wxid_b today.
         self.store.record_duel(
             self.chat, "other-1", "wxid_x", "路人", "wxid_b", "李四",
             10, 10, 0.5, False, 0,
         )
-        result = self.challenge()
-        self.assertFalse(result.ok)
-        self.assertEqual(result.code, "received")
+        # wxid_a → wxid_b is still at 0/1 and must be allowed.
+        first = self.challenge(_Rng(0.0))
+        self.assertTrue(first.ok, first.reply)
+        again = self.challenge(_Rng(0.0))
+        self.assertFalse(again.ok)
+        self.assertEqual(again.code, "pair_limit")
+
+    def test_pair_limit_zero_disables_the_cap(self):
+        self.config.duel_daily_pair_attempts = 0
+        self.config.duel_pair_cooldown_sec = 0
+        self.assertTrue(self.challenge(_Rng(0.0)).ok)
+        self.assertTrue(self.challenge(_Rng(0.0)).ok)
 
     def test_daily_steal_cap(self):
         self.config.duel_daily_steal_cap = 1

@@ -656,6 +656,18 @@ class PointStore:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def pair_duels(self, chat_id: str, attacker_id: str,
+                   defender_id: str, day: str) -> int:
+        """Number of duels between one attacker and one defender today."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM duels
+                   WHERE chat_id = ? AND attacker_id = ? AND defender_id = ?
+                     AND day = ? AND shield_blocked = 0""",
+                (str(chat_id), str(attacker_id), str(defender_id), str(day)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
     def last_pair_at(self, chat_id: str, first: str, second: str) -> int:
         with self._lock:
             row = self.conn.execute(

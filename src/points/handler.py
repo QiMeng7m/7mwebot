@@ -772,7 +772,7 @@ class PointHandler:
             lines.append(
                 "结果：惜败。失败不扣分，"
                 f"{self._format_duration(safe_int(
-                    getattr(self._config, 'duel_loss_cooldown_sec', 300)))}"
+                    getattr(self._config, 'duel_loss_cooldown_sec', 120)))}"
                 "后可再次发起。"
             )
         lines.append(
