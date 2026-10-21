@@ -110,6 +110,7 @@ class QueryTests(HandlerTestBase):
         self.assertIsNotNone(reply)
         self.assertIn("李四", reply)
         self.assertIn("积分：96", reply)
+        self.assertIn("余额：96", reply)
         self.assertIn("武力值：", reply)
 
     def test_query_self(self):

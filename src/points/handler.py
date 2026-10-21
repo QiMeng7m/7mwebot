@@ -471,6 +471,7 @@ class PointHandler:
         power = self._duels.power(chat_id, sid)
         return (
             f"{stats.sender_name} 积分：{stats.earned} "
+            f"余额：{stats.balance} "
             f"武力值：{power.total}"
         )
 
