@@ -100,6 +100,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `WECHAT_GROUPS` | `str` | `"*"` | `src/config.py` (经 `_decode_wechat_groups` URL解码) | `src/bot.py:_create_wechat_backend()`, `src/wechat/wcdb_backend.py:_resolve_groups()` |
 | `WECHAT_DATA_DIR` | `str` | `""` | `src/config.py` | `src/wechat/wcdb_client.py`, `src/voice/file_locator.py`, `src/web/server.py` |
 | `BOT_DISPLAY_NAME` | `str` | `"群聊小助手"` | `src/config.py` (经 `_sanitize_display_name` 清洗) | `src/router.py:handle()` (多处), `src/bot.py:_log_banner()` |
+| `BOT_ALIASES` | `list[str]` | `[]` | `src/config.py` (`_parse_bot_aliases`，逗号分隔) | `wcdb_backend._standardize()` (@ 检测)、`router._is_bot_sender()`/`clean_command_text()` |
 | `ADMIN_WXID` | `str` | `""` | `src/config.py` | `src/router.py:handle()` (管理员命令判断) |
 | `TRIGGER_KEYWORDS` | `list[str]` | 见下方默认值 | `src/config.py` | `src/trigger/detector.py:TriggerDetector.__init__()` |
 | `SUMMARIZE_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:_handle_summary()` |
@@ -730,7 +731,7 @@ todo_delete_keywords: list[str] = [
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
 | `parse_activity_query(content)` | 解析「活跃查询 [N]」指令 | `content: str` | `int \| None` (天数) |
-| `clean_command_text(content, bot_name)` | 去掉 @bot / 不可见分隔符 / 消息前缀（wxid 或自定义微信号，如 `zy-519`）；委托 `points.rules.clean_command_text` | `content: str, bot_name: str` | `str` |
+| `clean_command_text(content, bot_name, aliases=())` | 去掉 @bot/@别名 / 不可见分隔符 / 消息前缀（wxid 或自定义微信号，如 `zy-519`）；委托 `points.rules.clean_command_text` | `content: str, bot_name: str, aliases: list[str]` | `str` |
 | `activity_window_start(days, now_ts=None)` | 统计窗口起点(本地 00:00) | `days: int, now_ts: int \| None` | `int` (Unix 秒) |
 | `format_relative_time(ts, now_ts)` | 相对时间文本 | `ts: int, now_ts: int` | `str` |
 | `build_activity_report(store, nickname_service, chat_id, group_name, requester_name, days=15, now_ts=None, exclude_message_id=None)` | 查询并生成群活跃报告 | 见签名 | `str` |
@@ -768,8 +769,8 @@ todo_delete_keywords: list[str] = [
 | `rules.py` | `reply_target(content, sender_id=None)` | 从 `<username>:` 回复前缀提取被引用者（前缀等于发送者时视为普通消息前缀） | `content: str, sender_id: str \| None` | `str \| None` |
 | `rules.py` | `strip_reply_prefix(content)` | 去掉消息/回复前缀（`wxid_*` 或自定义微信号） | `content: str` | `str` |
 | `rules.py` | `strip_invisible(text)` | 折叠空白/零宽字符为单个空格 | `text: str` | `str` |
-| `rules.py` | `clean_command_text(content, bot_name="")` | 去掉消息前缀、@bot、不可见空白 | `content: str, bot_name: str` | `str` |
-| `rules.py` | `is_checkin_command(content, bot_name="")` | 消息正文是否恰好为「签到」 | `content: str, bot_name: str` | `bool` |
+| `rules.py` | `clean_command_text(content, bot_name="", aliases=())` | 去掉消息前缀、@bot/@别名、不可见空白 | `content: str, bot_name: str, aliases: list[str]` | `str` |
+| `rules.py` | `is_checkin_command(content, bot_name="", aliases=())` | 消息正文是否恰好为「签到」 | 见签名 | `bool` |
 | `rules.py` | `normalize_text(text)` | 去空白/标点，用于重复检测 | `text: str` | `str` |
 | `rules.py` | `distinct_char_count(text)` | 去重字符数 | `text: str` | `int` |
 | `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
@@ -1131,7 +1132,7 @@ WcdbBackend.start(callback)
     "content": str,         # 消息文本 ("[图片]", "[语音]" 等占位符)
     "msg_type": int,        # 1=text, 3=image, 34=voice, 47=emoji, 49=link
     "timestamp": int,       # Unix 秒
-    "is_at_mentioned": bool, # 是否 @机器人
+    "is_at_mentioned": bool, # 是否 @机器人（含 BOT_ALIASES 中的别名）
     "mentioned_ids": list[str], # 正文中 @ 到的成员用户名（已排除机器人）
     "is_group": bool,       # 是否群聊(始终 True)
     "is_system_join": bool, # 是否"xxx 加入了群聊"事件
@@ -1989,6 +1990,7 @@ WECHAT_DATA_DIR=                               # 微信数据目录(留空自动
 
 # === 机器人身份 ===
 BOT_DISPLAY_NAME=群聊小助手                     # 机器人显示名
+BOT_ALIASES=                                   # 额外响应名（逗号分隔，如群昵称 小柒）
 ADMIN_WXID=                                    # 管理员 wxid
 
 # === 触发关键词 ===

@@ -201,6 +201,22 @@ class RouterPointsTests(unittest.TestCase):
         reply = self.router.handle(self._message("解签"))
         self.assertIn("今天还没有抽签", reply)
 
+    def test_bot_group_alias_triggers_commands(self):
+        self.router._config.bot_aliases = ["小柒"]
+        reply = self.router.handle(self._message(
+            "zy-519:\n@小柒 抽签",
+            sender_id="zy-519", name="降娄", is_at=True,
+        ))
+        self.assertIn("抽签结果", reply)
+
+    def test_human_with_alias_name_is_not_filtered(self):
+        """Aliases are only for @ detection — a member may share the name."""
+        self.router._config.bot_aliases = ["小柒"]
+        reply = self.router.handle(self._message(
+            "积分", sender_id="wxid_human", name="小柒",
+        ))
+        self.assertIn("积分", reply)
+
     def test_stale_points_command_ignored(self):
         reply = self.router.handle(self._message(
             "积分", ts=int(time.time()) - 3600))

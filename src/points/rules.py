@@ -66,19 +66,26 @@ def strip_invisible(text: str) -> str:
     return _INVISIBLE_RE.sub(" ", str(text or "")).strip()
 
 
-def clean_command_text(content: str, bot_name: str = "") -> str:
-    """Strip WCDB's ``wxid_xxx:`` prefix and the bot's own @mention."""
+def clean_command_text(content: str, bot_name: str = "",
+                       aliases: tuple[str, ...] | list[str] = ()) -> str:
+    """Strip WCDB's ``wxid_xxx:`` prefix and the bot's own @mention.
+
+    *aliases* are additional names the bot answers to (e.g. a WeChat
+    group nickname); their @mentions are stripped as well.
+    """
     text = _WCDB_PREFIX_RE.sub("", str(content or ""))
-    if bot_name:
-        text = re.sub(
-            re.escape(f"@{bot_name}") + r"[^\w]*", "", text,
-        )
+    for name in (bot_name, *aliases):
+        if name:
+            text = re.sub(
+                re.escape(f"@{name}") + r"[^\w]*", "", text,
+            )
     return strip_invisible(text)
 
 
-def is_checkin_command(content: str, bot_name: str = "") -> bool:
+def is_checkin_command(content: str, bot_name: str = "",
+                       aliases: tuple[str, ...] | list[str] = ()) -> bool:
     """True when the message body is exactly the 「签到」 command."""
-    return clean_command_text(content, bot_name) == CHECKIN_COMMAND
+    return clean_command_text(content, bot_name, aliases) == CHECKIN_COMMAND
 
 
 def normalize_text(text: str) -> str:

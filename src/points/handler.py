@@ -120,6 +120,7 @@ class PointHandler:
 
         text = _clean_for_commands(
             content, getattr(cfg, "bot_display_name", ""),
+            getattr(cfg, "bot_aliases", ()) or (),
         )
         if not text:
             return None

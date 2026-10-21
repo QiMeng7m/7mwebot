@@ -352,6 +352,7 @@ class Bot:
             from .wechat.wcdb_backend import WcdbBackend
             return WcdbBackend(
                 bot_display_name=config.bot_display_name,
+                bot_aliases=getattr(config, "bot_aliases", []),
                 groups=groups,
                 poll_sec=config.poll_interval_sec,
                 store=store,

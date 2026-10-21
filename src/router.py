@@ -153,12 +153,9 @@ class MessageRouter:
         # Skip messages from the bot itself (prevent infinite loops).
         # Use a forgiving match — WeChat display names can vary slightly
         # (extra spaces, punctuation, emoji suffixes) from what's in .env.
-        bot_name = self._config.bot_display_name.strip()
-        if bot_name and (
-            msg["sender_name"].strip() == bot_name
-            or bot_name in msg["sender_name"]
-        ):
+        if self._is_bot_sender(msg["sender_name"]):
             return None
+        bot_name = self._config.bot_display_name.strip()
 
         # Always persist the message.
         # Wrap in try/except so a DB error (e.g. malformed system message)
@@ -227,7 +224,9 @@ class MessageRouter:
         # stripper so user names are never mangled.
         if msg.get("msg_type") != 10000:
             activity_days = parse_activity_query(
-                clean_command_text(msg.get("content", ""), bot_name)
+                clean_command_text(
+                    msg.get("content", ""), bot_name, self._bot_aliases(),
+                )
             )
             if activity_days is not None:
                 now_ts = int(time.time())
@@ -273,7 +272,9 @@ class MessageRouter:
         # continues untouched.
         if self._points_handler is not None and msg.get("msg_type") != 10000:
             from .points.handler import looks_like_command
-            command_text = clean_command_text(msg.get("content", ""), bot_name)
+            command_text = clean_command_text(
+                msg.get("content", ""), bot_name, self._bot_aliases(),
+            )
             if looks_like_command(command_text):
                 msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
                 if msg_age_sec > AT_MENTION_MAX_AGE_SEC:
@@ -322,6 +323,7 @@ class MessageRouter:
             # WeChat ID (zy-519, canglan1992, …) rather than wxid_*.
             clean_content = clean_command_text(
                 msg["content"], self._config.bot_display_name,
+                self._bot_aliases(),
             )
 
             reply: Optional[str] = None
@@ -679,6 +681,24 @@ class MessageRouter:
 
     # ── Fun commands (抽签 / 解签) ───────────────────────────────
 
+    def _bot_aliases(self) -> list[str]:
+        """Names the bot also answers to (WeChat group nicknames)."""
+        aliases = getattr(self._config, "bot_aliases", None) or []
+        return [str(a).strip() for a in aliases if str(a or "").strip()]
+
+    def _is_bot_sender(self, sender_name: str) -> bool:
+        """True when *sender_name* is the bot itself.
+
+        Only ``BOT_DISPLAY_NAME`` is used here: aliases are group
+        nicknames that humans may also use, and filtering by them could
+        silently drop a real member's messages.
+        """
+        name = str(sender_name or "").strip()
+        bot_name = str(self._config.bot_display_name or "").strip()
+        if not name or not bot_name:
+            return False
+        return name == bot_name or bot_name in name
+
     def _msg_display_name(self, msg: dict) -> str:
         """Nickname → sender_id → backend name fallback chain."""
         name = self._nicks.resolve_name(msg["sender_id"])
@@ -692,6 +712,7 @@ class MessageRouter:
             return None
         command = clean_command_text(
             msg.get("content", ""), self._config.bot_display_name,
+            self._bot_aliases(),
         )
         if command == "抽签":
             return self._handle_draw(msg)

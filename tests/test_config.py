@@ -47,9 +47,29 @@ class ConfigModuleImportTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class ParseBotAliasesTests(unittest.TestCase):
+    def test_parses_comma_separated_aliases(self):
+        from src.config import _parse_bot_aliases
+
+        self.assertEqual(
+            _parse_bot_aliases("小柒, 柒梦，小七"),
+            ["小柒", "柒梦", "小七"],
+        )
+
+    def test_drops_empty_entries_and_duplicates(self):
+        from src.config import _parse_bot_aliases
+
+        self.assertEqual(_parse_bot_aliases(" , 小柒, ,小柒 "), ["小柒"])
+
+    def test_empty_env_yields_no_aliases(self):
+        from src.config import BotConfig, _parse_bot_aliases
+
+        self.assertEqual(_parse_bot_aliases(""), [])
+        self.assertEqual(BotConfig().bot_aliases, [])
+
+
 class SanitizeDisplayNameTests(unittest.TestCase):
     """Edge-case tests for _sanitize_display_name."""
-
     def test_empty_string_returns_fallback(self):
         """Empty string → fallback display name."""
         from src.config import _sanitize_display_name

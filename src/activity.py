@@ -49,16 +49,18 @@ def parse_activity_query(content: str) -> int | None:
     return max(1, min(days, MAX_DAYS))
 
 
-def clean_command_text(content: str, bot_name: str = "") -> str:
+def clean_command_text(content: str, bot_name: str = "",
+                       aliases: tuple[str, ...] | list[str] = ()) -> str:
     """Strip @bot, the WCDB sender/reply prefix and invisible spaces.
 
     Delegates to :func:`src.points.rules.clean_command_text` so activity
     queries and point commands share one definition (custom WeChat IDs
-    such as ``zy-519`` are valid prefixes too).
+    such as ``zy-519`` are valid prefixes too).  *aliases* lets the bot
+    answer to group nicknames as well as ``bot_display_name``.
     """
     from .points.rules import clean_command_text as _clean
 
-    return _clean(content, bot_name)
+    return _clean(content, bot_name, aliases)
 
 
 # ── Time helpers ─────────────────────────────────────────────────────

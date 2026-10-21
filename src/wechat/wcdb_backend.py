@@ -223,8 +223,12 @@ class WcdbBackend(AbstractWeChatBackend):
                  groups: list[str] | None = None,
                  poll_sec: float = DEFAULT_POLL_SEC,
                  store=None,
-                 config=None):
+                 config=None,
+                 bot_aliases: list[str] | None = None):
         self._bot_name = bot_display_name
+        self._bot_aliases = [
+            str(a).strip() for a in (bot_aliases or []) if str(a or "").strip()
+        ]
         self._groups = groups or []
         self._poll_sec = poll_sec
         self._store = store  # MessageStore fallback for name resolution
@@ -674,7 +678,7 @@ class WcdbBackend(AbstractWeChatBackend):
                     talker, standardized.get("sender_id", ""),
                 )
 
-            if self._bot_name and self._bot_name in standardized["sender_name"]:
+            if self._is_bot_sender(standardized["sender_name"]):
                 continue
 
             self._trim_dedup()
@@ -845,6 +849,23 @@ class WcdbBackend(AbstractWeChatBackend):
 
     # ── Message standardization ──────────────────────────────────────
 
+    def _bot_names(self) -> list[str]:
+        """Bot display name plus any configured group nicknames."""
+        names = [self._bot_name, *getattr(self, "_bot_aliases", [])]
+        return [str(n).strip() for n in names if str(n or "").strip()]
+
+    def _is_bot_sender(self, sender_name: str) -> bool:
+        """True when the sender is the bot account.
+
+        Only the real display name is used — aliases are group nicknames
+        that human members may share.
+        """
+        name = str(sender_name or "").strip()
+        bot_name = str(self._bot_name or "").strip()
+        if not name or not bot_name:
+            return False
+        return name == bot_name or bot_name in name
+
     def _standardize(self, msg: dict, group_name: str,
                      talker: str) -> Optional[dict]:
         """Convert WCDB raw message to standard format."""
@@ -950,16 +971,16 @@ class WcdbBackend(AbstractWeChatBackend):
                 name = self._client.resolve_nickname(at_wxid)
                 if name == at_wxid:
                     return match.group(0)
-                is_bot = bool(self._bot_name) and name == self._bot_name
+                is_bot = bool(name) and name in self._bot_names()
                 if not is_bot and at_wxid not in mention_ids:
                     mention_ids.append(at_wxid)
                 return f"@{name}"
             resolved_content = re.sub(r'@wxid_[a-zA-Z0-9]+', _replace_at, content)
 
-        # Detect @mention of bot
-        is_at = self._bot_name and (
-            f"@{self._bot_name}" in resolved_content
-            or f"@{self._bot_name}" in content
+        # Detect @mention of bot (display name or any configured alias)
+        is_at = any(
+            f"@{name}" in resolved_content or f"@{name}" in content
+            for name in self._bot_names()
         )
 
         # Generate stable message ID.

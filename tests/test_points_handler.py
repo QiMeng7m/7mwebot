@@ -182,6 +182,18 @@ class CheckinTests(HandlerTestBase):
             "@降娄 签到成功，积分+10",
         )
 
+    def test_checkin_with_bot_group_alias(self):
+        """Members @ the bot's group nickname instead of BOT_DISPLAY_NAME."""
+        self.config.bot_display_name = "柒梦"
+        self.config.bot_aliases = ["小柒"]
+        self.add_member("wxid_a", "张三", earned=0)
+        msg = self.msg("签到", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@小柒 签到"
+        self.assertEqual(
+            self.handler.handle(msg["content"], msg),
+            "@张三 签到成功，积分+10",
+        )
+
     def test_checkin_awards_and_confirms(self):
         self.add_member("wxid_a", "张三", earned=0)
         reply = self.run_cmd("签到", sender_id="wxid_a", name="张三")

@@ -183,12 +183,13 @@ class StandardizeMentionTests(unittest.TestCase):
                 "wxid_bot": "柒梦",
             }.get(wxid, wxid)
 
-    def _standardize(self, content: str) -> dict:
+    def _standardize(self, content: str, aliases=None) -> dict:
         backend = WcdbBackend.__new__(WcdbBackend)
         backend._client = self._Client()
         backend._store = None
         backend._voice_config = BotConfig(welcome_enabled=False)
         backend._bot_name = "柒梦"
+        backend._bot_aliases = list(aliases or [])
         return backend._standardize({
             "sender_username": "wxid_a",
             "message_content": content,
@@ -208,6 +209,13 @@ class StandardizeMentionTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["mentioned_ids"], [])
         self.assertTrue(result["is_at_mentioned"])
+
+    def test_group_nickname_alias_counts_as_bot_mention(self):
+        """The bot may be @'d by its WeChat group nickname."""
+        result = self._standardize("wxid_a:\n@小柒 抽签", aliases=["小柒"])
+        self.assertIsNotNone(result)
+        self.assertTrue(result["is_at_mentioned"])
+        self.assertEqual(result["mentioned_ids"], [])
 
 
 class StandardizeJoinTests(unittest.TestCase):

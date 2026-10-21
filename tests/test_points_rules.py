@@ -63,6 +63,16 @@ class ReplyPrefixTests(unittest.TestCase):
             clean_command_text("canglan1992:\n积分"), "积分",
         )
 
+    def test_clean_command_text_strips_bot_alias(self):
+        self.assertEqual(
+            clean_command_text("wxid_a:\n@小柒 签到", "柒梦", ["小柒"]),
+            "签到",
+        )
+        self.assertEqual(
+            clean_command_text("wxid_a:\n@小柒 抽签", "柒梦", ("小柒",)),
+            "抽签",
+        )
+
     def test_normalize_removes_punctuation_and_space(self):
         self.assertEqual(normalize_text("你好， 世界！"), "你好世界")
         self.assertEqual(normalize_text("Hello, World!"), "helloworld")

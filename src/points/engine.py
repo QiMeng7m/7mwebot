@@ -64,6 +64,12 @@ class PointEngine:
             return 0
 
         bot_name = str(getattr(self._config, "bot_display_name", "") or "")
+        bot_aliases = tuple(
+            str(a) for a in (getattr(self._config, "bot_aliases", None) or ())
+            if a
+        )
+        # Alias names may belong to real members, so only the canonical
+        # display name excludes a message from scoring.
         if bot_name and (sender_name == bot_name or bot_name in sender_name):
             return 0
 
@@ -95,7 +101,9 @@ class PointEngine:
         # messages no longer count as checking in — members were being
         # told "already signed" merely because they had spoken earlier.
         is_checkin = (
-            rules.is_checkin_command(msg.get("content", ""), bot_name)
+            rules.is_checkin_command(
+                msg.get("content", ""), bot_name, bot_aliases,
+            )
             and not self._store.has_reason_on_day(
                 chat_id, sender_id, "daily_first", day,
             )
