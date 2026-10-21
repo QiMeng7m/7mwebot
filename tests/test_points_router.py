@@ -53,6 +53,12 @@ class RouterPointsTests(unittest.TestCase):
         config.equipment_enabled = True
         config.duel_enabled = True
         config.duel_groups = ["*"]
+        config.fishing_enabled = True
+        config.fishing_groups = ["*"]
+        config.fishing_catalog_path = str(
+            Path(tempfile.mkdtemp()) / "fishing.json")
+        config.fishing_cooldown_sec = 0
+        config.fishing_daily_cap = 0
         config.admin_wxid = "wxid_admin"
 
         self.router = MessageRouter(
@@ -231,6 +237,35 @@ class RouterPointsTests(unittest.TestCase):
             "123@chatroom", "wxid_b", "李四", 50, "测试")
         reply = self.router.handle(self._message("切磋 李四"))
         self.assertIn("胜率", reply)
+
+    def test_fishing_reply_is_a_string_with_delay(self):
+        reply = self.router.handle(self._message("钓鱼"))
+        self.assertIsNotNone(reply)
+        self.assertIn("余额", reply)
+        self.assertGreaterEqual(getattr(reply, "delay_sec", 0), 5)
+
+    def test_fishing_reply_is_scheduled_when_sender_registered(self):
+        import threading
+        from unittest.mock import patch
+
+        captured = []
+        done = threading.Event()
+
+        def sender(chat_id, text):
+            captured.append((chat_id, text))
+            done.set()
+            return True
+
+        self.router.set_reply_sender(sender)
+        catalog = self.router._points_handler._fishing.catalog
+        # Zero delay keeps the test fast while exercising scheduling.
+        with patch.object(catalog, "delay_for", return_value=0):
+            reply = self.router.handle(self._message("钓鱼"))
+
+        self.assertIsNone(reply)
+        self.assertTrue(done.wait(2.0))
+        self.assertEqual(captured[0][0], "123@chatroom")
+        self.assertIn("余额", captured[0][1])
 
 
 if __name__ == "__main__":

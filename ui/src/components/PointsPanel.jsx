@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X } from '@phosphor-icons/react'
+import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X, Fish } from '@phosphor-icons/react'
 import { Select } from './SharedComponents'
 
 const API = 'http://127.0.0.1:7327'
@@ -9,6 +9,15 @@ const tabTransition = {
   initial: { opacity: 0, y: 6 },
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -6 },
+}
+
+const DELAY_LABELS = {
+  miss: '空竿',
+  junk: '垃圾',
+  common: '普通',
+  rare: '稀有',
+  epic: '史诗',
+  legendary: '传说',
 }
 
 async function api(path, options = {}) {
@@ -66,13 +75,16 @@ function Bar({ value, max }) {
 export default function PointsPanel() {
   const [groups, setGroups] = useState([])
   const [chatId, setChatId] = useState('')
-  const [view, setView] = useState('board') // board | shop | duels | overview
+  const [view, setView] = useState('board') // board | shop | duels | fishing | overview
   const [scope, setScope] = useState('total')
   const [rows, setRows] = useState([])
   const [overview, setOverview] = useState(null)
   const [catalog, setCatalog] = useState({ slots: [], items: [] })
   const [owned, setOwned] = useState([])
   const [duels, setDuels] = useState([])
+  const [fishing, setFishing] = useState(null)
+  const [fishMember, setFishMember] = useState('')
+  const [fishBusy, setFishBusy] = useState(false)
   const [balance, setBalance] = useState(0)
   const [power, setPower] = useState(null)
   const [shopMember, setShopMember] = useState('')
@@ -129,6 +141,14 @@ export default function PointsPanel() {
     if (data.ok) setDuels(data.duels || [])
   }, [chatId])
 
+  const loadFishing = useCallback(async (memberId) => {
+    if (!chatId) return
+    const query = memberId ? `&sender_id=${encodeURIComponent(memberId)}` : ''
+    const data = await api(`/api/fishing?chat_id=${encodeURIComponent(chatId)}${query}`)
+    if (data.ok) setFishing(data)
+    else setMessage(data.error || '加载钓鱼数据失败')
+  }, [chatId])
+
   useEffect(() => {
     if (!chatId) return
     setLoading(true)
@@ -145,7 +165,12 @@ export default function PointsPanel() {
       loadShop(shopMember || rows[0]?.sender_id || '')
     }
     if (view === 'duels') loadDuels()
-  }, [view, chatId, shopMember, rows, loadShop, loadDuels])
+    if (view === 'fishing') {
+      const member = fishMember || rows[0]?.sender_id || ''
+      if (member && member !== fishMember) setFishMember(member)
+      loadFishing(member)
+    }
+  }, [view, chatId, shopMember, rows, loadShop, loadDuels, fishMember, loadFishing])
 
   async function openMember(senderId) {
     const data = await api(
@@ -159,6 +184,7 @@ export default function PointsPanel() {
     await Promise.all([loadBoard(), loadOverview()])
     if (view === 'shop') await loadShop(shopMember)
     if (view === 'duels') await loadDuels()
+    if (view === 'fishing') await loadFishing(fishMember)
     if (detail) await openMember(detail.sender_id)
   }
 
@@ -245,6 +271,82 @@ export default function PointsPanel() {
     }
   }
 
+  async function buyFishingRod(rod) {
+    if (!fishMember) {
+      setMessage('请先选择成员')
+      return
+    }
+    setFishBusy(true)
+    try {
+      const data = await api('/api/fishing/buy_rod', {
+        method: 'POST',
+        body: JSON.stringify({
+          chat_id: chatId,
+          sender_id: fishMember,
+          rod_id: rod.id,
+        }),
+      })
+      if (data.ok) setMessage(`已购买 ${rod.name}，余额 ${data.balance}`)
+      else if (data.code === 'insufficient') {
+        setMessage(`余额不足：${rod.name} 需要 ${rod.price} 余额`)
+      } else if (data.code === 'owned') {
+        setMessage(`已经拥有 ${rod.name}`)
+      } else {
+        setMessage(data.error || '购买失败')
+      }
+      await loadFishing(fishMember)
+    } finally {
+      setFishBusy(false)
+    }
+  }
+
+  async function equipFishingRod(rod) {
+    if (!fishMember) return
+    setFishBusy(true)
+    try {
+      const data = await api('/api/fishing/equip_rod', {
+        method: 'POST',
+        body: JSON.stringify({
+          chat_id: chatId,
+          sender_id: fishMember,
+          rod_id: rod.id,
+        }),
+      })
+      if (!data.ok) setMessage('切换鱼竿失败')
+      await loadFishing(fishMember)
+    } finally {
+      setFishBusy(false)
+    }
+  }
+
+  async function buyFishingBait(bait, quantity = 10) {
+    if (!fishMember) {
+      setMessage('请先选择成员')
+      return
+    }
+    setFishBusy(true)
+    try {
+      const data = await api('/api/fishing/buy_bait', {
+        method: 'POST',
+        body: JSON.stringify({
+          chat_id: chatId,
+          sender_id: fishMember,
+          bait_id: bait.id,
+          quantity,
+        }),
+      })
+      if (data.ok) setMessage(`已购买 ${bait.name}×${quantity}，余额 ${data.balance}`)
+      else if (data.code === 'insufficient') {
+        setMessage(`余额不足：${bait.name} 需要 ${bait.price * quantity} 余额`)
+      } else {
+        setMessage(data.error || '购买失败')
+      }
+      await loadFishing(fishMember)
+    } finally {
+      setFishBusy(false)
+    }
+  }
+
   const groupOptions = groups.map(g => ({
     value: g.chat_id,
     label: `${g.group_name}（${g.member_count}人）`,
@@ -254,6 +356,7 @@ export default function PointsPanel() {
     label: `${r.sender_name}（${r.points}分）`,
   }))
   const ownedMap = Object.fromEntries(owned.map(o => [o.item_id, o]))
+  const fishInventory = fishing?.inventory || []
   const maxDaily = overview?.daily?.reduce((m, d) => Math.max(m, d.points), 0) || 0
   const distribution = overview?.level_distribution || {}
   const distributionTotal = Object.values(distribution).reduce((a, b) => a + b, 0)
@@ -290,6 +393,9 @@ export default function PointsPanel() {
         </Pill>
         <Pill active={view === 'duels'} onClick={() => setView('duels')}>
           <Sword size={14} className="inline mr-1" />切磋记录
+        </Pill>
+        <Pill active={view === 'fishing'} onClick={() => setView('fishing')}>
+          <Fish size={14} className="inline mr-1" />钓鱼
         </Pill>
         <Pill active={view === 'overview'} onClick={() => setView('overview')}>
           <ChartBar size={14} className="inline mr-1" />概览
@@ -523,6 +629,176 @@ export default function PointsPanel() {
             </Card>
           )}
 
+          {view === 'fishing' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="w-64">
+                  {memberOptions.length > 0 ? (
+                    <Select value={fishMember} onChange={setFishMember} options={memberOptions} />
+                  ) : (
+                    <p className="text-sm text-text-muted">还没有成员数据</p>
+                  )}
+                </div>
+                {fishing?.member && (
+                  <>
+                    <span className="text-xs font-mono text-text-muted">余额 {fishing.member.balance}</span>
+                    <span className="text-xs font-mono text-text-muted">
+                      今日 {fishing.member.attempts}/{fishing.member.attempts_limit} 次
+                    </span>
+                    {fishing.member.daily_cap > 0 && (
+                      <span className="text-xs font-mono text-text-muted">
+                        今日收益 {fishing.member.earned_today}/{fishing.member.daily_cap}
+                      </span>
+                    )}
+                    <span className="text-xs font-mono text-text-muted">
+                      图鉴 {fishing.member.caught_species?.length || 0}/{fishing.member.species_total || 0}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {!fishing ? (
+                <Card><p className="text-sm text-text-muted">加载中…</p></Card>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <Card>
+                      <SectionTitle hint="越高级，稀有鱼概率越高；低级鱼竿也能钓到稀有鱼">
+                        鱼竿
+                      </SectionTitle>
+                      <div className="space-y-2">
+                        {(fishing.catalog?.rods || []).map(rod => {
+                          const ownedRod = fishInventory.some(
+                            row => row.kind === 'rod' && row.item_id === rod.id)
+                          const equipped = fishing.member?.rod?.id === rod.id
+                          return (
+                            <div key={rod.id} className="flex items-center gap-3 p-3 rounded-xl border border-border-main bg-bg-raised/40">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[14px] text-text-main truncate">
+                                  {rod.name}
+                                  {rod.default ? '（默认）' : ''}
+                                  {equipped ? ' · 已装备' : ownedRod ? ' · 已拥有' : ''}
+                                </p>
+                                <p className="text-[11px] text-text-muted font-mono">
+                                  稀有 +{Math.round(rod.rare_bonus * 100)}% · 价值 +{Math.round(rod.value_bonus * 100)}%
+                                  {rod.price > 0 ? ` · ${rod.price} 余额` : ''}
+                                </p>
+                              </div>
+                              {equipped ? (
+                                <span className="text-[11px] font-mono text-brand-green">使用中</span>
+                              ) : ownedRod || rod.default ? (
+                                <button
+                                  disabled={fishBusy}
+                                  onClick={() => equipFishingRod(rod)}
+                                  className="px-3 py-1.5 rounded-lg text-[12px] border border-border-main text-text-muted hover:text-text-main transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  切换
+                                </button>
+                              ) : (
+                                <button
+                                  disabled={fishBusy}
+                                  onClick={() => buyFishingRod(rod)}
+                                  className="px-3 py-1.5 rounded-lg text-[12px] bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-medium cursor-pointer disabled:opacity-50"
+                                >
+                                  购买
+                                </button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </Card>
+
+                    <Card>
+                      <SectionTitle hint="每次钓鱼自动消耗 1 个，价格低的优先">
+                        鱼饵
+                      </SectionTitle>
+                      <div className="space-y-2">
+                        {(fishing.catalog?.baits || []).map(bait => {
+                          const stock = fishInventory.find(
+                            row => row.kind === 'bait' && row.item_id === bait.id)
+                          return (
+                            <div key={bait.id} className="flex items-center gap-3 p-3 rounded-xl border border-border-main bg-bg-raised/40">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[14px] text-text-main truncate">
+                                  {bait.name} <span className="text-[11px] text-text-muted font-mono">持有 {stock?.quantity || 0}</span>
+                                </p>
+                                <p className="text-[11px] text-text-muted font-mono">
+                                  稀有 +{Math.round(bait.rare_bonus * 100)}% · 价值 +{Math.round(bait.value_bonus * 100)}% · {bait.price} 余额/个
+                                </p>
+                              </div>
+                              <button
+                                disabled={fishBusy}
+                                onClick={() => buyFishingBait(bait, 10)}
+                                className="px-3 py-1.5 rounded-lg text-[12px] bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-medium cursor-pointer disabled:opacity-50"
+                              >
+                                买 10 个
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </Card>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <Card>
+                      <SectionTitle hint="按钓鱼入账余额排名">钓鱼榜</SectionTitle>
+                      {(fishing.board?.value || []).length === 0 ? (
+                        <p className="text-sm text-text-muted">本群还没有钓鱼记录。</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {fishing.board.value.map((row, index) => (
+                            <div key={row.sender_id} className="flex items-center gap-3 text-[12px] font-mono px-2 py-1.5 rounded-lg hover:bg-bg-raised">
+                              <span className="text-text-muted w-6">{index + 1}</span>
+                              <span className="text-text-main flex-1 truncate">{row.sender_name}</span>
+                              <span className="text-text-muted">{row.catches} 条</span>
+                              <span className="text-brand-green w-20 text-right">{row.value} 余额</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+
+                    <Card>
+                      <SectionTitle hint="单条最重的大鱼">最近上钩 / 大鱼</SectionTitle>
+                      {(fishing.board?.biggest || []).length === 0 ? (
+                        <p className="text-sm text-text-muted">还没有渔获。</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {fishing.board.biggest.slice(0, 8).map((row, index) => (
+                            <div key={index} className="flex items-center gap-3 text-[12px] font-mono px-2 py-1.5 rounded-lg hover:bg-bg-raised">
+                              <span className="text-text-main flex-1 truncate">
+                                {row.sender_name} · {row.species_name}
+                              </span>
+                              <span className="text-text-muted">
+                                {row.weight_g >= 1000 ? `${(row.weight_g / 1000).toFixed(2)}kg` : `${row.weight_g}g`}
+                              </span>
+                              <span className="text-brand-green w-16 text-right">+{row.amount}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+                  </div>
+
+                  <Card>
+                    <SectionTitle hint="稀有度越高，机器人越晚回复（最多 60 秒）">
+                      反馈延迟
+                    </SectionTitle>
+                    <div className="flex flex-wrap gap-2 text-[12px] font-mono text-text-muted">
+                      {Object.entries(fishing.catalog?.delays || {}).map(([key, seconds]) => (
+                        <span key={key} className="px-3 py-1 rounded-full border border-border-main bg-bg-raised/40">
+                          {DELAY_LABELS[key] || key} {seconds}s
+                        </span>
+                      ))}
+                    </div>
+                  </Card>
+                </>
+              )}
+            </div>
+          )}
+
           {view === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <Card>
@@ -573,7 +849,7 @@ export default function PointsPanel() {
       </AnimatePresence>
 
       <p className="text-[11px] text-text-muted font-mono">
-        群内指令：积分 · 我的信息 · 查询 名字 · 积分榜 · 月榜 · 商店 · 购买 · 武力值 · 切磋 @某人 · 买免战券
+        群内指令：积分 · 我的信息 · 查询 名字 · 积分榜 · 月榜 · 商店 · 购买 · 武力值 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
       </p>
     </div>
   )

@@ -20,8 +20,10 @@ from src.config import PROJECT_ROOT
 from . import rules
 from .duel import DuelService
 from .equipment import EquipmentCatalog
+from .fishing import FishingService, format_weight
+from .fishing_catalog import RARITIES, RARITY_LABELS
 from .levels import LevelTable
-from .models import Command
+from .models import Command, DelayedReply
 from .rules import (
     INVISIBLE_WS as _WS,
     clean_command_text as _clean_for_commands,
@@ -64,14 +66,39 @@ EXACT_COMMANDS = {
     "切磋记录": ("duel_log", ""),
     "买免战券": ("buy_shield", ""),
     "免战": ("buy_shield", ""),
+    # ── Fishing ──
+    "钓鱼": ("fish", ""),
+    "鱼竿": ("fish_rods", ""),
+    "鱼饵": ("fish_baits", ""),
+    "鱼篓": ("fish_bag", ""),
+    "我的鱼": ("fish_bag", ""),
+    "钓鱼图鉴": ("fish_book", ""),
+    "图鉴": ("fish_book", ""),
+    "钓鱼榜": ("fish_board", "total"),
+    "钓鱼记录": ("fish_log", ""),
 }
 
-PREFIX_COMMANDS = ("购买", "装备", "卸下", "查询", "切磋", "积分调整", "积分重算")
+PREFIX_COMMANDS = (
+    "购买", "装备", "卸下", "查询", "切磋", "积分调整", "积分重算",
+    "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
+)
 
 _BOARD_SCOPES = {
     "总": "total", "总榜": "total",
     "月": "season", "月榜": "season", "本月": "season",
     "今日": "day", "今日榜": "day", "今天": "day",
+}
+
+_FISH_BOARD_SCOPES = {
+    "总": "value", "总榜": "value", "累计": "value",
+    "今日": "today", "今天": "today",
+    "大鱼": "biggest", "最大": "biggest",
+    "数量": "count", "条数": "count",
+}
+
+_CN_NUMBERS = {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
 }
 
 _ADMIN_ADJUST_RE = re.compile(
@@ -87,6 +114,8 @@ def looks_like_command(text: str) -> bool:
     if text in EXACT_COMMANDS:
         return True
     if re.match(rf"^积分榜{_WS}+", text):
+        return True
+    if re.match(rf"^钓鱼榜{_WS}+", text):
         return True
     if text.startswith("@") and _ends_with_keyword(text, "切磋"):
         return True
@@ -106,13 +135,15 @@ class PointHandler:
     def __init__(self, store: PointStore, config,
                  levels: LevelTable, catalog: EquipmentCatalog,
                  duels: DuelService, engine=None,
-                 nickname_service=None, group_nicknames_path=None):
+                 nickname_service=None, group_nicknames_path=None,
+                 fishing: FishingService | None = None):
         self._store = store
         self._config = config
         self._levels = levels
         self._catalog = catalog
         self._duels = duels
         self._engine = engine
+        self._fishing = fishing
         self._nicks = nickname_service
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
@@ -155,6 +186,14 @@ class PointHandler:
             if scope:
                 return self._board(chat_id, msg.get("group_name", ""), scope)
 
+        # ── Scoped fishing board: 钓鱼榜 今日 / 大鱼 ─────────────
+        m = re.match(rf"^钓鱼榜{_WS}+(\S+){_WS}*$", text)
+        if m:
+            scope = _FISH_BOARD_SCOPES.get(m.group(1))
+            if scope:
+                return self._fish_board(
+                    chat_id, msg.get("group_name", ""), scope)
+
         # ── Prefix commands ──────────────────────────────────────
         parts = re.split(_WS, text, maxsplit=1)
         head = parts[0]
@@ -171,6 +210,14 @@ class PointHandler:
         if head == "切磋":
             return self._duel(msg, chat_id, sender_id, sender_name,
                               rest, text)
+        if head == "钓鱼":
+            return self._fish(msg, chat_id, sender_id, sender_name, rest)
+        if head == "买鱼竿":
+            return self._buy_rod(chat_id, sender_id, sender_name, rest)
+        if head == "买鱼饵":
+            return self._buy_bait(chat_id, sender_id, sender_name, rest)
+        if head == "换鱼竿":
+            return self._equip_rod(chat_id, sender_id, rest)
         if head == "积分重算":
             return self._rebuild(chat_id, is_admin)
         if head == "积分调整":
@@ -210,6 +257,21 @@ class PointHandler:
             return self._duel_log(chat_id, sender_id)
         if kind == "buy_shield":
             return self._buy_shield(chat_id, sender_id, sender_name)
+        if kind == "fish":
+            return self._fish(msg, chat_id, sender_id, sender_name, arg)
+        if kind == "fish_rods":
+            return self._fish_rods(chat_id, sender_id)
+        if kind == "fish_baits":
+            return self._fish_baits(chat_id, sender_id)
+        if kind == "fish_bag":
+            return self._fish_bag(chat_id, sender_id, sender_name)
+        if kind == "fish_book":
+            return self._fish_book(chat_id, sender_id, sender_name)
+        if kind == "fish_board":
+            return self._fish_board(
+                chat_id, msg.get("group_name", ""), arg or "value")
+        if kind == "fish_log":
+            return self._fish_log(chat_id, sender_id)
         return None
 
     # ── Identity helpers ──────────────────────────────────────────
@@ -445,6 +507,13 @@ class PointHandler:
             )
         if stats.streak_days:
             lines.append(f"连续活跃 {stats.streak_days} 天")
+        if self._fishing is not None:
+            fish = self._fishing.stats(chat_id, sender_id)
+            if fish["catches"]:
+                lines.append(
+                    f"钓鱼 {fish['catches']} 条 · 入账 "
+                    f"{fish['total_value']}（只加余额，不计积分）"
+                )
         return "\n".join(lines)
 
     def _query(self, chat_id: str, raw: str, sender_id: str = "",
@@ -823,6 +892,379 @@ class PointHandler:
             f"花费 {price} 积分，余额 {balance}。"
         )
 
+    # ── Fishing ───────────────────────────────────────────────────
+
+    def _fishing_available(self) -> bool:
+        return self._fishing is not None and bool(
+            getattr(self._config, "fishing_enabled", False))
+
+    def _fish(self, msg: dict, chat_id: str, sender_id: str,
+              sender_name: str, raw: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        count = 1
+        raw = _strip_invisible(raw)
+        if raw:
+            parsed = self._parse_fish_count(raw)
+            if parsed is None:
+                limit = int(getattr(
+                    self._config, "fishing_max_batch", 10))
+                return f"用法：钓鱼 或 钓鱼 5（一次最多 {limit} 竿）"
+            count = parsed
+        result = self._fishing.cast(msg, count=count)
+        return self._format_fishing(result, sender_name)
+
+    @staticmethod
+    def _parse_fish_count(raw: str) -> int | None:
+        value: int | None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = _CN_NUMBERS.get(str(raw or "").strip())
+        if value is None or value < 1:
+            return None
+        return value
+
+    def _format_fishing(self, result, sender_name: str) -> str:
+        if not result.ok:
+            return result.reply or "钓鱼失败。"
+
+        if len(result.casts) == 1:
+            catch = result.casts[0]
+            if not catch.species_id:
+                lines = [f"{sender_name} 空竿了，鱼儿跑了。"]
+            else:
+                rarity = RARITY_LABELS.get(catch.rarity, catch.rarity)
+                lines = [
+                    f"{sender_name} 钓到 {catch.species_name}"
+                    f"（{format_weight(catch.weight_g)}，{rarity}），"
+                    f"余额 +{catch.amount}。",
+                ]
+        else:
+            lines = [f"{sender_name} 抛了 {len(result.casts)} 竿："]
+            for index, catch in enumerate(result.casts, 1):
+                lines.append(f"{index}. {self._format_catch_text(catch)}")
+
+        footer = (
+            f"本次入账 +{result.total_value} · 余额 {result.balance_after}"
+            f" · 今日 {result.attempts_used}/{result.attempts_limit} 次"
+        )
+        if result.daily_cap:
+            footer += f" · 收益 {result.earned_today}/{result.daily_cap}"
+        lines.append(footer)
+        return DelayedReply(
+            "\n".join(lines), getattr(result, "delay_sec", 0))
+
+    @staticmethod
+    def _format_catch_text(catch) -> str:
+        if not catch.species_id:
+            return "空竿，鱼儿跑了"
+        rarity = RARITY_LABELS.get(catch.rarity, catch.rarity)
+        return (
+            f"{catch.species_name}（{format_weight(catch.weight_g)}，"
+            f"{rarity}）+{catch.amount}"
+        )
+
+    @staticmethod
+    def _pct(value) -> str:
+        return f"{round(float(value or 0) * 100)}%"
+
+    def _fish_rods(self, chat_id: str, sender_id: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        catalog = self._fishing.catalog
+        inventory = {
+            row["item_id"] for row in
+            self._store.fishing_inventory(chat_id, sender_id)
+            if row["kind"] == "rod"
+        }
+        equipped = self._fishing.rod_of(chat_id, sender_id)["id"]
+        balance = self._store.balance_of(chat_id, sender_id)
+
+        lines = [f"鱼竿商店 · 余额 {balance}"]
+        for rod in catalog.rods():
+            price = "默认" if int(rod["price"]) <= 0 else f"{rod['price']}分"
+            if rod["id"] == equipped:
+                mark = " · 已装备"
+            elif rod["id"] in inventory:
+                mark = " · 已拥有"
+            else:
+                mark = ""
+            lines.append(
+                f"{rod['name']} {price} · "
+                f"稀有+{self._pct(rod['rare_bonus'])} "
+                f"价值+{self._pct(rod['value_bonus'])} "
+                f"空竿-{self._pct(rod['miss_reduction'])}{mark}"
+            )
+        lines.append(
+            "发送「买鱼竿 名称」购买（自动装备），"
+            "「换鱼竿 名称」切换。"
+        )
+        return "\n".join(lines)
+
+    def _buy_rod(self, chat_id: str, sender_id: str, sender_name: str,
+                 raw: str) -> str | None:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        raw = _strip_invisible(raw)
+        if not raw:
+            return "用法：买鱼竿 名称（先发「鱼竿」看清单）"
+        rod = self._fishing.catalog.find_rod(raw)
+        if rod is None:
+            return f"没有找到鱼竿「{raw}」，发「鱼竿」看看清单。"
+        if rod.get("default"):
+            return "竹竿是默认鱼竿，无需购买。"
+
+        ok, code, balance = self._store.buy_fishing_rod(
+            chat_id, sender_id, sender_name, rod,
+        )
+        if code == "insufficient":
+            return (
+                f"余额不足：{rod['name']} 需要 {rod['price']}，"
+                f"你只有 {balance}。"
+            )
+        if code == "owned":
+            return f"你已经拥有 {rod['name']} 了。"
+        return (
+            f"购买成功：{rod['name']}（稀有+{self._pct(rod['rare_bonus'])} "
+            f"价值+{self._pct(rod['value_bonus'])}），"
+            f"花费 {rod['price']} 余额，余额 {balance}，已自动装备。"
+        )
+
+    def _equip_rod(self, chat_id: str, sender_id: str,
+                   raw: str) -> str | None:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        raw = _strip_invisible(raw)
+        if not raw:
+            return "用法：换鱼竿 名称（竹竿可写「换鱼竿 竹竿」）"
+        rod = self._fishing.catalog.find_rod(raw)
+        if rod is None:
+            return f"没有找到鱼竿「{raw}」，发「鱼竿」看看清单。"
+        if rod.get("default"):
+            self._store.equip_fishing_rod(chat_id, sender_id, "")
+            return "已换回默认竹竿。"
+        if not self._store.owns_fishing_item(
+            chat_id, sender_id, "rod", rod["id"],
+        ):
+            return f"你还没有 {rod['name']}，先「买鱼竿 {rod['name']}」。"
+        self._store.equip_fishing_rod(chat_id, sender_id, rod["id"])
+        return f"已装备 {rod['name']}。"
+
+    def _fish_baits(self, chat_id: str, sender_id: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        catalog = self._fishing.catalog
+        quantities = {
+            row["item_id"]: int(row["quantity"])
+            for row in self._store.fishing_inventory(chat_id, sender_id)
+            if row["kind"] == "bait"
+        }
+        balance = self._store.balance_of(chat_id, sender_id)
+
+        lines = [f"鱼饵商店 · 余额 {balance}"]
+        for bait in catalog.baits():
+            lines.append(
+                f"{bait['name']} {bait['price']}余额/个 · "
+                f"稀有+{self._pct(bait['rare_bonus'])} "
+                f"价值+{self._pct(bait['value_bonus'])} · "
+                f"持有 {quantities.get(bait['id'], 0)}"
+            )
+        lines.append(
+            "发送「买鱼饵 红虫 10」购买（默认 10 个）；"
+            "每次钓鱼自动消耗 1 个，价格低的优先。"
+        )
+        return "\n".join(lines)
+
+    def _parse_bait_order(self, raw: str):
+        """Parse ``[名称] [数量]`` (either order) into (bait, qty, error)."""
+        catalog = self._fishing.catalog
+        baits = sorted(catalog.baits(), key=lambda item: item["price"])
+        default_bait = baits[0] if baits else None
+        tokens = [t for t in re.split(_WS, _strip_invisible(raw)) if t]
+        if not tokens:
+            return default_bait, 10, ""
+
+        name = ""
+        quantity_raw = ""
+        if tokens[0].isdigit():
+            quantity_raw = tokens[0]
+            if len(tokens) > 1:
+                name = tokens[1]
+        else:
+            name = tokens[0]
+            if len(tokens) > 1:
+                quantity_raw = tokens[1]
+
+        bait = catalog.find_bait(name) if name else default_bait
+        if bait is None:
+            return None, 0, f"没有找到鱼饵「{name}」。"
+        if quantity_raw:
+            try:
+                quantity = int(quantity_raw)
+            except ValueError:
+                return None, 0, "鱼饵数量必须是整数。"
+        else:
+            quantity = 10
+        if not (1 <= quantity <= 99):
+            return None, 0, "一次最多买 99 个鱼饵。"
+        return bait, quantity, ""
+
+    def _buy_bait(self, chat_id: str, sender_id: str, sender_name: str,
+                  raw: str) -> str | None:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        bait, quantity, error = self._parse_bait_order(raw)
+        if error:
+            return error
+        if bait is None:
+            return "鱼饵商店是空的。"
+
+        ok, code, balance = self._store.buy_fishing_bait(
+            chat_id, sender_id, sender_name, bait, quantity,
+        )
+        total = int(bait["price"]) * quantity
+        if code == "insufficient":
+            return (
+                f"余额不足：{bait['name']}×{quantity} 需要 {total}，"
+                f"你只有 {balance}。"
+            )
+        stock = sum(
+            int(row["quantity"]) for row in
+            self._store.fishing_inventory(chat_id, sender_id)
+            if row["kind"] == "bait" and row["item_id"] == bait["id"]
+        )
+        return (
+            f"购买成功：{bait['name']}×{quantity}，花费 {total} 余额，"
+            f"余额 {balance}，当前持有 {stock} 个。"
+        )
+
+    def _fish_bag(self, chat_id: str, sender_id: str,
+                  sender_name: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        stats = self._fishing.stats(chat_id, sender_id)
+        rod = stats["rod"]
+
+        lines = [f"{sender_name} 的鱼篓"]
+        summary = (
+            f"今日 {stats['attempts']}/{stats['attempts_limit']} 次"
+            f" · 余额 {stats['balance']}"
+        )
+        if stats["daily_cap"]:
+            summary += (
+                f" · 今日收益 {stats['earned_today']}/{stats['daily_cap']}"
+            )
+        lines.append(summary)
+        lines.append(
+            f"鱼竿：{rod['name']}（稀有+{self._pct(rod['rare_bonus'])} "
+            f"价值+{self._pct(rod['value_bonus'])}）"
+        )
+        if stats["baits"]:
+            lines.append("鱼饵：" + " · ".join(
+                f"{bait['name']}×{bait['quantity']}"
+                for bait in stats["baits"]
+            ))
+        else:
+            lines.append("鱼饵：无（仍可钓鱼，只是稀有概率较低）")
+        lines.append(
+            f"累计 {stats['catches']} 条 · 入账 {stats['total_value']}"
+            f" · 最大 {format_weight(stats['biggest_weight']) if stats['biggest_weight'] else '—'}"
+        )
+        lines.append(
+            f"图鉴 {len(stats['caught_species'])}/{stats['species_total']}"
+        )
+
+        recent = self._store.fishing_recent(chat_id, sender_id, 5)
+        if recent:
+            lines.append("最近：" + " · ".join(
+                f"{row['species_name']} "
+                f"{format_weight(row['weight_g'])}+{row['amount']}"
+                for row in recent
+            ))
+        return "\n".join(lines)
+
+    def _fish_book(self, chat_id: str, sender_id: str,
+                   sender_name: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        species = self._fishing.catalog.species()
+        caught = set(self._store.fishing_collection(chat_id, sender_id))
+
+        lines = [
+            f"{sender_name} 的钓鱼图鉴 {len(caught)}/{len(species)}",
+        ]
+        for rarity in RARITIES:
+            group = [item for item in species if item["rarity"] == rarity]
+            if not group:
+                continue
+            entries = [
+                f"{'✓' if item['id'] in caught else '·'}{item['name']}"
+                f"({item['base_value']})"
+                for item in group
+            ]
+            lines.append(f"【{RARITY_LABELS[rarity]}】" + " ".join(entries))
+        lines.append("图例：✓ 已钓到 · 未钓到，括号内为基础价值。")
+        return "\n".join(lines)
+
+    def _fish_board(self, chat_id: str, group_name: str,
+                    scope: str = "value") -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        size = int(getattr(self._config, "points_board_size", 10))
+        group = _strip_invisible(group_name) or chat_id
+
+        if scope == "biggest":
+            rows = self._store.fishing_board(
+                chat_id, "biggest", limit=size)
+            lines = [f"大鱼榜 · {group}"]
+            if not rows:
+                lines.append("本群还没有钓鱼记录，先发「钓鱼」试试。")
+                return "\n".join(lines)
+            for rank, row in enumerate(rows, 1):
+                lines.append(
+                    f"{rank}. {row['sender_name']} {row['species_name']} "
+                    f"{format_weight(row['weight_g'])} +{row['amount']}"
+                )
+            return "\n".join(lines)
+
+        board_scope = "count" if scope == "count" else "value"
+        day = local_day() if scope == "today" else None
+        rows = self._store.fishing_board(
+            chat_id, board_scope, day=day, limit=size,
+        )
+        label = "今日" if scope == "today" else "总"
+        metric = "条数" if scope == "count" else "收益"
+        lines = [f"钓鱼榜 · {group}（{label}·按{metric}）"]
+        if not rows:
+            lines.append("本群还没有钓鱼记录，先发「钓鱼」试试。")
+            return "\n".join(lines)
+        for rank, row in enumerate(rows, 1):
+            lines.append(
+                f"{rank}. {row['sender_name']} {row['value']}余额"
+                f" · {row['catches']}条"
+                f" · 最大 {format_weight(row['biggest'])}"
+            )
+        return "\n".join(lines)
+
+    def _fish_log(self, chat_id: str, sender_id: str) -> str:
+        if not self._fishing_available():
+            return "钓鱼功能未开启。"
+        rows = self._store.fishing_recent(chat_id, sender_id, 10)
+        if not rows:
+            return "你还没有钓鱼记录。"
+        lines = ["最近的钓鱼记录"]
+        for row in rows:
+            when = time.strftime(
+                "%m-%d %H:%M", time.localtime(int(row["created_at"])))
+            rarity = RARITY_LABELS.get(row["rarity"], row["rarity"])
+            lines.append(
+                f"{when} {row['species_name']}"
+                f"（{format_weight(row['weight_g'])}，{rarity}）"
+                f"+{row['amount']}"
+            )
+        return "\n".join(lines)
+
     # ── Admin ─────────────────────────────────────────────────────
 
     def _admin_adjust(self, chat_id: str, text: str,
@@ -885,7 +1327,8 @@ class PointHandler:
             "· 积分分两类：累计获得决定等级与总榜，"
             "余额用于购买装备和免战券\n"
             f"· 切磋每日 {cfg.duel_daily_attempts} 次，"
-            f"单次最多抢 {cfg.duel_per_fight_cap} 分"
+            f"单次最多抢 {cfg.duel_per_fight_cap} 分\n"
+            "· 钓鱼只增加余额，不影响累计积分、等级和榜单"
         )
 
     @staticmethod

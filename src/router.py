@@ -9,6 +9,7 @@ Routes messages to four response modes:
 
 import logging
 import re
+import threading
 import time
 from typing import Optional
 
@@ -106,6 +107,8 @@ class MessageRouter:
                 from .points.levels import LevelTable
                 from .points.equipment import EquipmentCatalog
                 from .points.duel import DuelService
+                from .points.fishing import FishingService
+                from .points.fishing_catalog import FishingCatalog
                 from .points.handler import PointHandler
 
                 self._points_store = PointStore(
@@ -122,10 +125,16 @@ class MessageRouter:
                 duels = DuelService(
                     self._points_store, config, levels, catalog,
                 )
+                fishing_catalog = FishingCatalog(getattr(
+                    config, "fishing_catalog_path", "data/fishing.json"))
+                fishing = FishingService(
+                    self._points_store, config, fishing_catalog,
+                )
                 self._points_handler = PointHandler(
                     self._points_store, config, levels, catalog, duels,
                     engine=self._points_engine,
                     nickname_service=nickname_service,
+                    fishing=fishing,
                 )
             except Exception:
                 logger.exception("Points system initialization failed")
@@ -133,8 +142,52 @@ class MessageRouter:
                 self._points_engine = None
                 self._points_handler = None
 
+        # Delayed replies (fishing suspense).  Wired by Bot after the
+        # WeChat backend exists; None means "return text immediately".
+        self._reply_sender = None
+
         # Health monitoring: count unique messages processed (post-dedup)
         self.messages_processed: int = 0
+
+    def set_reply_sender(self, sender) -> None:
+        """Register ``sender(chat_id, text)`` for delayed replies.
+
+        Called once the backend is available.  The sender must be safe to
+        call from a background thread (the bot wraps it with the backend's
+        window lock).
+        """
+        self._reply_sender = sender
+
+    def _schedule_delayed_reply(self, msg: dict, reply) -> bool:
+        """Send *reply* after its ``delay_sec`` on a daemon thread.
+
+        Returns False when no sender is registered, so the caller can fall
+        back to returning the text for immediate delivery (tests, CLI).
+        """
+        sender = self._reply_sender
+        if sender is None:
+            return False
+        chat_id = str(msg.get("chat_id") or "")
+        text = str(reply)
+        delay = max(0, int(getattr(reply, "delay_sec", 0)))
+
+        def _run() -> None:
+            if delay:
+                time.sleep(delay)
+            try:
+                sent = sender(chat_id, text)
+                logger.info(
+                    "Delayed reply sent=%s chat=%s delay=%ss len=%d",
+                    sent, chat_id[:20], delay, len(text),
+                )
+            except Exception:
+                logger.exception(
+                    "Delayed reply failed (chat=%s)", chat_id[:20])
+
+        threading.Thread(
+            target=_run, daemon=True, name="delayed-reply",
+        ).start()
+        return True
 
     @staticmethod
     def _strip_markdown(text: str) -> str:
@@ -297,6 +350,9 @@ class MessageRouter:
                     logger.exception("Points command failed")
                     reply = None
                 if reply is not None:
+                    if hasattr(reply, "delay_sec"):
+                        if self._schedule_delayed_reply(msg, reply):
+                            return None
                     return reply
 
         if is_at:

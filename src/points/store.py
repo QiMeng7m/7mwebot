@@ -751,6 +751,348 @@ class PointStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # ── Fishing ───────────────────────────────────────────────────
+
+    def fishing_attempts(self, chat_id: str, sender_id: str,
+                         day: str) -> int:
+        """Casts made by one member on one local day (misses included)."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM fishing_casts
+                   WHERE chat_id = ? AND sender_id = ? AND day = ?""",
+                (str(chat_id), str(sender_id), str(day)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def fishing_last_cast_at(self, chat_id: str, sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(MAX(created_at), 0) FROM fishing_casts
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def fishing_earned_on_day(self, chat_id: str, sender_id: str,
+                              day: str) -> int:
+        """Balance gained from fishing today (category='fish')."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(SUM(points), 0) FROM point_events
+                   WHERE chat_id = ? AND sender_id = ? AND day = ?
+                     AND category = 'fish'""",
+                (str(chat_id), str(sender_id), str(day)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def fishing_totals(self, chat_id: str, sender_id: str) -> dict:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) AS catches,
+                          COALESCE(SUM(amount), 0) AS value,
+                          COALESCE(MAX(weight_g), 0) AS biggest
+                   FROM fishing_casts
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND species_id != ''""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return dict(row) if row else {"catches": 0, "value": 0, "biggest": 0}
+
+    def fishing_inventory(self, chat_id: str,
+                          sender_id: str) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT kind, item_id, quantity, equipped, purchased_at
+                   FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                   ORDER BY kind ASC, item_id ASC""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fishing_equipped_rod(self, chat_id: str, sender_id: str) -> str:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT item_id FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND kind = 'rod' AND equipped = 1 LIMIT 1""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return str(row[0]) if row else ""
+
+    def owns_fishing_item(self, chat_id: str, sender_id: str,
+                          kind: str, item_id: str) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND kind = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), str(kind), str(item_id)),
+            ).fetchone()
+        return row is not None
+
+    def buy_fishing_rod(self, chat_id: str, sender_id: str,
+                        sender_name: str, rod: dict,
+                        now_ts: int | None = None,
+                        ) -> tuple[bool, str, int]:
+        """Buy and auto-equip a rod. Returns ``(ok, code, balance)``."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        price = int(rod["price"])
+        rod_id = str(rod["id"])
+        with self._lock, self.conn:
+            balance_row = self.conn.execute(
+                """SELECT COALESCE(SUM(points), 0) FROM point_events
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+            balance = int(balance_row[0]) if balance_row else 0
+            if balance < price:
+                return False, "insufficient", balance
+
+            owned = self.conn.execute(
+                """SELECT 1 FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND kind = 'rod' AND item_id = ?""",
+                (str(chat_id), str(sender_id), rod_id),
+            ).fetchone()
+            if owned:
+                return False, "owned", balance
+
+            if price > 0:
+                cur = self.conn.execute(
+                    """INSERT INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, ?, ?, 'buy_rod', 'spend', ?, ?, ?, ?
+                       WHERE (SELECT COALESCE(SUM(points), 0)
+                              FROM point_events
+                              WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     f"rod:{uuid.uuid4().hex}", -price,
+                     local_day(now), local_season(now), now,
+                     str(chat_id), str(sender_id), price),
+                )
+                if cur.rowcount == 0:
+                    return False, "insufficient", balance
+
+            self.conn.execute(
+                """UPDATE fishing_inventory SET equipped = 0
+                   WHERE chat_id = ? AND sender_id = ? AND kind = 'rod'""",
+                (str(chat_id), str(sender_id)),
+            )
+            self.conn.execute(
+                """INSERT INTO fishing_inventory
+                   (chat_id, sender_id, kind, item_id, quantity, equipped,
+                    purchased_at)
+                   VALUES (?, ?, 'rod', ?, 1, 1, ?)
+                   ON CONFLICT(chat_id, sender_id, kind, item_id)
+                   DO UPDATE SET quantity = 1, equipped = 1,
+                                 purchased_at = excluded.purchased_at""",
+                (str(chat_id), str(sender_id), rod_id, now),
+            )
+        return True, "ok", balance - price
+
+    def buy_fishing_bait(self, chat_id: str, sender_id: str,
+                         sender_name: str, bait: dict, quantity: int = 1,
+                         now_ts: int | None = None,
+                         ) -> tuple[bool, str, int]:
+        """Buy a bait stack. Returns ``(ok, code, balance)``."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        quantity = max(1, int(quantity))
+        total = int(bait["price"]) * quantity
+        bait_id = str(bait["id"])
+        with self._lock, self.conn:
+            balance_row = self.conn.execute(
+                """SELECT COALESCE(SUM(points), 0) FROM point_events
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+            balance = int(balance_row[0]) if balance_row else 0
+            if balance < total:
+                return False, "insufficient", balance
+
+            cur = self.conn.execute(
+                """INSERT INTO point_events
+                   (chat_id, sender_id, sender_name, message_id, reason,
+                    category, points, day, season, created_at)
+                   SELECT ?, ?, ?, ?, 'buy_bait', 'spend', ?, ?, ?, ?
+                   WHERE (SELECT COALESCE(SUM(points), 0) FROM point_events
+                          WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                (str(chat_id), str(sender_id), str(sender_name or ""),
+                 f"bait:{uuid.uuid4().hex}", -total,
+                 local_day(now), local_season(now), now,
+                 str(chat_id), str(sender_id), total),
+            )
+            if cur.rowcount == 0:
+                return False, "insufficient", balance
+
+            self.conn.execute(
+                """INSERT INTO fishing_inventory
+                   (chat_id, sender_id, kind, item_id, quantity, equipped,
+                    purchased_at)
+                   VALUES (?, ?, 'bait', ?, ?, 0, ?)
+                   ON CONFLICT(chat_id, sender_id, kind, item_id)
+                   DO UPDATE SET quantity = quantity + excluded.quantity""",
+                (str(chat_id), str(sender_id), bait_id, quantity, now),
+            )
+        return True, "ok", balance - total
+
+    def equip_fishing_rod(self, chat_id: str, sender_id: str,
+                          rod_id: str) -> bool:
+        """Equip an owned rod; an empty id resets to the default rod."""
+        with self._lock, self.conn:
+            if rod_id:
+                owned = self.conn.execute(
+                    """SELECT 1 FROM fishing_inventory
+                       WHERE chat_id = ? AND sender_id = ?
+                         AND kind = 'rod' AND item_id = ?""",
+                    (str(chat_id), str(sender_id), str(rod_id)),
+                ).fetchone()
+                if not owned:
+                    return False
+            self.conn.execute(
+                """UPDATE fishing_inventory SET equipped = 0
+                   WHERE chat_id = ? AND sender_id = ? AND kind = 'rod'""",
+                (str(chat_id), str(sender_id)),
+            )
+            if rod_id:
+                self.conn.execute(
+                    """UPDATE fishing_inventory SET equipped = 1
+                       WHERE chat_id = ? AND sender_id = ?
+                         AND kind = 'rod' AND item_id = ?""",
+                    (str(chat_id), str(sender_id), str(rod_id)),
+                )
+        return True
+
+    def commit_fishing_cast(self, *, chat_id: str, sender_id: str,
+                            sender_name: str, message_id: str,
+                            cast_index: int, rod_id: str, bait_id: str,
+                            species_id: str, species_name: str,
+                            rarity: str, weight_g: int, amount: int,
+                            day: str, now_ts: int) -> tuple[bool, str]:
+        """Persist one cast + its ledger row + bait consumption atomically.
+
+        Returns ``(inserted, bait_actually_consumed)``.  ``inserted`` is
+        False when the same ``(message_id, cast_index)`` was already
+        recorded, making command replay harmless.
+        """
+        now = int(now_ts)
+        amount = max(0, int(amount))
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO fishing_casts
+                   (chat_id, sender_id, sender_name, message_id, cast_index,
+                    rod_id, bait_id, species_id, species_name, rarity,
+                    weight_g, amount, day, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(chat_id), str(sender_id), str(sender_name or ""),
+                 str(message_id), int(cast_index), str(rod_id),
+                 str(bait_id), str(species_id), str(species_name),
+                 str(rarity), int(weight_g), amount, str(day), now),
+            )
+            if cur.rowcount == 0:
+                return False, ""
+
+            bait_used = ""
+            if bait_id:
+                row = self.conn.execute(
+                    """SELECT quantity FROM fishing_inventory
+                       WHERE chat_id = ? AND sender_id = ?
+                         AND kind = 'bait' AND item_id = ?""",
+                    (str(chat_id), str(sender_id), str(bait_id)),
+                ).fetchone()
+                if row and int(row[0]) > 0:
+                    self.conn.execute(
+                        """UPDATE fishing_inventory
+                           SET quantity = quantity - 1
+                           WHERE chat_id = ? AND sender_id = ?
+                             AND kind = 'bait' AND item_id = ?""",
+                        (str(chat_id), str(sender_id), str(bait_id)),
+                    )
+                    bait_used = str(bait_id)
+
+            if amount > 0:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       VALUES (?, ?, ?, ?, 'fish_catch', 'fish', ?, ?, ?, ?)""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     f"fish:{message_id}:{int(cast_index)}", amount,
+                     str(day), local_season(now), now),
+                )
+        return True, bait_used
+
+    def fishing_recent(self, chat_id: str, sender_id: str = "",
+                       limit: int = 20) -> list[dict]:
+        where = "chat_id = ? AND species_id != ''"
+        params: list = [str(chat_id)]
+        if sender_id:
+            where += " AND sender_id = ?"
+            params.append(str(sender_id))
+        params.append(int(limit))
+        with self._lock:
+            rows = self.conn.execute(
+                f"""SELECT sender_id, sender_name, species_id,
+                           species_name, rarity, weight_g, amount, rod_id,
+                           bait_id, created_at
+                    FROM fishing_casts
+                    WHERE {where}
+                    ORDER BY created_at DESC, id DESC LIMIT ?""",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fishing_board(self, chat_id: str, scope: str = "value",
+                      day: str | None = None,
+                      limit: int = 10) -> list[dict]:
+        """Leaderboard rows: total value, catch count or biggest fish."""
+        params: list = [str(chat_id)]
+        where = "chat_id = ? AND species_id != ''"
+        if day:
+            where += " AND day = ?"
+            params.append(str(day))
+
+        if scope == "biggest":
+            params.append(int(limit))
+            with self._lock:
+                rows = self.conn.execute(
+                    f"""SELECT sender_id, sender_name, species_name, rarity,
+                               weight_g, amount, created_at
+                        FROM fishing_casts
+                        WHERE {where}
+                        ORDER BY weight_g DESC, created_at DESC LIMIT ?""",
+                    params,
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        order = "catches DESC" if scope == "count" else "value DESC"
+        params.append(int(limit))
+        with self._lock:
+            rows = self.conn.execute(
+                f"""SELECT sender_id, MAX(sender_name) AS sender_name,
+                           COALESCE(SUM(amount), 0) AS value,
+                           COUNT(*) AS catches,
+                           COALESCE(MAX(weight_g), 0) AS biggest
+                    FROM fishing_casts
+                    WHERE {where}
+                    GROUP BY sender_id
+                    ORDER BY {order}, biggest DESC, sender_id ASC LIMIT ?""",
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def fishing_collection(self, chat_id: str,
+                           sender_id: str) -> list[str]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT DISTINCT species_id FROM fishing_casts
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND species_id != ''""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     # ── Maintenance / backfill ────────────────────────────────────
 
     def delete_earn_events(self, chat_id: str) -> int:

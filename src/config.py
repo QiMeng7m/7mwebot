@@ -315,6 +315,7 @@ class BotConfig:
     duel_reward_k: float = 1.2
     duel_per_fight_cap: int = 20
     duel_daily_attempts: int = 10
+    # Max duels between the same attacker → defender per day.
     duel_daily_pair_attempts: int = 5
     duel_daily_steal_cap: int = 50
     duel_pair_cooldown_sec: int = 300
@@ -323,6 +324,18 @@ class BotConfig:
     shield_price: int = 20
     shield_duration_sec: int = 14400
     shield_max_sec: int = 86400
+
+    # === Fishing (钓鱼) ===
+    # Fishing credits balance only (never cumulative points / levels).
+    fishing_enabled: bool = True
+    fishing_groups: list[str] = field(default_factory=lambda: ["*"])
+    fishing_catalog_path: str = "data/fishing.json"
+    fishing_daily_attempts: int = 30
+    # Max balance from fishing per member per day (0 = unlimited).
+    fishing_daily_cap: int = 120
+    fishing_cooldown_sec: int = 5
+    fishing_max_batch: int = 10
+    fishing_miss_chance: float = 0.15
 
     # === Tuning ===
     poll_interval_sec: float = 1.0
@@ -528,6 +541,27 @@ def _validate_config(kwargs: dict) -> None:
             f"got {duel_daily_attempts}"
         )
 
+    fishing_daily_attempts = kwargs.get("fishing_daily_attempts", 30)
+    if not (1 <= fishing_daily_attempts <= 200):
+        errors.append(
+            "FISHING_DAILY_ATTEMPTS must be between 1 and 200, "
+            f"got {fishing_daily_attempts}"
+        )
+
+    fishing_daily_cap = kwargs.get("fishing_daily_cap", 120)
+    if not (0 <= fishing_daily_cap <= 10000):
+        errors.append(
+            "FISHING_DAILY_CAP must be between 0 and 10000, "
+            f"got {fishing_daily_cap}"
+        )
+
+    fishing_miss_chance = kwargs.get("fishing_miss_chance", 0.15)
+    if not (0.0 <= fishing_miss_chance <= 0.9):
+        errors.append(
+            "FISHING_MISS_CHANCE must be between 0 and 0.9, "
+            f"got {fishing_miss_chance}"
+        )
+
     if errors:
         msg = "配置值无效:\n" + "\n".join(f"  - {err}" for err in errors)
         raise RuntimeError(msg)
@@ -683,6 +717,15 @@ def load_config() -> BotConfig:
         "shield_price": _safe_int(os.getenv("SHIELD_PRICE", "20"), 20, "SHIELD_PRICE"),
         "shield_duration_sec": _safe_int(os.getenv("SHIELD_DURATION_SEC", "14400"), 14400, "SHIELD_DURATION_SEC"),
         "shield_max_sec": _safe_int(os.getenv("SHIELD_MAX_SEC", "86400"), 86400, "SHIELD_MAX_SEC"),
+        # Fishing
+        "fishing_enabled": os.getenv("FISHING_ENABLED", "true").strip().lower() == "true",
+        "fishing_groups": [g.strip() for g in os.getenv("FISHING_GROUPS", "*").split(",") if g.strip()],
+        "fishing_catalog_path": os.getenv("FISHING_CATALOG_PATH", "data/fishing.json").strip(),
+        "fishing_daily_attempts": _safe_int(os.getenv("FISHING_DAILY_ATTEMPTS", "30"), 30, "FISHING_DAILY_ATTEMPTS"),
+        "fishing_daily_cap": _safe_int(os.getenv("FISHING_DAILY_CAP", "120"), 120, "FISHING_DAILY_CAP"),
+        "fishing_cooldown_sec": _safe_int(os.getenv("FISHING_COOLDOWN_SEC", "5"), 5, "FISHING_COOLDOWN_SEC"),
+        "fishing_max_batch": _safe_int(os.getenv("FISHING_MAX_BATCH", "10"), 10, "FISHING_MAX_BATCH"),
+        "fishing_miss_chance": _safe_float(os.getenv("FISHING_MISS_CHANCE", "0.15"), 0.15, "FISHING_MISS_CHANCE"),
         "log_level": os.getenv("LOG_LEVEL", "INFO").strip(),
         "log_file": os.getenv("LOG_FILE", "data/bot.log").strip(),
         # Voice recognition

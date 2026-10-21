@@ -169,6 +169,53 @@ CREATE INDEX IF NOT EXISTS idx_duels_pair
     ON duels(chat_id, attacker_id, defender_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_duels_message
     ON duels(chat_id, message_id);
+
+-- ── Fishing (“钓鱼”) ─────────────────────────────────────────────
+-- Every cast is logged, including misses (species_id = '') so daily
+-- attempt limits and cooldowns survive restarts.  Fishing credits the
+-- append-only ledger with category='fish', which increases balance but
+-- is excluded from cumulative earned points / levels / rankings.
+CREATE TABLE IF NOT EXISTS fishing_casts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id      TEXT    NOT NULL,
+    sender_id    TEXT    NOT NULL,
+    sender_name  TEXT    NOT NULL DEFAULT '',
+    message_id   TEXT    NOT NULL,
+    cast_index   INTEGER NOT NULL DEFAULT 0,
+    rod_id       TEXT    NOT NULL DEFAULT '',
+    bait_id      TEXT    NOT NULL DEFAULT '',
+    species_id   TEXT    NOT NULL DEFAULT '',
+    species_name TEXT    NOT NULL DEFAULT '',
+    rarity       TEXT    NOT NULL DEFAULT '',
+    weight_g     INTEGER NOT NULL DEFAULT 0,
+    amount       INTEGER NOT NULL DEFAULT 0,
+    day          TEXT    NOT NULL,
+    created_at   INTEGER NOT NULL,
+    UNIQUE(message_id, cast_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fish_member_day
+    ON fishing_casts(chat_id, day, sender_id);
+CREATE INDEX IF NOT EXISTS idx_fish_member_time
+    ON fishing_casts(chat_id, sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fish_chat_time
+    ON fishing_casts(chat_id, created_at DESC);
+
+-- Rods (permanent, one equipped) and bait (consumable stacks) owned by
+-- each member in each group.
+CREATE TABLE IF NOT EXISTS fishing_inventory (
+    chat_id      TEXT    NOT NULL,
+    sender_id    TEXT    NOT NULL,
+    kind         TEXT    NOT NULL,              -- 'rod' | 'bait'
+    item_id      TEXT    NOT NULL,
+    quantity     INTEGER NOT NULL DEFAULT 0,
+    equipped     INTEGER NOT NULL DEFAULT 0,
+    purchased_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, kind, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fish_inventory_member
+    ON fishing_inventory(chat_id, sender_id);
 """
 
 

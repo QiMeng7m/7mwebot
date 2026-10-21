@@ -253,6 +253,20 @@ class Bot:
         self._backend = backend
         self.backend = backend   # public ref for lifecycle control
 
+        # Delayed replies (e.g. fishing suspense): let the router send a
+        # message later from a daemon thread.  Serialize with the same
+        # window lock the normal reply path uses — the keyboard automation
+        # is not safe under concurrent sends.
+        window_lock = getattr(backend, "_window_lock", None)
+
+        def _delayed_send(chat_id: str, text: str) -> bool:
+            if window_lock is not None:
+                with window_lock:
+                    return backend.send_text(chat_id, text)
+            return backend.send_text(chat_id, text)
+
+        router.set_reply_sender(_delayed_send)
+
         # Register backend with web server for stop/restart (explicit
         # API — no monkey-patching needed).
         try:

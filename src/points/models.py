@@ -5,6 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+class DelayedReply(str):
+    """A reply that the router should send after ``delay_sec`` seconds.
+
+    Subclassing ``str`` keeps every existing caller (and test) working:
+    the value is still the message text.  The router checks ``delay_sec``
+    and, when a backend sender is registered, schedules the send on a
+    daemon thread instead of returning the text for immediate delivery.
+    """
+
+    delay_sec: int
+
+    def __new__(cls, text: str, delay_sec: int = 0):
+        obj = super().__new__(cls, text)
+        obj.delay_sec = max(0, int(delay_sec))
+        return obj
+
+
 @dataclass(frozen=True)
 class PointAward:
     """One ledger row to write for a single scoring component."""
@@ -22,7 +39,8 @@ class Command:
 
     ``kind`` values: member_card, my_info, board, rules, query, shop,
     buy, equip, unequip, bag, power, power_board, duel, buy_shield,
-    duel_log, admin_adjust, admin_rebuild.
+    duel_log, fish, fish_rods, fish_baits, fish_bag, fish_book,
+    fish_board, fish_log, admin_adjust, admin_rebuild.
     """
 
     kind: str
@@ -83,3 +101,37 @@ class DuelResult:
     wait_seconds: int = 0
     defender_balance: int = 0
     shield_remaining: int = 0
+
+
+@dataclass
+class FishCatch:
+    """One cast result (a miss has an empty species id)."""
+
+    species_id: str = ""
+    species_name: str = ""
+    rarity: str = ""
+    weight_g: int = 0
+    amount: int = 0
+    rod_id: str = ""
+    bait_id: str = ""
+    duplicate: bool = False
+    delay_sec: int = 0
+
+
+@dataclass
+class FishingResult:
+    """Outcome of one 「钓鱼」 command (one or more casts)."""
+
+    ok: bool
+    code: str = ""
+    reply: str = ""
+    casts: list[FishCatch] = field(default_factory=list)
+    total_value: int = 0
+    balance_after: int = 0
+    attempts_used: int = 0
+    attempts_limit: int = 0
+    earned_today: int = 0
+    daily_cap: int = 0
+    rod_id: str = ""
+    wait_seconds: int = 0
+    delay_sec: int = 0

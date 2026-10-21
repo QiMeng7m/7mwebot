@@ -79,6 +79,7 @@ a = Analysis(
         'src.points', 'src.points.models', 'src.points.util',
         'src.points.rules', 'src.points.levels', 'src.points.equipment',
         'src.points.store', 'src.points.engine', 'src.points.duel',
+        'src.points.fishing', 'src.points.fishing_catalog',
         'src.points.handler',
         'src.nickname', 'src.admin', 'src.fun',
         'src.utils', 'src.utils.logging_config',

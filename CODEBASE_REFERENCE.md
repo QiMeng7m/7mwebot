@@ -156,6 +156,14 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `ONBOARDING_DONE` | `bool` | `False` | `.env` 写入 | `src/config.py:is_onboarding_done()`, `src/web/server.py`, `desktop.py` |
 | `WCDB_KEY` | `str` | `""` | `.env` / 引导流程写入 | `src/wechat/wcdb_client.py` |
 | `WCDB_PATCH_EXPIRY` | `bool` | `True` | `.env` / 环境变量 | `src/wechat/wcdb_client.py:_apply_expiry_patch()` (运行时放宽 DLL 到期检查) |
+| `FISHING_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
+| `FISHING_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
+| `FISHING_CATALOG_PATH` | `str` | `"data/fishing.json"` | `src/config.py:load_config()` | `src/points/fishing_catalog.py:FishingCatalog` |
+| `FISHING_DAILY_ATTEMPTS` | `int` | `30` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
+| `FISHING_DAILY_CAP` | `int` | `120` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
+| `FISHING_COOLDOWN_SEC` | `int` | `5` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
+| `FISHING_MAX_BATCH` | `int` | `10` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
+| `FISHING_MISS_CHANCE` | `float` | `0.15` | `src/config.py:load_config()` | `src/points/fishing.py:effective_miss_chance()` |
 | `MAC_WECHAT_SEND_SHORTCUT` | `str` | `"enter"` | `desktop_mac.py` | `src/wechat/mac_ui_backend.py` |
 | `MAC_CHAT_TITLE_CACHE_FILE` | `str` | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
 | `MAC_CHAT_TITLE_MAP` | `str` (JSON) | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
@@ -256,6 +264,8 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter.__init__()` | ~45 | 初始化消息路由器 | `store, detector, summarizer, admin_handler, nickname_service, config, feishu_export_service=None` | `None` |
 | `MessageRouter._strip_markdown(text)` | ~65 | 去除 Markdown 格式(静态方法) | `text: str` | `str` |
 | `MessageRouter.handle(msg)` | ~70 | 处理传入群聊消息的主入口 | `msg: dict` | `str \| None` (回复文本) |
+| `MessageRouter.set_reply_sender(sender)` | — | 注册延迟播报发送器 `sender(chat_id, text)`（Bot.run 在 backend 创建后调用） | `sender: callable` | `None` |
+| `MessageRouter._schedule_delayed_reply(msg, reply)` | — | 识别 `DelayedReply.delay_sec`，起 daemon 线程延时调用发送器；无发送器返回 False | `msg: dict, reply` | `bool` |
 | `MessageRouter._load_group_names()` | ~115 | 加载 chat_id → 群名映射(懒加载；兼容 `{name, member_count}` 与旧版纯字符串) | 无 | `dict[str, str]` |
 | `MessageRouter._is_todo_group(chat_id)` | ~125 | 判断群聊是否启用待办功能 | `chat_id: str` | `bool` |
 | `MessageRouter._get_group_memory(chat_id)` | ~140 | 获取群聊记忆文本 | `chat_id: str` | `str` |
@@ -713,7 +723,11 @@ todo_delete_keywords: list[str] = [
 | `_sandbox_env_overrides(data)` | 沙箱请求 → 临时环境变量覆盖（跳过含 `***` 的脱敏密钥） | `data: dict` | `dict` |
 | `_points_db_path()` | 读取 .env 中的 DB_PATH 供积分 API 使用 | 无 | `str` |
 | `_points_config()` | 加载 BotConfig（失败时回退默认值） | 无 | `BotConfig` |
-| `_points_stack(conn, config)` | 构建单次请求的积分/装备/切磋对象 | `conn, config` | `(PointStore, LevelTable, EquipmentCatalog, DuelService)` |
+| `_points_stack(conn, config)` | 构建单次请求的积分/装备/切磋/钓鱼对象 | `conn, config` | `(PointStore, LevelTable, EquipmentCatalog, DuelService, FishingCatalog, FishingService)` |
+
+积分 API 路由（`/api/points*`、`/api/equipment*`、`/api/duels`、`/api/fishing*`）：
+`GET /api/fishing?chat_id=&sender_id=`、`POST /api/fishing/cast|buy_rod|buy_bait|equip_rod`、
+`GET/POST /api/fishing/catalog`。新增 POST 路径必须加入 `do_POST` 白名单。
 
 ### 2.34 前端组件 (`ui/src/components/`)
 
@@ -725,7 +739,7 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `LiveIndicator` | 实时状态指示灯(脉冲动画) |
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
-| `PointsPanel.jsx` | `PointsPanel` | 群活跃积分面板(榜单/装备商店/切磋记录/概览/成员详情/管理员调整) |
+| `PointsPanel.jsx` | `PointsPanel` | 群活跃积分面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整) |
 
 ### 2.35 `src/activity.py`
 
@@ -757,7 +771,7 @@ todo_delete_keywords: list[str] = [
 状态持久化到 `data/pending_kicks.json`（原子写入）。启动时丢弃 deadline
 已过期的条目，避免机器人离线很久后补踢。
 
-### 2.37 `src/points/` (活跃积分 / 装备 / 切磋)
+### 2.37 `src/points/` (活跃积分 / 装备 / 切磋 / 钓鱼)
 
 | 文件 | 符号 | 描述 | 参数 | 返回值 |
 |---|---|---|---|---|
@@ -777,6 +791,22 @@ todo_delete_keywords: list[str] = [
 | `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
 | `levels.py` | `LevelTable(path=None).load()/save(levels)/for_points(points)/next_for(points)/label(points)` | 等级表读写与查询（`data/point_levels.json`） | 见签名 | 见签名 |
 | `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`） | 见签名 | 见签名 |
+| `fishing_catalog.py` | `validate_catalog(data)` | 校验鱼竿/鱼饵/鱼种/延迟目录（唯一 id、默认竿、稀有度、重量、0~300 秒） | `data: dict` | `dict` |
+| `fishing_catalog.py` | `FishingCatalog(path=None).load()/save(catalog)/rods()/baits()/species()/find_rod(key)/by_rod_id(id)/find_bait(key)/by_bait_id(id)/by_species_id(id)/default_rod()/delay_for(rarity)` | 钓鱼目录读写与查询（`data/fishing.json`，失败回退内置默认值） | 见签名 | 见签名 |
+| `fishing.py` | `species_weight(species, rare_bonus)` | 稀有度加权后的有效权重（rare/epic/legendary 才受加成） | 见签名 | `float` |
+| `fishing.py` | `pick_species(species, rare_bonus, roll)` | 按权重抽取鱼种 | 见签名 | `dict \| None` |
+| `fishing.py` | `roll_weight(species, roll)` | 在鱼种重量区间内取样（克） | 见签名 | `int` |
+| `fishing.py` | `catch_amount(species, weight_g, rod_value_bonus=0, bait_value_bonus=0)` | 渔获价值 = 基础价值 × 尺寸系数 × 装备加成 | 见签名 | `int` |
+| `fishing.py` | `effective_miss_chance(base_chance, miss_reduction=0)` | 空竿率夹取到 2%~50% | 见签名 | `float` |
+| `fishing.py` | `FishingService.cast(msg, count=1, rng=None, now_ts=None)` | 结算 1~N 竿：次数/冷却/每日上限、扣饵、记录、入账；返回 `delay_sec=max(本次稀有度延迟)` | 见签名 | `FishingResult` |
+| `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 今日次数/收益、余额、鱼竿、鱼饵、累计渔获、图鉴 | 见签名 | `dict` |
+| `models.py` | `DelayedReply(text, delay_sec=0)` | `str` 子类，携带延迟秒数；路由器识别后异步发送 | 见签名 | `DelayedReply` |
+| `store.py` | `fishing_attempts/fishing_last_cast_at/fishing_earned_on_day/fishing_totals` | 钓鱼次数、冷却、今日入账、累计渔获查询 | 见签名 | `int/dict` |
+| `store.py` | `fishing_inventory/fishing_equipped_rod/owns_fishing_item` | 鱼竿/鱼饵库存查询 | 见签名 | `list[dict]/str/bool` |
+| `store.py` | `buy_fishing_rod(...)` / `buy_fishing_bait(...)` / `equip_fishing_rod(...)` | 条件扣款购买鱼竿/鱼饵、切换鱼竿 | 见签名 | 见签名 |
+| `store.py` | `commit_fishing_cast(...)` | 单事务写入 cast + 扣饵 + `category='fish'` 入账；`UNIQUE(message_id, cast_index)` 幂等 | 见签名 | `(bool, bait_used)` |
+| `store.py` | `fishing_recent/fishing_board/fishing_collection` | 最近渔获、总榜/今日/条数/大鱼榜、图鉴 | 见签名 | `list` |
+| `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
 | `store.py` | `PointStore(conn, lock=None)` | 积分流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
 | `store.py` | `record_events(chat_id, message_id, awards, now_ts=None)` | 幂等写入流水（`UNIQUE(message_id, reason)`） | 见签名 | `int` |
 | `store.py` | `board(chat_id, scope='total', limit=10, now_ts=None)` | 榜单（total/season/day，含余额与并列名次） | 见签名 | `list[dict]` |
@@ -807,7 +837,9 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
-`BASE_POWER=10`、`POWER_PER_LEVEL=5`。
+`DEFAULT_RODS`（5 根鱼竿）、`DEFAULT_BAITS`（3 种鱼饵）、
+`DEFAULT_SPECIES`（19 种鱼）、`DEFAULT_DELAYS`（空竿/普通 5s、稀有 15s、
+史诗 30s、传说 60s）、`BASE_POWER=10`、`POWER_PER_LEVEL=5`。
 
 命令行：`tools/points_backfill.py --all | --chat <chat_id> --days N
 [--rebuild] [--db <path>]`——按 `messages` 表重放计分；`--rebuild`
@@ -998,14 +1030,22 @@ AbstractSummarizer (base.py)
          │            └─ MessageStore.get_activity_report_data()
          │                  (每人总数 / 未发言)
          │
-         ├─→ [积分/装备/切磋指令 — 裸文本]
+         ├─→ [积分/装备/切磋/钓鱼指令 — 裸文本]
          │      └─ PointHandler.handle()
          │            ├─ 签到（确认/补发 daily_first，回复 @成员）
          │            ├─ 积分 / 我的信息 / 查询 名字
          │            ├─ 积分榜 / 月榜 / 今日榜 / 积分规则
          │            ├─ 商店 / 购买 / 装备 / 卸下 / 武力值 / 战力榜
          │            ├─ 切磋 @某人 / 引用后切磋 / 买免战券
-         │            └─ PointStore / DuelService / LevelTable / EquipmentCatalog
+         │            ├─ 钓鱼 / 钓鱼 N / 鱼竿 / 买鱼竿 / 换鱼竿
+         │            ├─ 鱼饵 / 买鱼饵 / 鱼篓 / 图鉴 / 钓鱼榜 / 钓鱼记录
+         │            └─ PointStore / DuelService / FishingService
+         │                  / LevelTable / EquipmentCatalog
+         │
+         │      [钓鱼延迟播报]
+         │        PointHandler._fish() → DelayedReply(text, delay_sec)
+         │          └─ MessageRouter._schedule_delayed_reply()
+         │                └─ daemon thread → sleep(delay) → backend.send_text()
          │
          ├─→ [@mention 路径]
          │      │
@@ -1966,6 +2006,68 @@ MessageRouter.handle(msg)
 
 ---
 
+### 功能O: 钓鱼
+
+#### 涉及文件
+
+| 文件 | 路径 | 角色 |
+|---|---|---|
+| `fishing_catalog.py` | `src/points/fishing_catalog.py` | 鱼竿/鱼饵/鱼种/延迟目录（`data/fishing.json`） |
+| `fishing.py` | `src/points/fishing.py` | 权重/重量/价值公式，`FishingService.cast()/stats()` |
+| `store.py` | `src/points/store.py` | `fishing_casts` / `fishing_inventory` 读写，单事务结算 |
+| `models.py` | `src/points/models.py` | `FishCatch` / `FishingResult` / `DelayedReply` |
+| `handler.py` | `src/points/handler.py` | 钓鱼指令解析与文案 |
+| `router.py` | `src/router.py` | `set_reply_sender()` + 延迟播报调度 |
+| `bot.py` | `src/bot.py` | backend 创建后注册延迟发送器（复用 `_window_lock`） |
+| `schema.py` | `src/db/schema.py` | `fishing_casts` / `fishing_inventory` 表定义 |
+| `server.py` | `src/web/server.py` | `/api/fishing*` 路由 |
+| `PointsPanel.jsx` | `ui/src/components/PointsPanel.jsx` | 「钓鱼」子页 |
+
+#### 经济语义
+
+- 钓鱼入账写 `point_events(category='fish', reason='fish_catch')`
+- `balance_of()` 汇总全部类别 → 余额增加
+- `earned_of()` / `board()` / `member_stats()` 只统计 `earn`/`adjust` → 积分、等级、总榜/月榜不变
+- 每日收益上限 `FISHING_DAILY_CAP`（默认 120，0=不限）；每日次数 `FISHING_DAILY_ATTEMPTS`（默认 30）
+
+#### 调用链
+
+```
+PointHandler.handle("钓鱼 5")
+  └── _fish(msg, ..., rest="5")
+        └── FishingService.cast(msg, count=5)
+              ├── 检查开关/群白名单/次数/冷却/每日收益上限
+              ├── 选装备：equipped rod + 价格最低的在库鱼饵
+              ├── 每竿：空竿判定 → 稀有度加权抽鱼 → 重量 → 价值
+              ├── PointStore.commit_fishing_cast()
+              │     ├── INSERT fishing_casts（UNIQUE(message_id, cast_index)）
+              │     ├── 扣 1 个鱼饵
+              │     └── INSERT point_events(category='fish', points=amount)
+              └── 返回 FishingResult(delay_sec=max(本批稀有度延迟))
+        └── _format_fishing() → DelayedReply(text, delay_sec)
+  └── MessageRouter._schedule_delayed_reply()
+        └── daemon thread → sleep(delay) → backend.send_text(chat_id, text)
+```
+
+#### 指令
+
+| 输入 | 行为 |
+|---|---|
+| `钓鱼` / `钓鱼 5` / `钓鱼 五` | 抛 1~N 竿（单条消息最多 `FISHING_MAX_BATCH`） |
+| `鱼竿` / `买鱼竿 名称` / `换鱼竿 名称` | 鱼竿商店、购买自动装备、切换 |
+| `鱼饵` / `买鱼饵 [名称] [数量]` | 鱼饵商店、购买（默认 10 个） |
+| `鱼篓` / `我的鱼` | 今日次数/收益、鱼竿、鱼饵、累计渔获、图鉴进度 |
+| `图鉴` / `钓鱼图鉴` | 按稀有度展示鱼种与已钓标记 |
+| `钓鱼榜` / `钓鱼榜 今日` / `钓鱼榜 大鱼` / `钓鱼榜 数量` | 余额/今日/大鱼/条数榜 |
+| `钓鱼记录` | 自己最近 10 条渔获 |
+
+#### 反馈延迟
+
+空竿/垃圾 5s、普通 5s、稀有 15s、史诗 30s、传说 60s；可在
+`data/fishing.json` 的 `delays` 中修改。延迟只影响播报，不影响结算。
+
+---
+
 ## 5. 配置文件和环境变量
 
 ### 5.1 `.env` 文件完整配置项
@@ -2071,6 +2173,17 @@ DUEL_NOVICE_PROTECTION_POINTS=20
 SHIELD_PRICE=20
 SHIELD_DURATION_SEC=14400
 SHIELD_MAX_SEC=86400
+
+# === 钓鱼 ===
+# 钓鱼只增加余额，不增加累计积分/等级/榜单。
+FISHING_ENABLED=true
+FISHING_GROUPS=*
+FISHING_CATALOG_PATH=data/fishing.json
+FISHING_DAILY_ATTEMPTS=30
+FISHING_DAILY_CAP=120
+FISHING_COOLDOWN_SEC=5
+FISHING_MAX_BATCH=10
+FISHING_MISS_CHANCE=0.15
 
 # === 调优 ===
 POLL_INTERVAL_SEC=1.0

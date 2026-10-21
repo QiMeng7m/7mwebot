@@ -1171,11 +1171,13 @@ def _points_config():
 
 
 def _points_stack(conn, config):
-    """Build (store, levels, catalog, duels) for one request."""
+    """Build (store, levels, catalog, duels, fishing_catalog, fishing)."""
     from src.points.store import PointStore
     from src.points.levels import LevelTable
     from src.points.equipment import EquipmentCatalog
     from src.points.duel import DuelService
+    from src.points.fishing import FishingService
+    from src.points.fishing_catalog import FishingCatalog
 
     store = PointStore(conn)
     levels = LevelTable(getattr(
@@ -1183,7 +1185,10 @@ def _points_stack(conn, config):
     catalog = EquipmentCatalog(getattr(
         config, "equipment_path", "data/equipment.json"))
     duels = DuelService(store, config, levels, catalog)
-    return store, levels, catalog, duels
+    fishing_catalog = FishingCatalog(getattr(
+        config, "fishing_catalog_path", "data/fishing.json"))
+    fishing = FishingService(store, config, fishing_catalog)
+    return store, levels, catalog, duels, fishing_catalog, fishing
 
 
 class _UIHandler(SimpleHTTPRequestHandler):
@@ -1214,6 +1219,9 @@ class _UIHandler(SimpleHTTPRequestHandler):
                          "/api/points/adjust", "/api/points/levels",
                          "/api/equipment/buy", "/api/equipment/equip",
                          "/api/equipment/catalog",
+                         "/api/fishing/cast", "/api/fishing/buy_rod",
+                         "/api/fishing/buy_bait", "/api/fishing/equip_rod",
+                         "/api/fishing/catalog",
                          "/api/voice/download-model",
                          "/api/wechat-data-dir/detect"):
             self.do_GET()
@@ -1872,10 +1880,11 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": str(e)})
             return
 
-        # ── API: Points / equipment / duels ───────────────────────────
+        # ── API: Points / equipment / duels / fishing ─────────────────
         if self.path.startswith("/api/points") or \
                 self.path.startswith("/api/equipment") or \
-                self.path.startswith("/api/duels"):
+                self.path.startswith("/api/duels") or \
+                self.path.startswith("/api/fishing"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(self.path)
             route = parsed.path
@@ -1895,7 +1904,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 from src.db.schema import initialize_db
                 conn = initialize_db(_points_db_path())
                 config = _points_config()
-                store, levels, catalog, duels = _points_stack(conn, config)
+                store, levels, catalog, duels, fishing_catalog, fishing = \
+                    _points_stack(conn, config)
 
                 # ── GET /api/points ──────────────────────────────
                 if route == "/api/points":
@@ -2122,6 +2132,170 @@ class _UIHandler(SimpleHTTPRequestHandler):
                         "ok": True,
                         "duels": store.recent_duels(chat_id, limit),
                     })
+                    return
+
+                # ── GET /api/fishing ──────────────────────────────
+                if route == "/api/fishing":
+                    chat_id = params.get("chat_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    limit = max(1, min(
+                        int(params.get("limit") or
+                            getattr(config, "points_board_size", 10)), 100))
+                    payload = {
+                        "ok": True,
+                        "catalog": fishing_catalog.load(),
+                        "board": {
+                            "value": store.fishing_board(
+                                chat_id, "value", limit=limit),
+                            "biggest": store.fishing_board(
+                                chat_id, "biggest", limit=limit),
+                        },
+                        "recent": store.fishing_recent(
+                            chat_id, limit=limit),
+                        "limits": {
+                            "daily_attempts": getattr(
+                                config, "fishing_daily_attempts", 30),
+                            "daily_cap": getattr(
+                                config, "fishing_daily_cap", 120),
+                            "cooldown_sec": getattr(
+                                config, "fishing_cooldown_sec", 5),
+                            "max_batch": getattr(
+                                config, "fishing_max_batch", 10),
+                        },
+                    }
+                    sender_id = params.get("sender_id", "")
+                    if sender_id:
+                        payload["member"] = fishing.stats(
+                            chat_id, sender_id)
+                        payload["inventory"] = store.fishing_inventory(
+                            chat_id, sender_id)
+                    self.send_json(payload)
+                    return
+
+                # ── POST /api/fishing/cast ────────────────────────
+                if route == "/api/fishing/cast":
+                    import uuid
+                    from dataclasses import asdict
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    if not chat_id or not sender_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id and sender_id required"})
+                        return
+                    try:
+                        count = int(data.get("count", 1))
+                    except (TypeError, ValueError):
+                        count = 1
+                    msg = {
+                        "message_id": f"web:{uuid.uuid4().hex}",
+                        "chat_id": chat_id,
+                        "group_name": str(data.get("group_name", "")),
+                        "sender_id": sender_id,
+                        "sender_name": str(data.get("sender_name")
+                                            or store.member_name(
+                                                chat_id, sender_id)),
+                        "content": "钓鱼",
+                        "msg_type": 1,
+                        "timestamp": int(time.time()),
+                    }
+                    result = fishing.cast(msg, count=count)
+                    self.send_json({
+                        "ok": result.ok,
+                        "code": result.code,
+                        "reply": result.reply,
+                        "casts": [asdict(item) for item in result.casts],
+                        "total_value": result.total_value,
+                        "balance": result.balance_after,
+                        "attempts_used": result.attempts_used,
+                        "attempts_limit": result.attempts_limit,
+                        "earned_today": result.earned_today,
+                        "daily_cap": result.daily_cap,
+                    })
+                    return
+
+                # ── POST /api/fishing/buy_rod ─────────────────────
+                if route == "/api/fishing/buy_rod":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    rod = fishing_catalog.by_rod_id(
+                        str(data.get("rod_id", "")))
+                    if not chat_id or not sender_id or rod is None:
+                        self.send_json({"ok": False,
+                                        "error": "invalid request"})
+                        return
+                    ok, code, balance = store.buy_fishing_rod(
+                        chat_id, sender_id,
+                        str(data.get("sender_name")
+                            or store.member_name(chat_id, sender_id)),
+                        rod,
+                    )
+                    self.send_json({
+                        "ok": ok, "code": code, "balance": balance,
+                    })
+                    return
+
+                # ── POST /api/fishing/buy_bait ────────────────────
+                if route == "/api/fishing/buy_bait":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    bait = fishing_catalog.by_bait_id(
+                        str(data.get("bait_id", "")))
+                    if not chat_id or not sender_id or bait is None:
+                        self.send_json({"ok": False,
+                                        "error": "invalid request"})
+                        return
+                    try:
+                        quantity = int(data.get("quantity", 10))
+                    except (TypeError, ValueError):
+                        quantity = 10
+                    ok, code, balance = store.buy_fishing_bait(
+                        chat_id, sender_id,
+                        str(data.get("sender_name")
+                            or store.member_name(chat_id, sender_id)),
+                        bait, quantity,
+                    )
+                    self.send_json({
+                        "ok": ok, "code": code, "balance": balance,
+                    })
+                    return
+
+                # ── POST /api/fishing/equip_rod ───────────────────
+                if route == "/api/fishing/equip_rod":
+                    data = _body()
+                    chat_id = str(data.get("chat_id", ""))
+                    sender_id = str(data.get("sender_id", ""))
+                    rod = fishing_catalog.by_rod_id(
+                        str(data.get("rod_id", "")))
+                    if not chat_id or not sender_id or rod is None:
+                        self.send_json({"ok": False,
+                                        "error": "invalid request"})
+                        return
+                    rod_id = "" if rod.get("default") else rod["id"]
+                    ok = store.equip_fishing_rod(
+                        chat_id, sender_id, rod_id)
+                    self.send_json({"ok": ok})
+                    return
+
+                # ── GET/POST /api/fishing/catalog ─────────────────
+                if route == "/api/fishing/catalog":
+                    if self.command == "POST":
+                        data = _body()
+                        fishing_catalog.save(data)
+                        self.send_json({
+                            "ok": True,
+                            "catalog": fishing_catalog.load(),
+                        })
+                    else:
+                        self.send_json({
+                            "ok": True,
+                            "catalog": fishing_catalog.load(),
+                        })
                     return
 
                 self.send_json({"ok": False, "error": "Not found"})
