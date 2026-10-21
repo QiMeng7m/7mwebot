@@ -352,7 +352,10 @@ class MessageRouter:
                 if reply is not None:
                     if hasattr(reply, "delay_sec"):
                         if self._schedule_delayed_reply(msg, reply):
-                            return None
+                            # Send the "pending" acknowledgement now via
+                            # the normal reply path; the result follows
+                            # from the daemon thread after delay_sec.
+                            return getattr(reply, "ack_text", "") or None
                     return reply
 
         if is_at:

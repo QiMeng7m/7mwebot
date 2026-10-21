@@ -952,8 +952,18 @@ class PointHandler:
         if result.daily_cap:
             footer += f" · 收益 {result.earned_today}/{result.daily_cap}"
         lines.append(footer)
+
+        # Immediate acknowledgement, then the catch report after the
+        # rarity-based delay.  The ack goes through the normal reply path.
+        count = len(result.casts)
+        ack = (
+            f"{sender_name} 钓鱼中，请稍等…" if count == 1
+            else f"{sender_name} 正在钓 {count} 竿，请稍等…"
+        )
         return DelayedReply(
-            "\n".join(lines), getattr(result, "delay_sec", 0))
+            "\n".join(lines), getattr(result, "delay_sec", 0),
+            ack_text=ack,
+        )
 
     @staticmethod
     def _format_catch_text(catch) -> str:

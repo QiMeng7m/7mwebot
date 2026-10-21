@@ -172,11 +172,24 @@ router.handle(msg)
         └── FishingService.cast(...)
               ├── 立即写 fishing_casts + point_events（余额到账）
               └── 返回 FishingResult(delay_sec = max(本次渔获))
-        └── _format_fishing() → DelayedReply(text, delay_sec)
+        └── _format_fishing() → DelayedReply(text, delay_sec, ack_text)
   └── MessageRouter._schedule_delayed_reply(msg, reply)
-        ├── 有 sender：起 daemon 线程，sleep(delay) 后调用 backend.send_text()
+        ├── 有 sender：
+        │     ├── 立即返回 ack_text（「钓鱼中，请稍等…」）走正常回复路径
+        │     └── 起 daemon 线程，sleep(delay) 后调用 backend.send_text()
         └── 无 sender（单测/CLI）：直接返回文本，立即发送
 ```
+
+群聊里看到的效果：
+
+```
+用户：钓鱼
+机器人（立即）：张三 钓鱼中，请稍等…
+机器人（15 秒后）：张三 钓到 鲈鱼（1.50kg，稀有），余额 +16。
+                  本次入账 +16 · 余额 165 · 今日 3/30 次 · 收益 23/120
+```
+
+多竿 `钓鱼 5` 的 ack 为「张三 正在钓 5 竿，请稍等…」，播报仍是一条汇总。
 
 `Bot.run()` 在 backend 创建后注册发送器，并复用 backend 的 `_window_lock`：
 
@@ -257,16 +270,22 @@ CREATE TABLE IF NOT EXISTS fishing_inventory (
 
 ### 6.1 结果文案
 
-单竿普通鱼（5 秒后）：
+抛竿后先立即回一条「钓鱼中，请稍等…」，到点后再播报渔获。
+
+单竿普通鱼（立即 + 5 秒后）：
 
 ```
+张三 钓鱼中，请稍等…
+
 张三 钓到 鲤鱼（1.20kg，普通），余额 +9。
 本次入账 +9 · 余额 149 · 今日 3/30 次 · 收益 23/120
 ```
 
-多竿（取最稀有鱼的延迟）：
+多竿（立即 ack，取最稀有鱼的延迟后播报）：
 
 ```
+张三 正在钓 3 竿，请稍等…
+
 张三 抛了 3 竿：
 1. 鲫鱼（220g，普通）+4
 2. 空竿，鱼儿跑了

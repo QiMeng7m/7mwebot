@@ -800,7 +800,7 @@ todo_delete_keywords: list[str] = [
 | `fishing.py` | `effective_miss_chance(base_chance, miss_reduction=0)` | 空竿率夹取到 2%~50% | 见签名 | `float` |
 | `fishing.py` | `FishingService.cast(msg, count=1, rng=None, now_ts=None)` | 结算 1~N 竿：次数/冷却/每日上限、扣饵、记录、入账；返回 `delay_sec=max(本次稀有度延迟)` | 见签名 | `FishingResult` |
 | `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 今日次数/收益、余额、鱼竿、鱼饵、累计渔获、图鉴 | 见签名 | `dict` |
-| `models.py` | `DelayedReply(text, delay_sec=0)` | `str` 子类，携带延迟秒数；路由器识别后异步发送 | 见签名 | `DelayedReply` |
+| `models.py` | `DelayedReply(text, delay_sec=0, ack_text="")` | `str` 子类，携带延迟秒数与即时 ack；路由器先返回 ack，再异步发送最终文本 | 见签名 | `DelayedReply` |
 | `store.py` | `fishing_attempts/fishing_last_cast_at/fishing_earned_on_day/fishing_totals` | 钓鱼次数、冷却、今日入账、累计渔获查询 | 见签名 | `int/dict` |
 | `store.py` | `fishing_inventory/fishing_equipped_rod/owns_fishing_item` | 鱼竿/鱼饵库存查询 | 见签名 | `list[dict]/str/bool` |
 | `store.py` | `buy_fishing_rod(...)` / `buy_fishing_bait(...)` / `equip_fishing_rod(...)` | 条件扣款购买鱼竿/鱼饵、切换鱼竿 | 见签名 | 见签名 |
@@ -1043,8 +1043,9 @@ AbstractSummarizer (base.py)
          │                  / LevelTable / EquipmentCatalog
          │
          │      [钓鱼延迟播报]
-         │        PointHandler._fish() → DelayedReply(text, delay_sec)
+         │        PointHandler._fish() → DelayedReply(text, delay_sec, ack_text)
          │          └─ MessageRouter._schedule_delayed_reply()
+         │                ├─ 立即返回 ack_text（钓鱼中，请稍等…）
          │                └─ daemon thread → sleep(delay) → backend.send_text()
          │
          ├─→ [@mention 路径]
@@ -2044,8 +2045,9 @@ PointHandler.handle("钓鱼 5")
               │     ├── 扣 1 个鱼饵
               │     └── INSERT point_events(category='fish', points=amount)
               └── 返回 FishingResult(delay_sec=max(本批稀有度延迟))
-        └── _format_fishing() → DelayedReply(text, delay_sec)
+        └── _format_fishing() → DelayedReply(text, delay_sec, ack_text)
   └── MessageRouter._schedule_delayed_reply()
+        ├── 立即返回 ack_text（「钓鱼中，请稍等…」）走正常回复
         └── daemon thread → sleep(delay) → backend.send_text(chat_id, text)
 ```
 

@@ -243,6 +243,7 @@ class RouterPointsTests(unittest.TestCase):
         self.assertIsNotNone(reply)
         self.assertIn("余额", reply)
         self.assertGreaterEqual(getattr(reply, "delay_sec", 0), 5)
+        self.assertIn("钓鱼中", getattr(reply, "ack_text", ""))
 
     def test_fishing_reply_is_scheduled_when_sender_registered(self):
         import threading
@@ -262,7 +263,10 @@ class RouterPointsTests(unittest.TestCase):
         with patch.object(catalog, "delay_for", return_value=0):
             reply = self.router.handle(self._message("钓鱼"))
 
-        self.assertIsNone(reply)
+        # The immediate acknowledgement is returned for the normal path;
+        # the actual catch report arrives via the delayed sender.
+        self.assertIsNotNone(reply)
+        self.assertIn("钓鱼中", reply)
         self.assertTrue(done.wait(2.0))
         self.assertEqual(captured[0][0], "123@chatroom")
         self.assertIn("余额", captured[0][1])

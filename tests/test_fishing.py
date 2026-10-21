@@ -457,6 +457,12 @@ class HandlerTests(unittest.TestCase):
         reply = self.handle("钓鱼")
         # The test catalog only has common fish (and a 5s miss delay).
         self.assertEqual(getattr(reply, "delay_sec", None), 5)
+        self.assertIn("钓鱼中", getattr(reply, "ack_text", ""))
+        self.assertIn("请稍等", getattr(reply, "ack_text", ""))
+
+    def test_batch_ack_mentions_cast_count(self):
+        reply = self.handle("钓鱼 3")
+        self.assertIn("3 竿", getattr(reply, "ack_text", ""))
 
     def test_fish_batch_command(self):
         reply = self.handle("钓鱼 3")

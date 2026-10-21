@@ -12,13 +12,19 @@ class DelayedReply(str):
     the value is still the message text.  The router checks ``delay_sec``
     and, when a backend sender is registered, schedules the send on a
     daemon thread instead of returning the text for immediate delivery.
+
+    ``ack_text`` is sent immediately (via the normal reply path) so the
+    group sees "钓鱼中，请稍等…" while the result is still pending.
     """
 
     delay_sec: int
+    ack_text: str
 
-    def __new__(cls, text: str, delay_sec: int = 0):
+    def __new__(cls, text: str, delay_sec: int = 0,
+                ack_text: str = ""):
         obj = super().__new__(cls, text)
         obj.delay_sec = max(0, int(delay_sec))
+        obj.ack_text = str(ack_text or "")
         return obj
 
 
