@@ -501,8 +501,10 @@ todo_delete_keywords: list[str] = [
 | `log_trigger(chat_id, requester_id, trigger_msg_id)` | 记录触发事件 | `chat_id, requester_id, trigger_msg_id: str` | `None` |
 | `cleanup_old_triggers()` | 清理7天前的触发记录 | 无 | `int` |
 | `get_sender_display_name(sender_id)` | 查找已知显示名 | `sender_id: str` | `str \| None` |
-| `save_fun_draw(chat_id, sender_id, sender_name, level, emoji, phrase, now_ts=None)` | 记录成员最近一次抽签（用于解签，按群+成员覆盖） | 见签名 | `None` |
-| `get_fun_draw(chat_id, sender_id)` | 获取成员最近一次抽签 | `chat_id, sender_id: str` | `dict \| None` |
+| `save_fun_draw(chat_id, sender_id, sender_name, level, emoji, phrase, day="", now_ts=None)` | 记录成员最近一次抽签（按群+成员覆盖；重置解签状态） | 见签名 | `None` |
+| `get_fun_draw(chat_id, sender_id)` | 获取成员最近一次抽签（含 day/interpreted_at） | `chat_id, sender_id: str` | `dict \| None` |
+| `claim_fun_reading(chat_id, sender_id, day, now_ts=None)` | 原子占用当天解签名额（每天仅首次返回 True） | 见签名 | `bool` |
+| `release_fun_reading(chat_id, sender_id, day)` | 归还解签名额（AI 失败时允许重试） | `chat_id, sender_id, day: str` | `None` |
 | `has_sender_message_since(chat_id, sender_id, since_ts)` | 某成员在指定时间后是否发过消息（用于取消踢人） | `chat_id, sender_id: str, since_ts: int` | `bool` |
 | `get_user_last_timestamp(chat_id, sender_id)` | 获取用户最后发言时间 | `chat_id, sender_id: str` | `int \| None` |
 | `get_user_previous_timestamp(chat_id, sender_id, before_ts)` | 获取用户在某时间前的最后发言 | `chat_id, sender_id: str, before_ts: int` | `int \| None` |
@@ -611,8 +613,8 @@ todo_delete_keywords: list[str] = [
 
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
-| `load_lots_config()` | 读取抽签配置 | 无 | `dict` |
-| `save_lots_config(data)` | 保存抽签配置 | `data: dict` | `None` |
+| `load_lots_config()` | 读取签文配置（weights 始终返回固定值） | 无 | `dict` |
+| `save_lots_config(data)` | 保存签文配置（忽略入参 weights，概率固定） | `data: dict` | `None` |
 | `reset_lots_cache()` | 清除抽签缓存 | 无 | `None` |
 | `draw_lot()` | 抽一支签，返回 `{level, emoji, phrase}` | 无 | `dict` |
 | `format_lot(requester_name, lot)` | 把一支签格式化为群回复 | `requester_name: str, lot: dict` | `str` |
@@ -1906,29 +1908,36 @@ MessageRouter.handle(msg)
 
 | 输入 | 行为 |
 |---|---|
-| `抽签` / `@机器人 抽签` | 按 `data/lots.json` 的等级与权重随机抽签；回复签文并提示可「解签」 |
-| `解签` / `@机器人 解签` | 取该成员在本群最近一次抽签，带最近 600 秒群聊上下文调用 AI 解签 |
-| `解签`（还没抽过） | 提示先发「抽签」 |
+| `抽签` / `@机器人 抽签` | 每人每群每天限一次；按固定概率抽签，回复签文并提示可「解签」；当天重复抽签会回显原签 |
+| `解签` / `@机器人 解签` | 每人每群每天限一次；取当天抽到的签，带最近 600 秒群聊上下文调用 AI 解签 |
+| `解签`（今天还没抽/已解过） | 提示先「抽签」或「今天已经解过签啦」 |
+
+**概率固定，不可配置**：`FIXED_WEIGHTS = [5, 20, 40, 25, 10]`（大吉/中吉/
+小吉/末吉/凶）。`lots.json` 中的 `weights` 与 `POST /api/lots` 的权重入参
+都会被忽略；只有等级名称、emoji、签文内容可自定义。
 
 裸文本指令受 300 秒消息年龄保护（启动回放不响应）；`FUN_ENABLED=false`
-时两者都不触发。解签失败时回退为原签文文本。
+时两者都不触发。解签失败时归还当天解签名额并回退为原签文文本。
 
 #### 数据表
 
 ```sql
 CREATE TABLE IF NOT EXISTS fun_draws (
-    chat_id     TEXT    NOT NULL,
-    sender_id   TEXT    NOT NULL,
-    sender_name TEXT    NOT NULL DEFAULT '',
-    level       TEXT    NOT NULL,
-    emoji       TEXT    NOT NULL DEFAULT '',
-    phrase      TEXT    NOT NULL,
-    drawn_at    INTEGER NOT NULL,
+    chat_id        TEXT    NOT NULL,
+    sender_id      TEXT    NOT NULL,
+    sender_name    TEXT    NOT NULL DEFAULT '',
+    level          TEXT    NOT NULL,
+    emoji          TEXT    NOT NULL DEFAULT '',
+    phrase         TEXT    NOT NULL,
+    drawn_at       INTEGER NOT NULL,
+    day            TEXT    NOT NULL DEFAULT '',      -- 本地日期 YYYY-MM-DD
+    interpreted_at INTEGER NOT NULL DEFAULT 0,       -- 当天解签时间（0=未解）
     PRIMARY KEY (chat_id, sender_id)
 );
 ```
 
-同一成员在同一群只保留最近一签（UPSERT）。
+同一成员在同一群只保留最近一签（UPSERT）；旧库启动时通过
+`_ensure_columns()` 自动补 `day` / `interpreted_at` 列。
 
 #### 调用链
 
@@ -1936,11 +1945,16 @@ CREATE TABLE IF NOT EXISTS fun_draws (
 MessageRouter.handle(msg)
   ├── (is_at 分支) clean_command_text() → _handle_fun_command(msg)
   └── (裸文本分支) _handle_fun_command(msg)
-        ├── 「抽签」→ draw_lot() → format_lot()
-        │              └── MessageStore.save_fun_draw()
+        ├── 「抽签」→ MessageStore.get_fun_draw()
+        │              ├── 当天已抽 → format_lot(原签)
+        │              └── 未抽 → draw_lot() → format_lot()
+        │                          └── MessageStore.save_fun_draw(day)
         └── 「解签」→ MessageStore.get_fun_draw()
+                       ├── 非当天 → 提示先抽签
+                       ├── MessageStore.claim_fun_reading(day) — 每日一次
                        ├── MessageStore.get_messages_since(600s, limit=20)
-                       └── AbstractSummarizer.chat(prompt, context_messages, ...)
+                       ├── AbstractSummarizer.chat(prompt, context_messages, ...)
+                       └── 失败 → MessageStore.release_fun_reading(day)
 ```
 
 ---

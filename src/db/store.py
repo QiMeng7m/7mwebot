@@ -144,35 +144,68 @@ class MessageStore:
 
     def save_fun_draw(self, chat_id: str, sender_id: str, sender_name: str,
                       level: str, emoji: str, phrase: str,
-                      now_ts: Optional[int] = None) -> None:
-        """Remember the member's latest draw in this chat."""
+                      day: str = "", now_ts: Optional[int] = None) -> None:
+        """Remember the member's latest draw in this chat.
+
+        Writing a new draw resets ``interpreted_at`` so the member can
+        have it read once more that day.
+        """
         now = int(time.time()) if now_ts is None else int(now_ts)
         with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO fun_draws
                    (chat_id, sender_id, sender_name, level, emoji, phrase,
-                    drawn_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                    drawn_at, day, interpreted_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                    ON CONFLICT(chat_id, sender_id) DO UPDATE SET
-                     sender_name = excluded.sender_name,
-                     level       = excluded.level,
-                     emoji       = excluded.emoji,
-                     phrase      = excluded.phrase,
-                     drawn_at    = excluded.drawn_at""",
+                     sender_name    = excluded.sender_name,
+                     level          = excluded.level,
+                     emoji          = excluded.emoji,
+                     phrase         = excluded.phrase,
+                     drawn_at       = excluded.drawn_at,
+                     day            = excluded.day,
+                     interpreted_at = 0""",
                 (str(chat_id), str(sender_id), str(sender_name or ""),
-                 str(level), str(emoji or ""), str(phrase), now),
+                 str(level), str(emoji or ""), str(phrase), now, str(day)),
             )
 
     def get_fun_draw(self, chat_id: str, sender_id: str) -> Optional[dict]:
         """Return the member's latest draw in this chat, or None."""
         with self._lock:
             row = self.conn.execute(
-                """SELECT level, emoji, phrase, drawn_at
+                """SELECT level, emoji, phrase, drawn_at, day,
+                          interpreted_at
                    FROM fun_draws
                    WHERE chat_id = ? AND sender_id = ?""",
                 (str(chat_id), str(sender_id)),
             ).fetchone()
         return dict(row) if row else None
+
+    def claim_fun_reading(self, chat_id: str, sender_id: str,
+                          day: str, now_ts: Optional[int] = None) -> bool:
+        """Atomically mark today's draw as interpreted.
+
+        Returns True only for the first 「解签」 of the day.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE fun_draws SET interpreted_at = ?
+                   WHERE chat_id = ? AND sender_id = ? AND day = ?
+                     AND interpreted_at = 0""",
+                (now, str(chat_id), str(sender_id), str(day)),
+            )
+        return cur.rowcount > 0
+
+    def release_fun_reading(self, chat_id: str, sender_id: str,
+                            day: str) -> None:
+        """Undo a claim (used when the AI reading failed)."""
+        with self._lock, self.conn:
+            self.conn.execute(
+                """UPDATE fun_draws SET interpreted_at = 0
+                   WHERE chat_id = ? AND sender_id = ? AND day = ?""",
+                (str(chat_id), str(sender_id), str(day)),
+            )
 
     def has_sender_message_since(self, chat_id: str, sender_id: str,
                                  since_ts: int) -> bool:

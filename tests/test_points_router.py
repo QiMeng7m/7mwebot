@@ -160,6 +160,47 @@ class RouterPointsTests(unittest.TestCase):
         self.assertIn("抽到的是", fake.last_message)
         self.assertIsNotNone(fake.last_context)
 
+    def test_draw_lots_only_once_per_day(self):
+        first = self.router.handle(self._message("抽签"))
+        second = self.router.handle(self._message("抽签"))
+        self.assertIn("抽签结果", first)
+        self.assertIn("今天已经抽过一签", second)
+        # The original lot is echoed, not re-drawn.
+        first_line = next(
+            line for line in first.splitlines() if "抽签结果" in line)
+        self.assertIn(first_line, second)
+
+    def test_read_lot_only_once_per_day(self):
+        self.router.handle(self._message("抽签"))
+        self.router._summarizer = _FakeChatAi()
+        first = self.router.handle(self._message("解签"))
+        second = self.router.handle(self._message("解签"))
+        self.assertIn("AI解签", first)
+        self.assertIn("今天已经解过签", second)
+
+    def test_read_lot_can_retry_after_ai_failure(self):
+        class _BoomAi(_NoAi):
+            def chat(self, *args, **kwargs):
+                raise RuntimeError("boom")
+
+        self.router.handle(self._message("抽签"))
+        self.router._summarizer = _BoomAi()
+        failed = self.router.handle(self._message("解签"))
+        self.assertIn("掉线", failed)
+
+        self.router._summarizer = _FakeChatAi()
+        retried = self.router.handle(self._message("解签"))
+        self.assertIn("AI解签", retried)
+
+    def test_read_lot_requires_todays_draw(self):
+        # Yesterday's draw does not unlock today's reading.
+        self.router._store.save_fun_draw(
+            "123@chatroom", "wxid_a", "张三", "大吉", "🎉", "昨天的签",
+            day="2000-01-01",
+        )
+        reply = self.router.handle(self._message("解签"))
+        self.assertIn("今天还没有抽签", reply)
+
     def test_stale_points_command_ignored(self):
         reply = self.router.handle(self._message(
             "积分", ts=int(time.time()) - 3600))

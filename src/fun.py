@@ -124,7 +124,11 @@ _DEFAULT_LEVELS = [
     ]),
 ]
 
-_DEFAULT_WEIGHTS = [12, 23, 30, 20, 15]
+_DEFAULT_WEIGHTS = [5, 20, 40, 25, 10]
+
+# 概率固定，不允许通过配置修改（大吉/中吉/小吉/末吉/凶）。
+# 顺序与 _DEFAULT_LEVELS 一致，合计 100。
+FIXED_WEIGHTS = list(_DEFAULT_WEIGHTS)
 
 # ── JSON 文件路径 ──────────────────────────────────────────────────
 
@@ -136,24 +140,24 @@ _lots_cache: tuple[list, list] | None = None
 
 
 def _build_default_lots() -> tuple[list, list]:
-    """将硬编码的默认数据转为标准化格式（levels 列表 + weights 列表）。"""
+    """将硬编码的默认数据转为标准化格式（levels 列表 + 固定权重）。"""
     levels = [
         {"name": name, "emoji": emoji, "phrases": list(phrases)}
         for name, emoji, phrases in _DEFAULT_LEVELS
     ]
-    return levels, list(_DEFAULT_WEIGHTS)
+    return levels, list(FIXED_WEIGHTS)
 
 
 def load_lots_config() -> dict:
     """读取当前抽签配置，返回标准化 dict。
 
-    加载顺序：JSON 文件 → 代码默认值。
+    加载顺序：JSON 文件 → 代码默认值。权重始终返回固定值。
 
     Returns:
         {"weights": [...], "levels": [{"name": str, "emoji": str, "phrases": [...]}, ...]}
     """
-    levels, weights = _get_lots()
-    return {"weights": weights, "levels": levels}
+    levels, _ = _get_lots()
+    return {"weights": list(FIXED_WEIGHTS), "levels": levels}
 
 
 def save_lots_config(data: dict) -> None:
@@ -162,14 +166,15 @@ def save_lots_config(data: dict) -> None:
     Args:
         data: {"weights": [...], "levels": [...]}
 
+    概率固定，``weights`` 入参会被忽略。
+
     Raises:
         ValueError: 格式校验失败时抛出。
     """
-    weights = data.get("weights", [])
     levels = data.get("levels", [])
 
     # ── 恢复默认：空数据 → 删除 JSON 文件 ──────────────────────
-    if (not weights or len(weights) == 0) and (not levels or len(levels) == 0):
+    if not levels:
         if _LOTS_PATH.exists():
             _LOTS_PATH.unlink()
         reset_lots_cache()
@@ -177,17 +182,15 @@ def save_lots_config(data: dict) -> None:
         return
 
     # ── 校验 ──────────────────────────────────────────────────────
-    if not isinstance(weights, list) or not isinstance(levels, list):
-        raise ValueError("weights 和 levels 必须是数组")
-    if len(weights) != len(levels):
-        raise ValueError(
-            f"weights 长度 ({len(weights)}) 与 levels 长度 ({len(levels)}) 不一致"
-        )
+    if not isinstance(levels, list):
+        raise ValueError("levels 必须是数组")
     if len(levels) == 0:
         raise ValueError("至少需要一个等级")
-    for w in weights:
-        if not isinstance(w, (int, float)) or w <= 0:
-            raise ValueError(f"权重必须是正数，得到: {w}")
+    if len(levels) != len(FIXED_WEIGHTS):
+        raise ValueError(
+            f"签文等级数量固定为 {len(FIXED_WEIGHTS)} 个"
+            f"（当前 {len(levels)} 个）"
+        )
     for i, level in enumerate(levels):
         if not isinstance(level, dict):
             raise ValueError(f"levels[{i}] 必须是对象")
@@ -197,10 +200,12 @@ def save_lots_config(data: dict) -> None:
         if not isinstance(phrases, list) or len(phrases) == 0:
             raise ValueError(f"「{level.get('name', i)}」至少需要一条签文")
 
-    # ── 写入 ──────────────────────────────────────────────────────
+    # ── 写入（权重写固定值，忽略入参）───────────────────────────
+    payload = {"weights": list(FIXED_WEIGHTS), "levels": levels}
     _LOTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = _LOTS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
     tmp.replace(_LOTS_PATH)
 
     # 清除缓存
@@ -215,16 +220,18 @@ def reset_lots_cache() -> None:
 
 
 def _load_lots_from_json() -> tuple[list, list] | None:
-    """从 JSON 文件加载抽签配置。失败返回 None。"""
+    """从 JSON 文件加载签文。失败返回 None。
+
+    权重字段被忽略——概率固定为 ``FIXED_WEIGHTS``。
+    """
     if not _LOTS_PATH.exists():
         return None
     try:
         data = json.loads(_LOTS_PATH.read_text(encoding="utf-8"))
-        weights = data.get("weights", [])
         levels = data.get("levels", [])
 
         # 快速校验（不做完整校验——save 时已经校验过；这里只防文件被手动损坏）
-        if not weights or not levels or len(weights) != len(levels):
+        if not levels or len(levels) != len(FIXED_WEIGHTS):
             logger.warning("lots.json 格式无效，使用默认签文")
             return None
         for level in levels:
@@ -232,7 +239,7 @@ def _load_lots_from_json() -> tuple[list, list] | None:
                 logger.warning("lots.json 存在空签文等级，使用默认签文")
                 return None
 
-        return levels, weights
+        return levels, list(FIXED_WEIGHTS)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning("无法读取 lots.json (%s)，使用默认签文", e)
         return None

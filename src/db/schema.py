@@ -70,14 +70,17 @@ CREATE INDEX IF NOT EXISTS idx_trigger_chat_time
     ON trigger_log(chat_id, processed_at DESC);
 
 -- Last fortune lot drawn by each member (for 「解签」).
+-- day/interpreted_at enforce one draw and one reading per local day.
 CREATE TABLE IF NOT EXISTS fun_draws (
-    chat_id     TEXT    NOT NULL,
-    sender_id   TEXT    NOT NULL,
-    sender_name TEXT    NOT NULL DEFAULT '',
-    level       TEXT    NOT NULL,
-    emoji       TEXT    NOT NULL DEFAULT '',
-    phrase      TEXT    NOT NULL,
-    drawn_at    INTEGER NOT NULL,
+    chat_id        TEXT    NOT NULL,
+    sender_id      TEXT    NOT NULL,
+    sender_name    TEXT    NOT NULL DEFAULT '',
+    level          TEXT    NOT NULL,
+    emoji          TEXT    NOT NULL DEFAULT '',
+    phrase         TEXT    NOT NULL,
+    drawn_at       INTEGER NOT NULL,
+    day            TEXT    NOT NULL DEFAULT '',
+    interpreted_at INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chat_id, sender_id)
 );
 
@@ -169,6 +172,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_duels_message
 """
 
 
+def _ensure_columns(conn: sqlite3.Connection, table: str,
+                    columns: dict[str, str]) -> None:
+    """Add missing columns to an existing table (idempotent migration)."""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, ddl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def initialize_db(db_path: str) -> sqlite3.Connection:
     """Initialize the SQLite database, creating tables if they don't exist.
 
@@ -185,5 +197,12 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA_SQL)
+
+    # Migrations for tables created by older builds.
+    _ensure_columns(conn, "fun_draws", {
+        "day": "day TEXT NOT NULL DEFAULT ''",
+        "interpreted_at": "interpreted_at INTEGER NOT NULL DEFAULT 0",
+    })
+
     conn.commit()
     return conn

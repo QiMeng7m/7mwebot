@@ -22,6 +22,7 @@ from .activity import (
     clean_command_text,
     parse_activity_query,
 )
+from .points.util import local_day
 
 logger = logging.getLogger(__name__)
 
@@ -702,11 +703,33 @@ class MessageRouter:
         from .fun import draw_lot, format_lot
 
         name = self._msg_display_name(msg)
+        day = local_day()
+
+        try:
+            existing = self._store.get_fun_draw(
+                msg["chat_id"], msg["sender_id"],
+            )
+        except Exception:
+            logger.exception("Loading fortune lot failed")
+            existing = None
+
+        if existing and existing.get("day") == day:
+            hint = (
+                "今天已经解过签啦，明天再来"
+                if existing.get("interpreted_at")
+                else "发「解签」可以听听 AI 怎么解读"
+            )
+            return (
+                f"{format_lot(name, existing)}\n"
+                f"今天已经抽过一签啦，明天再来；{hint}"
+            )
+
         lot = draw_lot()
         try:
             self._store.save_fun_draw(
                 msg["chat_id"], msg["sender_id"], name,
                 lot["level"], lot.get("emoji", ""), lot["phrase"],
+                day=day,
             )
         except Exception:
             logger.exception("Saving fortune lot failed")
@@ -719,6 +742,7 @@ class MessageRouter:
 
     def _handle_read_lot(self, msg: dict) -> str:
         name = self._msg_display_name(msg)
+        day = local_day()
         try:
             lot = self._store.get_fun_draw(
                 msg["chat_id"], msg["sender_id"],
@@ -727,8 +751,18 @@ class MessageRouter:
             logger.exception("Loading fortune lot failed")
             lot = None
 
-        if not lot:
-            return f"@{name} 你还没有抽签，先发「抽签」吧"
+        if not lot or lot.get("day") != day:
+            return f"@{name} 今天还没有抽签，先发「抽签」吧"
+
+        try:
+            claimed = self._store.claim_fun_reading(
+                msg["chat_id"], msg["sender_id"], day,
+            )
+        except Exception:
+            logger.exception("Claiming lot reading failed")
+            claimed = False
+        if not claimed:
+            return f"@{name} 今天已经解过签啦，明天再来~"
 
         since = int(time.time()) - CHAT_CONTEXT_WINDOW_SEC
         context = self._store.get_messages_since(
@@ -762,6 +796,13 @@ class MessageRouter:
             return f"@{name} {reading}"
         except Exception as e:
             logger.error("Lot reading failed: %s", e)
+            # Let the member retry today if the model was unavailable.
+            try:
+                self._store.release_fun_reading(
+                    msg["chat_id"], msg["sender_id"], day,
+                )
+            except Exception:
+                logger.exception("Releasing lot reading failed")
             return (
                 f"@{name} 解签先生暂时掉线了。你这支是"
                 f"{lot.get('emoji', '')} {lot['level']}：{lot['phrase']}"

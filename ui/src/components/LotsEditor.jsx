@@ -28,17 +28,6 @@ export default function LotsEditor() {
     load()
   }, [])
 
-  function updateWeight(index, value) {
-    const num = Math.max(1, Math.min(100, parseInt(value) || 1))
-    setData(prev => {
-      const next = { ...prev }
-      next.weights = [...prev.weights]
-      next.weights[index] = num
-      return next
-    })
-    setDirty(true)
-  }
-
   function updateLevelField(index, field, value) {
     setData(prev => {
       const next = { ...prev }
@@ -144,8 +133,8 @@ export default function LotsEditor() {
     <div className="space-y-2.5">
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-text-muted">
-          自定义各等级签文与权重。当前总权重：<span className="font-semibold text-text-main">{totalWeight}</span>
-          （各等级概率 = 权重 ÷ 总权重）
+          自定义各等级签文与 emoji。各等级概率固定（大吉 5% / 中吉 20% /
+          小吉 40% / 末吉 25% / 凶 10%），不可调整。
         </p>
       </div>
 
@@ -163,7 +152,7 @@ export default function LotsEditor() {
               <span className="text-lg">{level.emoji || '❓'}</span>
               <span className="text-sm font-semibold text-text-main flex-1">{level.name}</span>
               <span className="text-xs text-text-muted font-mono bg-bg-raised border border-border-main px-2 py-0.5 rounded-full">
-                权重 {data.weights[i]} · {probability}%
+                概率 {probability}%
               </span>
               <span className="text-xs text-text-muted font-mono bg-bg-raised border border-border-main px-2 py-0.5 rounded-full">
                 {level.phrases.length} 条签文
@@ -194,14 +183,10 @@ export default function LotsEditor() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-text-muted font-medium mb-1">权重 (1-100)</label>
-                    <input
-                      type="number"
-                      min="1" max="100"
-                      value={data.weights[i]}
-                      onChange={e => updateWeight(i, e.target.value)}
-                      className="w-full bg-bg-main border border-border-main rounded-lg px-3 py-1.5 text-[13px] text-text-main focus:outline-none focus:border-brand-green focus:ring-1 focus:ring-brand-green/15 transition-all font-mono"
-                    />
+                    <label className="block text-[11px] text-text-muted font-medium mb-1">概率（固定）</label>
+                    <div className="w-full bg-bg-raised border border-border-main rounded-lg px-3 py-1.5 text-[13px] text-text-muted font-mono">
+                      {probability}%
+                    </div>
                   </div>
                 </div>
                 <div>
