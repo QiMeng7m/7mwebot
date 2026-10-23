@@ -188,6 +188,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `WECHAT_PROCESS_NAMES` | `set` | `{"wechat.exe", "weixin.exe"}` | `src/wechat/window_controller.py` | 微信进程名集合 |
 | `MIN_WINDOW_WIDTH` / `MIN_WINDOW_HEIGHT` | `int` | `200` | `src/wechat/window_controller.py` | 窗口最小尺寸验证 |
 | `MSG_TYPE_MAP` | `dict` | 见代码 | `src/wechat/helpers.py` | 消息类型映射表 |
+| `LEAVE_WARNING_TEMPLATE` | `str` | `"⚠️ 退群警告：{member} 已退出群聊"` | `src/wechat/helpers.py` | 成员退群时发送的固定警告文案（`{member}` 为成员名） |
 | `DEFAULT_NICKNAME_PATH` | `Path` | `data/nicknames.json` | `src/nickname.py` | 昵称映射文件路径 |
 | `DEFAULT_WELCOME_CONFIG_PATH` | `Path` | `data/welcome_templates.json` | `src/welcome.py` | 欢迎模板文件路径 |
 | `HEX_KEY_LEN` | `int` | `64` | `src/wechat/mac_weflow_client.py` | WCDB 密钥长度 |
@@ -364,11 +365,14 @@ todo_delete_keywords: list[str] = [
 | `_poll_cycle(callback)` | 单次轮询周期 | `callback: MessageCallback` | `None` |
 | `_poll_group(group_name, talker, callback)` | 轮询单个群聊消息 | `group_name, talker, callback` | `None` |
 | `_handle_message(group_name, talker, standardized, callback)` | 处理单条消息(线程池) | `group_name, talker, standardized, callback` | `None` |
+| `_send_leave_warning(group_name, talker, member_name)` | 成员退群后向群里发送固定警告（`LEAVE_WARNING_TEMPLATE`） | `group_name, talker, member_name: str` | `None` |
 | `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
+| `_extract_member_from_links(content, resolve_name=None)` | 从系统消息的 `<link>` 块提取成员（优先 `adder`，其次 `names`/`username`/`member`；跳过 `from`/`revoke`） | `content: str, resolve_name: Callable \| None` | `tuple[str, str]` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_extract_join_member_info(content, resolve_name=None)` | 同 `_extract_join_member`，额外返回新成员 wxid | 同上 | `tuple[str, str]` |
-| `_is_recent_join(msg, now=None)` | 判断入群事件是否足够新（≤ `MAX_JOIN_AGE_SEC`=120s），避免重启时回放历史消息重复欢迎 | `msg: dict, now: float \| None` | `bool` |
+| `_extract_leave_member_info(content, resolve_name=None)` | 从退群系统消息（XML/纯文本）提取成员，额外返回 wxid；纯文本回退到 `helpers.extract_leave_member()` | 同上 | `tuple[str, str]` |
+| `_is_recent_event(msg, now=None)` | 判断系统事件是否足够新（≤ `MAX_JOIN_AGE_SEC`=120s），避免重启时回放历史消息；`_is_recent_join` 为向后兼容别名 | `msg: dict, now: float \| None` | `bool` |
 | `_mention_name_for(reply, standardized)` | 决定回复中要真实 @ 的成员：入群事件→新成员，其他回复→文本中包含 `@发送者` 时用发送者 | `reply: str, standardized: dict` | `str \| None` |
 | `_inactive_kick_enabled()` | 读取 `INACTIVE_KICK_ENABLED` 配置 | 无 | `bool` |
 | `_inactive_kick_minutes()` | 读取 `INACTIVE_KICK_MINUTES`（默认 10） | 无 | `int` |
@@ -448,6 +452,7 @@ todo_delete_keywords: list[str] = [
 | `normalize_msg_type(raw_type)` | 标准化消息类型码 | `raw_type: Any` | `int` |
 | `format_nontext_content(raw_type)` | 非文本消息占位符 | `raw_type: Any` | `str` |
 | `generate_message_id(*fields)` | 生成稳定消息 ID(MD5) | `*fields: Any` | `str` |
+| `extract_leave_member(content)` | 从纯文本退群系统消息 `"张三"退出了群聊` 提取成员名；拒绝 `$names$` 占位符 | `content: str` | `str` |
 | `DedupSet.__init__(max_size)` | 初始化去重集合 | `max_size: int` | `None` |
 | `DedupSet.add(item)` | 添加并自动裁剪 | `item: str` | `None` |
 
@@ -597,6 +602,17 @@ todo_delete_keywords: list[str] = [
 > 欢迎语中的 `@新成员` 会由 `window_controller.send_message_with_mention()`
 > 通过微信成员选择器插入为**真实 @**（会触发对方提醒），而不是粘贴普通
 > 文本。查找失败时自动回退为纯文本，消息不会丢失。
+>
+> **退群警告**（固定启用，无配置项）：`_standardize()` 对
+> `local_type=10000` 的系统消息调用 `_extract_leave_member_info()`，识别
+> `"$names$"退出了群聊`（XML，成员在 `<link name="names">`）和纯文本
+> `"张三"退出了群聊`。`_poll_group()` 去重后用 `_is_recent_event()` 忽略
+> 超过 120 秒的历史事件，再由线程池执行
+> `_send_leave_warning()`，向该群发送
+> `⚠️ 退群警告：张三 已退出群聊`。退群事件不会进入 `router` 回调；
+> 若退群者就是机器人本身则跳过（无法再发送）。macOS 的
+> `MacHybridBackend._message_from_source()` 用相同的
+> `helpers.extract_leave_member()` 识别，并在 `poll_once()` 中发送同一文案。
 >
 > **10 分钟未发言移出**（`INACTIVE_KICK_ENABLED=true`）：
 > 1. `_poll_group()` 对新入群事件调用 `InactiveKickTracker.note_join()`，
@@ -1153,6 +1169,7 @@ WcdbBackend.start(callback)
         │           _poll_group(group_name, talker, callback)
         │             ├── get_messages(talker, limit=50)
         │             ├── _standardize() → 统一消息格式
+        │             ├── [退群事件] _send_leave_warning() → 线程池提交
         │             └── _handle_message() → 线程池提交
         │
         └── time.sleep(poll_sec)
@@ -1185,6 +1202,10 @@ WcdbBackend.start(callback)
     "is_group": bool,       # 是否群聊(始终 True)
     "is_system_join": bool, # 是否"xxx 加入了群聊"事件
     "new_member_id": str,   # 新成员显示名（解析失败时可能是 wxid）
+    "new_member_wxid": str, # 新成员 wxid（仅 XML 事件有值）
+    "is_system_leave": bool, # 是否"xxx 退出了群聊"事件
+    "left_member_id": str,  # 退群成员显示名
+    "left_member_wxid": str, # 退群成员 wxid（仅 XML 事件有值）
 }
 ```
 

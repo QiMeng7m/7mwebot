@@ -5,9 +5,38 @@ These reduce duplication across WeChat backend implementations.
 
 import hashlib
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Leave-group warning ───────────────────────────────────────────
+
+# Sent to the group when a member quits.  Hard-coded (no config) by design.
+LEAVE_WARNING_TEMPLATE = "⚠️ 退群警告：{member} 已退出群聊"
+
+_LEAVE_PLAIN_RE = re.compile(r'"([^"]+)"\s*(?:已)?退出了?群聊')
+
+
+def extract_leave_member(content: str) -> str:
+    """Return the member name from a "退出了群聊" system message.
+
+    Handles plain-text forms such as ``"张三"退出了群聊``.  XML
+    ``sysmsgtemplate`` messages are handled by the WCDB backend, which
+    can also read the ``<link>`` blocks; this helper only needs to
+    recognise the quoted name.  Returns ``""`` when there is none.
+    """
+    text = str(content or "")
+    if "退出" not in text or "群聊" not in text:
+        return ""
+    match = _LEAVE_PLAIN_RE.search(text)
+    if not match:
+        return ""
+    name = match.group(1).strip()
+    # Unresolved template placeholders ($names$) are not member names.
+    if name.startswith("$") and name.endswith("$"):
+        return ""
+    return name
 
 # ── Message type mapping ──────────────────────────────────────────
 

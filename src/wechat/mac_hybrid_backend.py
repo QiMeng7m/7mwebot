@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .base import AbstractWeChatBackend, MessageCallback
+from .helpers import LEAVE_WARNING_TEMPLATE, extract_leave_member
 from .mac_ui_backend import MacUIAutomation
 from .mac_weflow_client import MacWeFlowClient
 
@@ -172,6 +173,20 @@ class MacHybridBackend(AbstractWeChatBackend):
             if self._bot_name and self._bot_name in msg["sender_name"]:
                 continue
 
+            if msg.get("is_system_leave"):
+                member = msg.get("left_member_id", "")
+                # If the bot itself was removed there is no one to warn.
+                if member and member != self._bot_name:
+                    logger.info(
+                        "Member left: %s in '%s'",
+                        member, str(msg.get("group_name") or "")[:20],
+                    )
+                    self.send_text(
+                        msg["chat_id"],
+                        LEAVE_WARNING_TEMPLATE.format(member=member),
+                    )
+                continue
+
             self._last_messages[msg["chat_id"]] = msg
             reply = callback(msg)
             if reply:
@@ -234,8 +249,12 @@ class MacHybridBackend(AbstractWeChatBackend):
                 new_member_id, str(raw.get("chat") or raw.get("username", ""))[:20],
             )
 
+        # "xxx 退出了群聊" → leave warning.
+        left_member_id = "" if is_system_join else extract_leave_member(content)
+        is_system_leave = bool(left_member_id)
+
         # Filter other system messages
-        if not is_system_join:
+        if not is_system_join and not is_system_leave:
             _FILTER_KEYWORDS = (
                 "修改群名", "退出了群聊",
                 "撤回了一条消息", "被移除", "开启了朋友验证",
@@ -293,6 +312,8 @@ class MacHybridBackend(AbstractWeChatBackend):
             "is_group": is_group,
             "is_system_join": is_system_join,
             "new_member_id": new_member_id,
+            "is_system_leave": is_system_leave,
+            "left_member_id": left_member_id,
         }
 
     def _should_monitor(self, msg: dict) -> bool:

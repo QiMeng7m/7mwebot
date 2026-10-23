@@ -21,7 +21,7 @@ from .base import AbstractWeChatBackend, MessageCallback
 from .inactive_kick import InactiveKickTracker
 from .wcdb_client import WcdbNativeClient
 from .window_controller import WeChatWindowController
-from .helpers import DedupSet
+from .helpers import DedupSet, LEAVE_WARNING_TEMPLATE, extract_leave_member
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +106,8 @@ def _mention_name_for(reply: str, standardized: dict) -> str | None:
     return None
 
 
-def _is_recent_join(msg: dict, now: float | None = None) -> bool:
-    """Return True when a join event is fresh enough to welcome."""
+def _is_recent_event(msg: dict, now: float | None = None) -> bool:
+    """Return True when a system event is fresh enough to act on."""
     try:
         ts = int(msg.get("timestamp") or 0)
     except (TypeError, ValueError):
@@ -117,28 +117,26 @@ def _is_recent_join(msg: dict, now: float | None = None) -> bool:
     return (now if now is not None else time.time()) - ts <= MAX_JOIN_AGE_SEC
 
 
+# Backwards-compatible name (the join path used this before leave events).
+_is_recent_join = _is_recent_event
+
+
 def _extract_join_member(content: str, resolve_name=None) -> str:
     """Return the new member's display name from a join system message."""
     name, _wxid = _extract_join_member_info(content, resolve_name=resolve_name)
     return name
 
 
-def _extract_join_member_info(
+def _extract_member_from_links(
     content: str, resolve_name=None,
 ) -> tuple[str, str]:
-    """Return ``(display_name, wxid)`` for a join system message.
+    """Return ``(display_name, wxid)`` from member ``<link>`` blocks.
 
-    Handles both plain-text messages ("张三"加入了群聊) and the XML
-    ``sysmsgtemplate`` used by WeChat 4.x, where the template embeds a
-    placeholder (``$names$``) and the real member sits in a ``<link>``
-    block such as ``<link name="names"><memberlist><member>...``.  Links
+    WeChat 4.x templates keep placeholders like ``$names$`` in
+    ``<template>``; the real values live in ``<link>`` blocks.  Links
     describing the inviter/revoker (``from``/``revoke``) are ignored.
-
-    The wxid is empty for plain-text messages (it is only present in XML).
+    The wxid is empty when no ``<member>`` entry is present.
     """
-    if not content or "加入" not in content or "群聊" not in content:
-        return "", ""
-
     def _clean(value: str) -> str:
         value = str(value or "").strip()
         return "" if _PLACEHOLDER_RE.match(value) else value
@@ -189,6 +187,31 @@ def _extract_join_member_info(
         return preferred[0]
     if others:
         return others[0]
+    return "", ""
+
+
+def _extract_join_member_info(
+    content: str, resolve_name=None,
+) -> tuple[str, str]:
+    """Return ``(display_name, wxid)`` for a join system message.
+
+    Handles both plain-text messages ("张三"加入了群聊) and the XML
+    ``sysmsgtemplate`` used by WeChat 4.x, where the template embeds a
+    placeholder (``$names$``) and the real member sits in a ``<link>``
+    block such as ``<link name="names"><memberlist><member>...``.
+
+    The wxid is empty for plain-text messages (it is only present in XML).
+    """
+    if not content or "加入" not in content or "群聊" not in content:
+        return "", ""
+
+    member, wxid = _extract_member_from_links(content, resolve_name)
+    if member:
+        return member, wxid
+
+    def _clean(value: str) -> str:
+        value = str(value or "").strip()
+        return "" if _PLACEHOLDER_RE.match(value) else value
 
     match = _INVITE_JOIN_RE.search(content)
     if match:
@@ -201,6 +224,25 @@ def _extract_join_member_info(
         return _clean(match.group(1)), ""
 
     return "", ""
+
+
+def _extract_leave_member_info(
+    content: str, resolve_name=None,
+) -> tuple[str, str]:
+    """Return ``(display_name, wxid)`` for a leave system message.
+
+    WeChat 4.x sends ``"$names$"退出了群聊`` with the real member in a
+    ``<link name="names">`` block; older/plain messages quote the name
+    directly.  The wxid is empty unless it came from an XML link.
+    """
+    if not content or "退出" not in content or "群聊" not in content:
+        return "", ""
+
+    member, wxid = _extract_member_from_links(content, resolve_name)
+    if member:
+        return member, wxid
+
+    return extract_leave_member(content), ""
 
 
 class WcdbBackend(AbstractWeChatBackend):
@@ -684,7 +726,7 @@ class WcdbBackend(AbstractWeChatBackend):
             # Log only for newly seen messages — _standardize runs on every
             # poll for the same rows, so logging there flooded the console.
             if standardized.get("is_system_join"):
-                if not _is_recent_join(standardized):
+                if not _is_recent_event(standardized):
                     # Startup replay of an old join event — don't welcome
                     # someone minutes/hours after they joined.
                     logger.debug(
@@ -710,6 +752,31 @@ class WcdbBackend(AbstractWeChatBackend):
                             "Join event for %s has no wxid — cannot enforce "
                             "inactive kick", standardized.get("new_member_id"),
                         )
+            elif standardized.get("is_system_leave"):
+                if not _is_recent_event(standardized):
+                    # Startup replay of an old leave event — stay quiet.
+                    logger.debug(
+                        "Skipping stale leave event: %s in '%s' (ts=%s)",
+                        standardized.get("left_member_id"), group_name,
+                        standardized.get("timestamp"),
+                    )
+                    continue
+                left_member = standardized.get("left_member_id", "")
+                logger.info(
+                    "Member left: %s in '%s'", left_member, group_name,
+                )
+                # If the bot itself was removed there is no one to warn.
+                if left_member and not self._is_bot_sender(left_member):
+                    if self._pool:
+                        self._pool.submit(
+                            self._send_leave_warning,
+                            group_name, talker, left_member,
+                        )
+                    else:
+                        self._send_leave_warning(
+                            group_name, talker, left_member,
+                        )
+                continue
             elif self._kick_tracker is not None:
                 self._kick_tracker.note_activity(
                     talker, standardized.get("sender_id", ""),
@@ -856,6 +923,29 @@ class WcdbBackend(AbstractWeChatBackend):
                 group_name, standardized.get("sender_name", "?"),
             )
 
+    def _send_leave_warning(self, group_name: str, talker: str,
+                            member_name: str) -> None:
+        """Announce that *member_name* left the group (pool worker)."""
+        text = LEAVE_WARNING_TEMPLATE.format(member=member_name)
+        try:
+            with self._window_lock:
+                ok = self._send_and_confirm(group_name, talker, text)
+            if ok:
+                logger.info(
+                    "Leave warning sent: %s left '%s'",
+                    member_name, group_name[:20],
+                )
+            else:
+                logger.error(
+                    "Leave warning FAILED: %s in '%s' — check WeChat window",
+                    member_name, group_name[:20],
+                )
+        except Exception:
+            logger.exception(
+                "Leave warning crashed (group='%s', member='%s')",
+                group_name, member_name,
+            )
+
     # ── Voice recognition helpers ────────────────────────────────────
 
     def _get_voice(self):
@@ -936,14 +1026,18 @@ class WcdbBackend(AbstractWeChatBackend):
         new_member_id: str = ""
         new_member_wxid: str = ""
         is_system_join: bool = False
+        left_member_id: str = ""
+        left_member_wxid: str = ""
+        is_system_leave: bool = False
         welcome_on = (
             self._voice_config is not None
             and getattr(self._voice_config, "welcome_enabled", False)
         )
         kick_on = self._inactive_kick_enabled()
+        resolve_nickname = getattr(self._client, "resolve_nickname", None)
         join_member, join_wxid = _extract_join_member_info(
             content,
-            resolve_name=getattr(self._client, "resolve_nickname", None),
+            resolve_name=resolve_nickname,
         )
         if join_member:
             if welcome_on or kick_on:
@@ -965,8 +1059,21 @@ class WcdbBackend(AbstractWeChatBackend):
             )
             return None
 
-        # Filter other system messages (but NOT join events)
-        if not is_system_join:
+        # Leave events are always announced with a hard-coded warning.
+        # Only inspect real system messages so ordinary chat that happens
+        # to mention "退出了群聊" is never mistaken for an event.
+        if local_type == 10000 and not is_system_join:
+            leave_member, leave_wxid = _extract_leave_member_info(
+                content,
+                resolve_name=resolve_nickname,
+            )
+            if leave_member:
+                is_system_leave = True
+                left_member_id = leave_member
+                left_member_wxid = leave_wxid
+
+        # Filter other system messages (but NOT join/leave events)
+        if not is_system_join and not is_system_leave:
             _FILTER_KEYWORDS = (
                 "修改群名", "退出了群聊",
                 "撤回了一条消息", "被移除", "开启了朋友验证",
@@ -1025,6 +1132,8 @@ class WcdbBackend(AbstractWeChatBackend):
         # volatile WCDB server_id/local_id causing dedup misses.
         if is_system_join:
             raw_id = f"join|{talker}|{new_member_id}|{content}|{ts}"
+        elif is_system_leave:
+            raw_id = f"leave|{talker}|{left_member_id}|{content}|{ts}"
         else:
             raw_id = (
                 str(msg.get("server_id", ""))
@@ -1048,6 +1157,9 @@ class WcdbBackend(AbstractWeChatBackend):
             "is_system_join": is_system_join,
             "new_member_id": new_member_id,
             "new_member_wxid": new_member_wxid,
+            "is_system_leave": is_system_leave,
+            "left_member_id": left_member_id,
+            "left_member_wxid": left_member_wxid,
         }
 
     def _trim_dedup(self) -> None:
