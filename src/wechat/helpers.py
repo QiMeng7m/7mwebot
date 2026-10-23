@@ -12,31 +12,65 @@ logger = logging.getLogger(__name__)
 
 # ── Leave-group warning ───────────────────────────────────────────
 
-# Sent to the group when a member quits.  Hard-coded (no config) by design.
+# Sent to the group when a member leaves or is removed.  Hard-coded (no
+# config) by design.
 LEAVE_WARNING_TEMPLATE = "⚠️ 退群警告：{member} 已退出群聊"
+REMOVE_WARNING_TEMPLATE = "⚠️ 退群警告：{member} 已被移出群聊"
 
-_LEAVE_PLAIN_RE = re.compile(r'"([^"]+)"\s*(?:已)?退出了?群聊')
+_LEAVE_PLAIN_RE = re.compile(
+    r'["“]([^"“”]+)["”]\s*(?:已)?退出了?群聊'
+)
+# "张三"被移出了群聊 / 你将"张三"移出了群聊 / "李四"将"张三"移出了群聊
+# / "张三"被群主移出了群聊（兼容中英文引号）
+_REMOVE_PLAIN_RE = re.compile(
+    r'(?:["“][^"“”]+["”]\s*将\s*)?'
+    r'["“]([^"“”]+)["”]\s*(?:已)?(?:被[^"“”]{0,6})?移出了?群聊'
+)
 
 
-def extract_leave_member(content: str) -> str:
-    """Return the member name from a "退出了群聊" system message.
-
-    Handles plain-text forms such as ``"张三"退出了群聊``.  XML
-    ``sysmsgtemplate`` messages are handled by the WCDB backend, which
-    can also read the ``<link>`` blocks; this helper only needs to
-    recognise the quoted name.  Returns ``""`` when there is none.
-    """
-    text = str(content or "")
-    if "退出" not in text or "群聊" not in text:
-        return ""
-    match = _LEAVE_PLAIN_RE.search(text)
-    if not match:
-        return ""
-    name = match.group(1).strip()
+def _clean_member_name(name: str) -> str:
+    name = str(name or "").strip()
     # Unresolved template placeholders ($names$) are not member names.
     if name.startswith("$") and name.endswith("$"):
         return ""
     return name
+
+
+def extract_departure_member(content: str) -> tuple[str, str]:
+    """Return ``(member_name, kind)`` for a departure system message.
+
+    *kind* is ``"leave"`` for ``"张三"退出了群聊`` and ``"remove"`` for
+    ``"张三"被移出了群聊`` / ``你将"张三"移出了群聊``.  Returns
+    ``("", "")`` when the message is neither.  XML ``sysmsgtemplate``
+    messages are handled by the WCDB backend, which can also read the
+    ``<link>`` blocks; this helper only needs the quoted name.
+    """
+    text = str(content or "")
+    if "群聊" not in text:
+        return "", ""
+    if "退出" in text:
+        match = _LEAVE_PLAIN_RE.search(text)
+        kind = "leave"
+    elif "移出" in text:
+        match = _REMOVE_PLAIN_RE.search(text)
+        kind = "remove"
+    else:
+        return "", ""
+    if not match:
+        return "", ""
+    return _clean_member_name(match.group(1)), kind
+
+
+def extract_leave_member(content: str) -> str:
+    """Return the member name from a voluntary "退出了群聊" message."""
+    name, kind = extract_departure_member(content)
+    return name if kind == "leave" else ""
+
+
+def extract_removed_member(content: str) -> str:
+    """Return the member name from a "被移出了群聊" message."""
+    name, kind = extract_departure_member(content)
+    return name if kind == "remove" else ""
 
 # ── Message type mapping ──────────────────────────────────────────
 

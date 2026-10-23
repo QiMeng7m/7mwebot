@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from .base import AbstractWeChatBackend, MessageCallback
-from .helpers import LEAVE_WARNING_TEMPLATE, extract_leave_member
+from .helpers import (
+    LEAVE_WARNING_TEMPLATE,
+    REMOVE_WARNING_TEMPLATE,
+    extract_departure_member,
+)
 from .mac_ui_backend import MacUIAutomation
 from .mac_weflow_client import MacWeFlowClient
 
@@ -175,15 +179,21 @@ class MacHybridBackend(AbstractWeChatBackend):
 
             if msg.get("is_system_leave"):
                 member = msg.get("left_member_id", "")
+                kind = msg.get("leave_kind", "leave")
                 # If the bot itself was removed there is no one to warn.
                 if member and member != self._bot_name:
                     logger.info(
-                        "Member left: %s in '%s'",
+                        "Member %s: %s in '%s'",
+                        "removed" if kind == "remove" else "left",
                         member, str(msg.get("group_name") or "")[:20],
+                    )
+                    template = (
+                        REMOVE_WARNING_TEMPLATE if kind == "remove"
+                        else LEAVE_WARNING_TEMPLATE
                     )
                     self.send_text(
                         msg["chat_id"],
-                        LEAVE_WARNING_TEMPLATE.format(member=member),
+                        template.format(member=member),
                     )
                 continue
 
@@ -249,8 +259,12 @@ class MacHybridBackend(AbstractWeChatBackend):
                 new_member_id, str(raw.get("chat") or raw.get("username", ""))[:20],
             )
 
-        # "xxx 退出了群聊" → leave warning.
-        left_member_id = "" if is_system_join else extract_leave_member(content)
+        # "xxx 退出了群聊" / "xxx 被移出了群聊" → departure warning.
+        departure_member, leave_kind = (
+            ("", "") if is_system_join
+            else extract_departure_member(content)
+        )
+        left_member_id = departure_member
         is_system_leave = bool(left_member_id)
 
         # Filter other system messages
@@ -314,6 +328,7 @@ class MacHybridBackend(AbstractWeChatBackend):
             "new_member_id": new_member_id,
             "is_system_leave": is_system_leave,
             "left_member_id": left_member_id,
+            "leave_kind": leave_kind,
         }
 
     def _should_monitor(self, msg: dict) -> bool:

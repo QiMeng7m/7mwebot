@@ -21,7 +21,12 @@ from .base import AbstractWeChatBackend, MessageCallback
 from .inactive_kick import InactiveKickTracker
 from .wcdb_client import WcdbNativeClient
 from .window_controller import WeChatWindowController
-from .helpers import DedupSet, LEAVE_WARNING_TEMPLATE, extract_leave_member
+from .helpers import (
+    DedupSet,
+    LEAVE_WARNING_TEMPLATE,
+    REMOVE_WARNING_TEMPLATE,
+    extract_departure_member,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,23 +231,42 @@ def _extract_join_member_info(
     return "", ""
 
 
-def _extract_leave_member_info(
+def _extract_departure_info(
     content: str, resolve_name=None,
-) -> tuple[str, str]:
-    """Return ``(display_name, wxid)`` for a leave system message.
+) -> tuple[str, str, str]:
+    """Return ``(display_name, wxid, kind)`` for a departure message.
 
-    WeChat 4.x sends ``"$names$"退出了群聊`` with the real member in a
+    *kind* is ``"leave"`` for ``"xxx"退出了群聊`` and ``"remove"`` for
+    ``"xxx"被移出了群聊`` / ``你将"xxx"移出了群聊``.  WeChat 4.x sends
+    these as ``sysmsgtemplate`` XML with the real member in a
     ``<link name="names">`` block; older/plain messages quote the name
     directly.  The wxid is empty unless it came from an XML link.
     """
-    if not content or "退出" not in content or "群聊" not in content:
-        return "", ""
+    if not content or "群聊" not in content:
+        return "", "", ""
+    if "退出" in content:
+        kind = "leave"
+    elif "移出" in content:
+        kind = "remove"
+    else:
+        return "", "", ""
 
     member, wxid = _extract_member_from_links(content, resolve_name)
     if member:
-        return member, wxid
+        return member, wxid, kind
 
-    return extract_leave_member(content), ""
+    plain_member, plain_kind = extract_departure_member(content)
+    return plain_member, "", plain_kind
+
+
+def _extract_leave_member_info(
+    content: str, resolve_name=None,
+) -> tuple[str, str]:
+    """Return ``(display_name, wxid)`` for a voluntary leave message."""
+    member, wxid, kind = _extract_departure_info(content, resolve_name)
+    if kind != "leave":
+        return "", ""
+    return member, wxid
 
 
 class WcdbBackend(AbstractWeChatBackend):
@@ -762,19 +786,22 @@ class WcdbBackend(AbstractWeChatBackend):
                     )
                     continue
                 left_member = standardized.get("left_member_id", "")
+                leave_kind = standardized.get("leave_kind", "leave")
                 logger.info(
-                    "Member left: %s in '%s'", left_member, group_name,
+                    "Member %s: %s in '%s'",
+                    "removed" if leave_kind == "remove" else "left",
+                    left_member, group_name,
                 )
                 # If the bot itself was removed there is no one to warn.
                 if left_member and not self._is_bot_sender(left_member):
                     if self._pool:
                         self._pool.submit(
                             self._send_leave_warning,
-                            group_name, talker, left_member,
+                            group_name, talker, left_member, leave_kind,
                         )
                     else:
                         self._send_leave_warning(
-                            group_name, talker, left_member,
+                            group_name, talker, left_member, leave_kind,
                         )
                 continue
             elif self._kick_tracker is not None:
@@ -924,25 +951,30 @@ class WcdbBackend(AbstractWeChatBackend):
             )
 
     def _send_leave_warning(self, group_name: str, talker: str,
-                            member_name: str) -> None:
-        """Announce that *member_name* left the group (pool worker)."""
-        text = LEAVE_WARNING_TEMPLATE.format(member=member_name)
+                            member_name: str, kind: str = "leave") -> None:
+        """Announce that *member_name* left or was removed (pool worker)."""
+        template = (
+            REMOVE_WARNING_TEMPLATE if kind == "remove"
+            else LEAVE_WARNING_TEMPLATE
+        )
+        text = template.format(member=member_name)
         try:
             with self._window_lock:
                 ok = self._send_and_confirm(group_name, talker, text)
             if ok:
                 logger.info(
-                    "Leave warning sent: %s left '%s'",
-                    member_name, group_name[:20],
+                    "Departure warning sent: %s (%s) in '%s'",
+                    member_name, kind, group_name[:20],
                 )
             else:
                 logger.error(
-                    "Leave warning FAILED: %s in '%s' — check WeChat window",
-                    member_name, group_name[:20],
+                    "Departure warning FAILED: %s (%s) in '%s' — "
+                    "check WeChat window",
+                    member_name, kind, group_name[:20],
                 )
         except Exception:
             logger.exception(
-                "Leave warning crashed (group='%s', member='%s')",
+                "Departure warning crashed (group='%s', member='%s')",
                 group_name, member_name,
             )
 
@@ -1029,6 +1061,7 @@ class WcdbBackend(AbstractWeChatBackend):
         left_member_id: str = ""
         left_member_wxid: str = ""
         is_system_leave: bool = False
+        leave_kind: str = ""
         welcome_on = (
             self._voice_config is not None
             and getattr(self._voice_config, "welcome_enabled", False)
@@ -1059,18 +1092,29 @@ class WcdbBackend(AbstractWeChatBackend):
             )
             return None
 
-        # Leave events are always announced with a hard-coded warning.
-        # Only inspect real system messages so ordinary chat that happens
-        # to mention "退出了群聊" is never mistaken for an event.
+        # Leave/removal events are always announced with a hard-coded
+        # warning.  Only inspect real system messages so ordinary chat
+        # that happens to mention "退出了群聊" is never mistaken for an
+        # event.
         if local_type == 10000 and not is_system_join:
-            leave_member, leave_wxid = _extract_leave_member_info(
-                content,
-                resolve_name=resolve_nickname,
+            departure_member, departure_wxid, departure_kind = (
+                _extract_departure_info(
+                    content,
+                    resolve_name=resolve_nickname,
+                )
             )
-            if leave_member:
+            if departure_member:
                 is_system_leave = True
-                left_member_id = leave_member
-                left_member_wxid = leave_wxid
+                left_member_id = departure_member
+                left_member_wxid = departure_wxid
+                leave_kind = departure_kind
+            elif "移出" in content or "退出" in content:
+                # Keep the raw text at DEBUG so an unexpected template can
+                # be diagnosed without flooding the normal log level.
+                logger.debug(
+                    "Departure-like system message not parsed: %s",
+                    content[:200].replace("\n", " "),
+                )
 
         # Filter other system messages (but NOT join/leave events)
         if not is_system_join and not is_system_leave:
@@ -1160,6 +1204,7 @@ class WcdbBackend(AbstractWeChatBackend):
             "is_system_leave": is_system_leave,
             "left_member_id": left_member_id,
             "left_member_wxid": left_member_wxid,
+            "leave_kind": leave_kind,
         }
 
     def _trim_dedup(self) -> None:

@@ -5,7 +5,13 @@ import time
 import unittest
 
 from src.config import BotConfig
-from src.wechat.helpers import LEAVE_WARNING_TEMPLATE, extract_leave_member
+from src.wechat.helpers import (
+    LEAVE_WARNING_TEMPLATE,
+    REMOVE_WARNING_TEMPLATE,
+    extract_departure_member,
+    extract_leave_member,
+    extract_removed_member,
+)
 from src.wechat.wcdb_backend import (
     WcdbBackend,
     _extract_leave_member_info,
@@ -33,13 +39,57 @@ SAMPLE_LEAVE_XML = """46074645339@chatroom:
 </sysmsg>"""
 
 
+SAMPLE_REMOVE_XML = """46074645339@chatroom:
+<sysmsg type="sysmsgtemplate">
+\t<sysmsgtemplate>
+\t\t<content_template type="tmpl_type_profile">
+\t\t\t<template><![CDATA["$names$"被移出了群聊]]></template>
+\t\t\t<link_list>
+\t\t\t\t<link name="names" type="link_profile">
+\t\t\t\t\t<memberlist>
+\t\t\t\t\t\t<member>
+\t\t\t\t\t\t\t<username><![CDATA[wxid_remove456]]></username>
+\t\t\t\t\t\t\t<nickname><![CDATA[王五]]></nickname>
+\t\t\t\t\t\t</member>
+\t\t\t\t\t</memberlist>
+\t\t\t\t</link>
+\t\t\t</link_list>
+\t\t</content_template>
+\t</sysmsgtemplate>
+</sysmsg>"""
+
+
 class ExtractLeaveMemberTests(unittest.TestCase):
     def test_plain_text_leave(self):
         self.assertEqual(extract_leave_member('"张三"退出了群聊'), "张三")
         self.assertEqual(extract_leave_member('"张三"退出群聊'), "张三")
 
+    def test_plain_text_removal(self):
+        self.assertEqual(extract_removed_member('"张三"被移出了群聊'), "张三")
+        self.assertEqual(extract_removed_member('你将"张三"移出了群聊'), "张三")
+        self.assertEqual(
+            extract_removed_member('"李四"将"张三"移出了群聊'), "张三",
+        )
+        self.assertEqual(
+            extract_removed_member('"张三"被群主移出了群聊'), "张三",
+        )
+        # WeChat may use Chinese curly quotes.
+        self.assertEqual(extract_removed_member('“张三”被移出了群聊'), "张三")
+        self.assertEqual(extract_removed_member('你将“张三”移出了群聊'), "张三")
+        self.assertEqual(extract_leave_member('“张三”退出了群聊'), "张三")
+
+    def test_departure_kind(self):
+        self.assertEqual(
+            extract_departure_member('"张三"退出了群聊'), ("张三", "leave"),
+        )
+        self.assertEqual(
+            extract_departure_member('"张三"被移出了群聊'), ("张三", "remove"),
+        )
+        self.assertEqual(extract_departure_member('"张三"加入了群聊'), ("", ""))
+
     def test_placeholder_is_rejected(self):
         self.assertEqual(extract_leave_member('"$names$"退出了群聊'), "")
+        self.assertEqual(extract_removed_member('"$names$"被移出了群聊'), "")
 
     def test_non_leave_message(self):
         self.assertEqual(extract_leave_member('"张三"加入了群聊'), "")
@@ -63,11 +113,18 @@ class ExtractLeaveMemberTests(unittest.TestCase):
             LEAVE_WARNING_TEMPLATE.format(member="张三"),
             "⚠️ 退群警告：张三 已退出群聊",
         )
+        self.assertEqual(
+            REMOVE_WARNING_TEMPLATE.format(member="王五"),
+            "⚠️ 退群警告：王五 已被移出群聊",
+        )
 
 
 class _FakeClient:
     def resolve_nickname(self, wxid):
-        return {"wxid_leave123": "张三"}.get(wxid, wxid)
+        return {
+            "wxid_leave123": "张三",
+            "wxid_remove456": "王五",
+        }.get(wxid, wxid)
 
 
 def _leave_msg(content: str, local_type: int = 10000) -> dict:
@@ -101,7 +158,30 @@ class StandardizeLeaveTests(unittest.TestCase):
         self.assertFalse(result["is_system_join"])
         self.assertEqual(result["left_member_id"], "张三")
         self.assertEqual(result["left_member_wxid"], "wxid_leave123")
+        self.assertEqual(result["leave_kind"], "leave")
         self.assertIn("退出了群聊", result["content"])
+
+    def test_removal_xml_is_detected(self):
+        result = _backend()._standardize(
+            _leave_msg(SAMPLE_REMOVE_XML), "想亲想爱一家人",
+            "46074645339@chatroom",
+        )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["is_system_leave"])
+        self.assertFalse(result["is_system_join"])
+        self.assertEqual(result["left_member_id"], "王五")
+        self.assertEqual(result["left_member_wxid"], "wxid_remove456")
+        self.assertEqual(result["leave_kind"], "remove")
+
+    def test_plain_removal_is_detected(self):
+        result = _backend()._standardize(
+            _leave_msg('你将"王五"移出了群聊'), "想亲想爱一家人",
+            "46074645339@chatroom",
+        )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["is_system_leave"])
+        self.assertEqual(result["left_member_id"], "王五")
+        self.assertEqual(result["leave_kind"], "remove")
 
     def test_leave_is_detected_even_when_welcome_disabled(self):
         result = _backend(welcome_enabled=False)._standardize(
@@ -144,19 +224,33 @@ class _FakeWindow:
 
 
 class SendLeaveWarningTests(unittest.TestCase):
-    def test_sends_hardcoded_warning(self):
+    def _backend_with_window(self):
         backend = _backend()
         backend._window = _FakeWindow()
         backend._window_lock = threading.Lock()
+        return backend
+
+    def test_sends_hardcoded_leave_warning(self):
+        backend = self._backend_with_window()
         backend._send_leave_warning("想亲想爱一家人", "1@chatroom", "张三")
         self.assertEqual(
             backend._window.calls,
             [("想亲想爱一家人", "⚠️ 退群警告：张三 已退出群聊", None)],
         )
 
+    def test_sends_hardcoded_remove_warning(self):
+        backend = self._backend_with_window()
+        backend._send_leave_warning(
+            "想亲想爱一家人", "1@chatroom", "王五", "remove",
+        )
+        self.assertEqual(
+            backend._window.calls,
+            [("想亲想爱一家人", "⚠️ 退群警告：王五 已被移出群聊", None)],
+        )
+
 
 class PollLeaveDispatchTests(unittest.TestCase):
-    def test_poll_group_warns_and_skips_callback(self):
+    def _run_poll(self, content):
         backend = _backend()
         backend._running = True
         backend._client_lock = threading.Lock()
@@ -165,24 +259,37 @@ class PollLeaveDispatchTests(unittest.TestCase):
         backend._kick_tracker = None
         backend._client = type(
             "Client", (), {
-                "get_messages": lambda self, **kw: [
-                    _leave_msg('"张三"退出了群聊'),
-                ],
+                "get_messages": lambda self, **kw: [_leave_msg(content)],
                 "resolve_nickname": lambda self, wxid: {
                     "wxid_leave123": "张三",
+                    "wxid_remove456": "王五",
                 }.get(wxid, wxid),
             },
         )()
         warnings = []
         backend._send_leave_warning = (
-            lambda group, talker, name: warnings.append((group, talker, name))
+            lambda group, talker, name, kind="leave":
+            warnings.append((group, talker, name, kind))
         )
         seen = []
         backend._poll_group(
             "想亲想爱一家人", "1@chatroom", lambda msg: seen.append(msg),
         )
+        return warnings, seen
+
+    def test_poll_group_warns_and_skips_callback(self):
+        warnings, seen = self._run_poll('"张三"退出了群聊')
         self.assertEqual(
-            warnings, [("想亲想爱一家人", "1@chatroom", "张三")],
+            warnings,
+            [("想亲想爱一家人", "1@chatroom", "张三", "leave")],
+        )
+        self.assertEqual(seen, [])
+
+    def test_poll_group_warns_on_removal(self):
+        warnings, seen = self._run_poll('"王五"被移出了群聊')
+        self.assertEqual(
+            warnings,
+            [("想亲想爱一家人", "1@chatroom", "王五", "remove")],
         )
         self.assertEqual(seen, [])
 
