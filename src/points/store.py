@@ -753,14 +753,18 @@ class PointStore:
 
     # ── Fishing ───────────────────────────────────────────────────
 
-    def fishing_attempts(self, chat_id: str, sender_id: str,
-                         day: str) -> int:
-        """Casts made by one member on one local day (misses included)."""
+    def fishing_attempts_since(self, chat_id: str, sender_id: str,
+                               since_ts: int) -> int:
+        """Casts made by one member at or after *since_ts* (misses included).
+
+        Used for the per-hour attempt limit: pass the start of the current
+        local hour so the counter resets when the clock hour changes.
+        """
         with self._lock:
             row = self.conn.execute(
                 """SELECT COUNT(*) FROM fishing_casts
-                   WHERE chat_id = ? AND sender_id = ? AND day = ?""",
-                (str(chat_id), str(sender_id), str(day)),
+                   WHERE chat_id = ? AND sender_id = ? AND created_at >= ?""",
+                (str(chat_id), str(sender_id), int(since_ts)),
             ).fetchone()
         return int(row[0]) if row else 0
 

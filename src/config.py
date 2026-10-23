@@ -330,7 +330,8 @@ class BotConfig:
     fishing_enabled: bool = True
     fishing_groups: list[str] = field(default_factory=lambda: ["*"])
     fishing_catalog_path: str = "data/fishing.json"
-    fishing_daily_attempts: int = 30
+    # Max casts per member per local clock hour (resets every hour).
+    fishing_hourly_attempts: int = 30
     # Max balance from fishing per member per day (0 = unlimited).
     fishing_daily_cap: int = 120
     fishing_cooldown_sec: int = 5
@@ -541,11 +542,11 @@ def _validate_config(kwargs: dict) -> None:
             f"got {duel_daily_attempts}"
         )
 
-    fishing_daily_attempts = kwargs.get("fishing_daily_attempts", 30)
-    if not (1 <= fishing_daily_attempts <= 200):
+    fishing_hourly_attempts = kwargs.get("fishing_hourly_attempts", 30)
+    if not (1 <= fishing_hourly_attempts <= 200):
         errors.append(
-            "FISHING_DAILY_ATTEMPTS must be between 1 and 200, "
-            f"got {fishing_daily_attempts}"
+            "FISHING_HOURLY_ATTEMPTS must be between 1 and 200, "
+            f"got {fishing_hourly_attempts}"
         )
 
     fishing_daily_cap = kwargs.get("fishing_daily_cap", 120)
@@ -721,7 +722,7 @@ def load_config() -> BotConfig:
         "fishing_enabled": os.getenv("FISHING_ENABLED", "true").strip().lower() == "true",
         "fishing_groups": [g.strip() for g in os.getenv("FISHING_GROUPS", "*").split(",") if g.strip()],
         "fishing_catalog_path": os.getenv("FISHING_CATALOG_PATH", "data/fishing.json").strip(),
-        "fishing_daily_attempts": _safe_int(os.getenv("FISHING_DAILY_ATTEMPTS", "30"), 30, "FISHING_DAILY_ATTEMPTS"),
+        "fishing_hourly_attempts": _safe_int(os.getenv("FISHING_HOURLY_ATTEMPTS", "30"), 30, "FISHING_HOURLY_ATTEMPTS"),
         "fishing_daily_cap": _safe_int(os.getenv("FISHING_DAILY_CAP", "120"), 120, "FISHING_DAILY_CAP"),
         "fishing_cooldown_sec": _safe_int(os.getenv("FISHING_COOLDOWN_SEC", "5"), 5, "FISHING_COOLDOWN_SEC"),
         "fishing_max_batch": _safe_int(os.getenv("FISHING_MAX_BATCH", "10"), 10, "FISHING_MAX_BATCH"),

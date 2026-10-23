@@ -2156,8 +2156,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                         "recent": store.fishing_recent(
                             chat_id, limit=limit),
                         "limits": {
-                            "daily_attempts": getattr(
-                                config, "fishing_daily_attempts", 30),
+                            "hourly_attempts": getattr(
+                                config, "fishing_hourly_attempts", 30),
                             "daily_cap": getattr(
                                 config, "fishing_daily_cap", 120),
                             "cooldown_sec": getattr(

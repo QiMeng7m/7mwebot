@@ -947,7 +947,7 @@ class PointHandler:
 
         footer = (
             f"本次入账 +{result.total_value} · 余额 {result.balance_after}"
-            f" · 今日 {result.attempts_used}/{result.attempts_limit} 次"
+            f" · 本小时 {result.attempts_used}/{result.attempts_limit} 次"
         )
         if result.daily_cap:
             footer += f" · 收益 {result.earned_today}/{result.daily_cap}"
@@ -1158,9 +1158,14 @@ class PointHandler:
 
         lines = [f"{sender_name} 的鱼篓"]
         summary = (
-            f"今日 {stats['attempts']}/{stats['attempts_limit']} 次"
+            f"本小时 {stats['attempts']}/{stats['attempts_limit']} 次"
             f" · 余额 {stats['balance']}"
         )
+        reset_in = int(stats.get("attempts_reset_in", 0))
+        if reset_in:
+            summary += (
+                f" · {max(1, (reset_in + 59) // 60)} 分钟后重置"
+            )
         if stats["daily_cap"]:
             summary += (
                 f" · 今日收益 {stats['earned_today']}/{stats['daily_cap']}"

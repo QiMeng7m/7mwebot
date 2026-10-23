@@ -21,7 +21,7 @@ import time
 from .fishing_catalog import RARITY_BONUS_MULT, FishingCatalog
 from .models import FishCatch, FishingResult
 from .store import PointStore
-from .util import is_group_enabled, local_day
+from .util import is_group_enabled, local_day, local_hour_start
 
 logger = logging.getLogger(__name__)
 
@@ -170,27 +170,34 @@ class FishingService:
         message_id = str(msg.get("message_id") or "")
         now = int(time.time()) if now_ts is None else int(now_ts)
         day = local_day(now)
+        hour_start = local_hour_start(now)
 
         if not self.is_enabled(msg):
             return FishingResult(False, "disabled", "钓鱼功能未开启。")
         if not chat_id or not sender_id:
             return FishingResult(False, "invalid", "钓鱼失败，请稍后再试。")
 
-        limit = max(1, int(getattr(cfg, "fishing_daily_attempts", 30)))
+        limit = max(1, int(getattr(cfg, "fishing_hourly_attempts", 30)))
         cap = max(0, int(getattr(cfg, "fishing_daily_cap", 120)))
         cooldown = max(0, int(getattr(cfg, "fishing_cooldown_sec", 5)))
         max_batch = max(1, int(getattr(cfg, "fishing_max_batch", 10)))
         base_miss = float(getattr(cfg, "fishing_miss_chance", 0.15))
 
-        attempts = self._store.fishing_attempts(chat_id, sender_id, day)
+        attempts = self._store.fishing_attempts_since(
+            chat_id, sender_id, hour_start)
         earned = self._store.fishing_earned_on_day(chat_id, sender_id, day)
 
         if attempts >= limit:
+            reset_in = max(0, hour_start + 3600 - now)
+            reset_at = time.strftime(
+                "%H:%M", time.localtime(hour_start + 3600))
+            wait_minutes = max(1, (reset_in + 59) // 60)
             return FishingResult(
                 False, "attempts",
-                f"今天的钓鱼次数已用完（{limit} 次），明天再来。",
+                f"本小时的钓鱼次数已用完（{limit} 次），"
+                f"{wait_minutes} 分钟后（{reset_at}）重置。",
                 attempts_used=attempts, attempts_limit=limit,
-                earned_today=earned, daily_cap=cap,
+                earned_today=earned, daily_cap=cap, wait_seconds=reset_in,
             )
         if cap > 0 and earned >= cap:
             return FishingResult(
@@ -301,8 +308,8 @@ class FishingService:
             casts=cast_rows,
             total_value=total_value,
             balance_after=self._store.balance_of(chat_id, sender_id),
-            attempts_used=self._store.fishing_attempts(
-                chat_id, sender_id, day),
+            attempts_used=self._store.fishing_attempts_since(
+                chat_id, sender_id, hour_start),
             attempts_limit=limit,
             earned_today=self._store.fishing_earned_on_day(
                 chat_id, sender_id, day),
@@ -317,8 +324,9 @@ class FishingService:
               now_ts: int | None = None) -> dict:
         now = int(time.time()) if now_ts is None else int(now_ts)
         day = local_day(now)
+        hour_start = local_hour_start(now)
         limit = max(1, int(getattr(
-            self._config, "fishing_daily_attempts", 30)))
+            self._config, "fishing_hourly_attempts", 30)))
         cap = max(0, int(getattr(self._config, "fishing_daily_cap", 120)))
 
         rod = self.rod_of(chat_id, sender_id)
@@ -336,9 +344,10 @@ class FishingService:
         totals = self._store.fishing_totals(chat_id, sender_id)
         caught = self._store.fishing_collection(chat_id, sender_id)
         return {
-            "attempts": self._store.fishing_attempts(
-                chat_id, sender_id, day),
+            "attempts": self._store.fishing_attempts_since(
+                chat_id, sender_id, hour_start),
             "attempts_limit": limit,
+            "attempts_reset_in": max(0, hour_start + 3600 - now),
             "earned_today": self._store.fishing_earned_on_day(
                 chat_id, sender_id, day),
             "daily_cap": cap,

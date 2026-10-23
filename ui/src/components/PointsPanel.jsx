@@ -643,7 +643,7 @@ export default function PointsPanel() {
                   <>
                     <span className="text-xs font-mono text-text-muted">余额 {fishing.member.balance}</span>
                     <span className="text-xs font-mono text-text-muted">
-                      今日 {fishing.member.attempts}/{fishing.member.attempts_limit} 次
+                      本小时 {fishing.member.attempts}/{fishing.member.attempts_limit} 次
                     </span>
                     {fishing.member.daily_cap > 0 && (
                       <span className="text-xs font-mono text-text-muted">

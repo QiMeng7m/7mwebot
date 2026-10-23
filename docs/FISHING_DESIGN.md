@@ -45,7 +45,7 @@ VALUES (?, ?, ?, 'fish:<message_id>:<cast_index>', 'fish_catch', 'fish',
 
 ```
 钓鱼
- ├── 消耗 1 次每日次数（默认 30 次）
+ ├── 消耗 1 次本小时次数（默认 30 次，整点重置）
  ├── 自动消耗 1 个鱼饵（有库存时；便宜的优先）
  ├── 摇稀有度 → 摇重量 → 计算价值
  ├── 立即入账余额（受每日收益上限约束）
@@ -236,7 +236,7 @@ CREATE TABLE IF NOT EXISTS fishing_inventory (
 );
 ```
 
-- `fishing_casts` 同时承担「每日次数」「冷却」「图鉴」「榜单」「大鱼榜」。
+- `fishing_casts` 同时承担「每小时次数」「冷却」「图鉴」「榜单」「大鱼榜」。
 - 空竿也会写一行（`species_id=''`、`amount=0`），因此次数和冷却不会被绕过。
 - `fishing_inventory` 中鱼竿 `quantity=1`、`equipped=0/1`；鱼饵是叠加数量。
 
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS fishing_inventory (
 | `FISHING_ENABLED` | `true` | 钓鱼总开关 |
 | `FISHING_GROUPS` | `*` | 生效群白名单 |
 | `FISHING_CATALOG_PATH` | `data/fishing.json` | 鱼竿/鱼饵/鱼种/延迟目录 |
-| `FISHING_DAILY_ATTEMPTS` | `30` | 每人每日抛竿次数 |
+| `FISHING_HOURLY_ATTEMPTS` | `30` | 每人每小时抛竿次数（每个整点重置） |
 | `FISHING_DAILY_CAP` | `120` | 每人每日钓鱼入账上限（0=不限） |
 | `FISHING_COOLDOWN_SEC` | `5` | 两次抛竿之间的最短间隔 |
 | `FISHING_MAX_BATCH` | `10` | 单条「钓鱼 N」最多竿数 |
@@ -325,7 +325,7 @@ src/points/
                         catch_amount(), effective_miss_chance()
                         FishingService.cast(msg, count=1, rng=None, now_ts=None)
                         FishingService.stats(chat_id, sender_id)
-    store.py            fishing_attempts / fishing_last_cast_at
+    store.py            fishing_attempts_since / fishing_last_cast_at
                         fishing_earned_on_day / fishing_totals
                         fishing_inventory / fishing_equipped_rod
                         buy_fishing_rod / buy_fishing_bait / equip_fishing_rod
@@ -370,7 +370,7 @@ src/points/
 
 | 文件 | 覆盖 |
 |---|---|
-| `tests/test_fishing.py` | 目录校验与回退、稀有度权重、重量/价值公式、空竿率夹取、每日次数/收益上限、冷却、幂等、扣饵、鱼竿加成、稀有度延迟、指令解析 |
+| `tests/test_fishing.py` | 目录校验与回退、稀有度权重、重量/价值公式、空竿率夹取、每小时次数/整点重置/收益上限、冷却、幂等、扣饵、鱼竿加成、稀有度延迟、指令解析 |
 | `tests/test_points_router.py` | 无 sender 时返回带 `delay_sec` 的字符串；注册 sender 后返回 `None` 并在 daemon 线程发送 |
 | `tests/test_points_store.py` | 既有余额/榜单断言，确认 `fish` 类别不进入累计获得 |
 | `tests/test_functional.py` | 前端渲染、暗色模式、侧边栏（需要 7327 端口有同一份服务） |
@@ -380,7 +380,7 @@ src/points/
 1. 发「钓鱼」观察 5 秒后播报普通鱼；连续抽到传说鱼时应等待约 60 秒。
 2. 钓鱼前后发「积分」，确认累计积分/等级不变，余额增加。
 3. 买高级鱼竿/鱼饵后观察稀有鱼出现频率与入账价值变化。
-4. 连续「钓鱼 5」直到每日次数用完，确认第 31 次被拒。
+4. 连续「钓鱼 5」直到本小时次数用完，确认下一次被拒并提示整点重置；整点后再钓确认恢复。
 5. 在 Web UI 修改 `data/fishing.json` 的 `delays.legendary`，确认播报延迟变化。
 
 ---

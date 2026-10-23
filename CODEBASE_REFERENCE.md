@@ -159,7 +159,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `FISHING_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
 | `FISHING_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
 | `FISHING_CATALOG_PATH` | `str` | `"data/fishing.json"` | `src/config.py:load_config()` | `src/points/fishing_catalog.py:FishingCatalog` |
-| `FISHING_DAILY_ATTEMPTS` | `int` | `30` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
+| `FISHING_HOURLY_ATTEMPTS` | `int` | `30` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
 | `FISHING_DAILY_CAP` | `int` | `120` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
 | `FISHING_COOLDOWN_SEC` | `int` | `5` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
 | `FISHING_MAX_BATCH` | `int` | `10` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
@@ -776,6 +776,7 @@ todo_delete_keywords: list[str] = [
 | 文件 | 符号 | 描述 | 参数 | 返回值 |
 |---|---|---|---|---|
 | `util.py` | `local_day(ts=None)` | 本地日期 `YYYY-MM-DD` | `ts: int \| None` | `str` |
+| `util.py` | `local_hour_start(ts=None)` | 本地整点小时起点的时间戳（钓鱼每小时次数窗口） | `ts: int \| None` | `int` |
 | `util.py` | `local_season(ts=None)` | 本地赛季 `YYYY-MM` | `ts: int \| None` | `str` |
 | `util.py` | `previous_season(ts=None)` | 上一个赛季 | `ts: int \| None` | `str` |
 | `util.py` | `season_end_day(season)` | 赛季最后一天 | `season: str` | `str` |
@@ -799,9 +800,9 @@ todo_delete_keywords: list[str] = [
 | `fishing.py` | `catch_amount(species, weight_g, rod_value_bonus=0, bait_value_bonus=0)` | 渔获价值 = 基础价值 × 尺寸系数 × 装备加成 | 见签名 | `int` |
 | `fishing.py` | `effective_miss_chance(base_chance, miss_reduction=0)` | 空竿率夹取到 2%~50% | 见签名 | `float` |
 | `fishing.py` | `FishingService.cast(msg, count=1, rng=None, now_ts=None)` | 结算 1~N 竿：次数/冷却/每日上限、扣饵、记录、入账；返回 `delay_sec=max(本次稀有度延迟)` | 见签名 | `FishingResult` |
-| `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 今日次数/收益、余额、鱼竿、鱼饵、累计渔获、图鉴 | 见签名 | `dict` |
+| `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 本小时次数/重置倒计时、今日收益、余额、鱼竿、鱼饵、累计渔获、图鉴 | 见签名 | `dict` |
 | `models.py` | `DelayedReply(text, delay_sec=0, ack_text="")` | `str` 子类，携带延迟秒数与即时 ack；路由器先返回 ack，再异步发送最终文本 | 见签名 | `DelayedReply` |
-| `store.py` | `fishing_attempts/fishing_last_cast_at/fishing_earned_on_day/fishing_totals` | 钓鱼次数、冷却、今日入账、累计渔获查询 | 见签名 | `int/dict` |
+| `store.py` | `fishing_attempts_since/fishing_last_cast_at/fishing_earned_on_day/fishing_totals` | 指定时间起的抛竿次数（每小时限制）、冷却、今日入账、累计渔获查询 | 见签名 | `int/dict` |
 | `store.py` | `fishing_inventory/fishing_equipped_rod/owns_fishing_item` | 鱼竿/鱼饵库存查询 | 见签名 | `list[dict]/str/bool` |
 | `store.py` | `buy_fishing_rod(...)` / `buy_fishing_bait(...)` / `equip_fishing_rod(...)` | 条件扣款购买鱼竿/鱼饵、切换鱼竿 | 见签名 | 见签名 |
 | `store.py` | `commit_fishing_cast(...)` | 单事务写入 cast + 扣饵 + `category='fish'` 入账；`UNIQUE(message_id, cast_index)` 幂等 | 见签名 | `(bool, bait_used)` |
@@ -2029,7 +2030,7 @@ MessageRouter.handle(msg)
 - 钓鱼入账写 `point_events(category='fish', reason='fish_catch')`
 - `balance_of()` 汇总全部类别 → 余额增加
 - `earned_of()` / `board()` / `member_stats()` 只统计 `earn`/`adjust` → 积分、等级、总榜/月榜不变
-- 每日收益上限 `FISHING_DAILY_CAP`（默认 120，0=不限）；每日次数 `FISHING_DAILY_ATTEMPTS`（默认 30）
+- 每日收益上限 `FISHING_DAILY_CAP`（默认 120，0=不限）；每小时次数 `FISHING_HOURLY_ATTEMPTS`（默认 30，每个整点重置）
 
 #### 调用链
 
@@ -2037,7 +2038,7 @@ MessageRouter.handle(msg)
 PointHandler.handle("钓鱼 5")
   └── _fish(msg, ..., rest="5")
         └── FishingService.cast(msg, count=5)
-              ├── 检查开关/群白名单/次数/冷却/每日收益上限
+              ├── 检查开关/群白名单/每小时次数/冷却/每日收益上限
               ├── 选装备：equipped rod + 价格最低的在库鱼饵
               ├── 每竿：空竿判定 → 稀有度加权抽鱼 → 重量 → 价值
               ├── PointStore.commit_fishing_cast()
@@ -2181,7 +2182,7 @@ SHIELD_MAX_SEC=86400
 FISHING_ENABLED=true
 FISHING_GROUPS=*
 FISHING_CATALOG_PATH=data/fishing.json
-FISHING_DAILY_ATTEMPTS=30
+FISHING_HOURLY_ATTEMPTS=30
 FISHING_DAILY_CAP=120
 FISHING_COOLDOWN_SEC=5
 FISHING_MAX_BATCH=10

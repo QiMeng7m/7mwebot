@@ -13,6 +13,18 @@ def local_day(ts: int | float | None = None) -> str:
     ))
 
 
+def local_hour_start(ts: int | float | None = None) -> int:
+    """Unix timestamp of the start of the local clock hour containing *ts*.
+
+    Uses the local wall clock (``tm_min`` / ``tm_sec``) rather than epoch
+    division so time zones with non-whole-hour offsets still reset on the
+    hour shown to users.
+    """
+    moment = int(time.time() if ts is None else ts)
+    local = time.localtime(moment)
+    return moment - int(local.tm_min) * 60 - int(local.tm_sec)
+
+
 def local_season(ts: int | float | None = None) -> str:
     """Local calendar month as ``YYYY-MM`` (the season key)."""
     return time.strftime("%Y-%m", time.localtime(

@@ -29,7 +29,7 @@ from src.points.handler import PointHandler, looks_like_command
 from src.points.levels import LevelTable
 from src.points.models import PointAward
 from src.points.store import PointStore
-from src.points.util import local_day
+from src.points.util import local_hour_start
 
 
 class _Rng:
@@ -168,7 +168,7 @@ class ServiceTestBase(unittest.TestCase):
         self.config = BotConfig()
         self.config.fishing_enabled = True
         self.config.fishing_groups = ["*"]
-        self.config.fishing_daily_attempts = 30
+        self.config.fishing_hourly_attempts = 30
         self.config.fishing_daily_cap = 0
         self.config.fishing_cooldown_sec = 0
         self.config.fishing_max_batch = 10
@@ -243,19 +243,43 @@ class ServiceTests(ServiceTestBase):
         self.assertEqual(result.total_value, 0)
         self.assertFalse(result.casts[0].species_id)
         self.assertEqual(
-            self.store.fishing_attempts(
-                self.chat, "wxid_a", local_day(2_000_000_000)), 1,
+            self.store.fishing_attempts_since(
+                self.chat, "wxid_a", local_hour_start(2_000_000_000)), 1,
         )
         self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 100)
 
-    def test_daily_attempt_limit(self):
-        self.config.fishing_daily_attempts = 2
+    def test_hourly_attempt_limit(self):
+        self.config.fishing_hourly_attempts = 2
         result = self.cast(0.9, 0.0, 0.0, count=5)
         self.assertTrue(result.ok)
         self.assertEqual(len(result.casts), 2)
         blocked = self.cast(0.9, 0.0, 0.0, now_ts=2_000_000_100)
         self.assertFalse(blocked.ok)
         self.assertEqual(blocked.code, "attempts")
+        self.assertIn("本小时", blocked.reply)
+        self.assertEqual(
+            blocked.wait_seconds,
+            local_hour_start(2_000_000_100) + 3600 - 2_000_000_100)
+
+    def test_hourly_attempt_limit_resets_on_next_hour(self):
+        self.config.fishing_hourly_attempts = 1
+        hour_start = local_hour_start(2_000_000_000)
+        self.assertTrue(self.cast(0.9, 0.0, 0.0, now_ts=hour_start).ok)
+        blocked = self.cast(0.9, 0.0, 0.0, now_ts=hour_start + 60)
+        self.assertFalse(blocked.ok)
+        self.assertEqual(blocked.code, "attempts")
+        allowed = self.cast(0.9, 0.0, 0.0, now_ts=hour_start + 3600)
+        self.assertTrue(allowed.ok)
+        self.assertEqual(allowed.attempts_used, 1)
+
+    def test_stats_report_hourly_attempts_and_reset(self):
+        self.cast(0.9, 0.0, 0.0, now_ts=2_000_000_000)
+        stats = self.fishing.stats(
+            self.chat, "wxid_a", now_ts=2_000_000_000)
+        self.assertEqual(stats["attempts"], 1)
+        hour_start = local_hour_start(2_000_000_000)
+        self.assertEqual(stats["attempts_reset_in"],
+                         hour_start + 3600 - 2_000_000_000)
 
     def test_daily_cap_truncates_and_blocks(self):
         self.config.fishing_daily_cap = 3
@@ -468,9 +492,9 @@ class HandlerTests(unittest.TestCase):
         reply = self.handle("钓鱼 3")
         self.assertIn("3", reply)
         self.assertLessEqual(
-            self.store.fishing_attempts(
-                self.chat, "wxid_a", local_day()),
-            int(self.config.fishing_daily_attempts),
+            self.store.fishing_attempts_since(
+                self.chat, "wxid_a", local_hour_start()),
+            int(self.config.fishing_hourly_attempts),
         )
 
     def test_shop_listings(self):
