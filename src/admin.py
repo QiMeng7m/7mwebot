@@ -111,7 +111,7 @@ class AdminCommandHandler:
 
         points_on = self._flag(config, "points_enabled")
         lines = [
-            f"@{requester_name} 游玩清单（直接发命令，不用 @）",
+            f"@{requester_name} 游玩清单（未标 @我 的直接发）",
             "━━━━━━━━━━━━━━",
         ]
 
@@ -176,10 +176,10 @@ class AdminCommandHandler:
         if self._flag(config, "todo_enabled"):
             lines.extend([
                 "【待办】",
-                "  记一下 周五聚餐             添加待办",
-                "  查看待办                   未完成列表",
-                "  搞定 3 / 删掉 2             完成 / 删除",
-                "  已完成列表                 看已经做完的事",
+                "  @我 记一下 周五聚餐         添加待办",
+                "  @我 查看待办               未完成列表",
+                "  @我 搞定 3 / 删掉 2         完成 / 删除",
+                "  @我 已完成列表             看已经做完的事",
                 "",
             ])
 
