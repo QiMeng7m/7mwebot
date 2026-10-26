@@ -313,6 +313,30 @@ class ServiceTests(ServiceTestBase):
             100 + first.total_value,
         )
 
+    def test_proficiency_level_and_value_bonus(self):
+        # Seed career catches far enough back that this hour's attempts
+        # stay at zero.  200 catches unlock Lv4 (value +8%).
+        for index in range(200):
+            self.store.commit_fishing_cast(
+                chat_id=self.chat, sender_id="wxid_a", sender_name="张三",
+                message_id=f"proficiency-{index}", cast_index=0,
+                rod_id="bamboo", bait_id="", species_id="carp",
+                species_name="鲤鱼", rarity="common", weight_g=150,
+                amount=0, day="2026-10-20", now_ts=2_000_000_000 - 7200,
+            )
+        stats = self.fishing.stats(
+            self.chat, "wxid_a", now_ts=2_000_000_000)
+        self.assertEqual(stats["level"]["title"], "高手")
+        self.assertEqual(stats["level"]["value_bonus"], 0.08)
+
+        result = self.cast(0.9, 0.0, 0.5)
+        expected = catch_amount(
+            {"min_weight_g": 100, "max_weight_g": 200, "base_value": 10},
+            150, rod_value_bonus=0.08,
+        )
+        self.assertEqual(result.total_value, expected)
+        self.assertEqual(result.total_value, 11)
+
     def test_rod_bonus_is_applied(self):
         self.store.adjust(self.chat, "wxid_a", "张三", 200)
         ok, _, _ = self.store.buy_fishing_rod(
