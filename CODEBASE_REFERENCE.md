@@ -185,6 +185,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `DEFAULT_POLL_SEC` | `float` | `1.0` | `src/wechat/wcdb_backend.py` | 默认轮询间隔 |
 | `MAX_DEDUP_SIZE` | `int` | `5000` | `src/wechat/wcdb_backend.py` | 去重集合最大容量 |
 | `MAX_CONSECUTIVE_ERRORS` | `int` | `5` | `src/wechat/wcdb_backend.py` | 连续错误触发重初始化阈值 |
+| `GROUP_NICKNAME_REFRESH_SEC` | `int` | `60` | `src/wechat/wcdb_backend.py` | 群昵称快照刷新间隔（秒）；新入群成员靠它补进 `data/group_nicknames.json` |
 | `WECHAT_PROCESS_NAMES` | `set` | `{"wechat.exe", "weixin.exe"}` | `src/wechat/window_controller.py` | 微信进程名集合 |
 | `MIN_WINDOW_WIDTH` / `MIN_WINDOW_HEIGHT` | `int` | `200` | `src/wechat/window_controller.py` | 窗口最小尺寸验证 |
 | `MSG_TYPE_MAP` | `dict` | 见代码 | `src/wechat/helpers.py` | 消息类型映射表 |
@@ -360,14 +361,18 @@ todo_delete_keywords: list[str] = [
 | `send_text(chat_id, content)` | 发送文本消息 | `chat_id: str, content: str` | `bool` |
 | `stop()` | 停止监听 | 无 | `None` |
 | `_reinitialize()` | 关闭并重开 WCDB(故障恢复) | 无 | `None` |
-| `_resolve_groups()` | 解析群组名称到 talker ID | 无 | `None` |
+| `_resolve_groups()` | 解析群组名称到 talker ID，并缓存/持久化群昵称 | 无 | `None` |
 | `_save_group_names(chatrooms)` | 持久化群名映射(静态) | `chatrooms: dict` | `None` |
 | `_save_group_members(chat_members)` | 持久化群成员列表(静态) | `chat_members: dict` | `None` |
-| `_poll_cycle(callback)` | 单次轮询周期 | `callback: MessageCallback` | `None` |
-| `_poll_group(group_name, talker, callback)` | 轮询单个群聊消息 | `group_name, talker, callback` | `None` |
+| `_save_group_nicknames(chat_nicks, path=None)` | 合并写入 `chat_id → {wxid: 群昵称}`（静态；保留未参与本轮的群） | `chat_nicks: dict, path: Path \| str \| None` | `None` |
+| `_group_nickname_for(talker, wxid)` | 从内存缓存取某群某成员的群昵称 | `talker: str, wxid: str` | `str` |
+| `_maybe_refresh_group_nicknames()` | 距上次刷新 ≥ `GROUP_NICKNAME_REFRESH_SEC` 时触发刷新 | 无 | `None` |
+| `_refresh_group_nicknames(talkers=None)` | 重新读取群昵称并写入内存与 `data/group_nicknames.json`；入群事件/定时轮询调用 | `talkers: list[str] \| None` | `None` |
+| `_poll_cycle(callback)` | 单次轮询周期（末尾按需刷新群昵称） | `callback: MessageCallback` | `None` |
+| `_poll_group(group_name, talker, callback)` | 轮询单个群聊消息；入群事件立即刷新该群昵称 | `group_name, talker, callback` | `None` |
 | `_handle_message(group_name, talker, standardized, callback)` | 处理单条消息(线程池) | `group_name, talker, standardized, callback` | `None` |
 | `_send_leave_warning(group_name, talker, member_name, kind="leave")` | 成员退群/被移出后向群里发送固定警告（`kind` 决定文案模板） | `group_name, talker, member_name: str, kind: str` | `None` |
-| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
+| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压；发送者/@提及解析失败时回退群昵称） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
 | `_extract_member_from_links(content, resolve_name=None)` | 从系统消息的 `<link>` 块提取成员（优先 `adder`，其次 `names`/`username`/`member`；跳过 `from`/`revoke`） | `content: str, resolve_name: Callable \| None` | `tuple[str, str]` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
@@ -858,8 +863,9 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
-| `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
-| `handler.py` | `PointHandler._load_group_nicknames(chat_id)` | 读取某群的 `{wxid: 群昵称}` | `chat_id: str` | `dict[str, str]` |
+| `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称 + 原始 wxid（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
+| `handler.py` | `PointHandler._load_group_nicknames(chat_id)` | 读取某群的 `{wxid: 群昵称}`（按路径+mtime 缓存） | `chat_id: str` | `dict[str, str]` |
+| `handler.py` | `PointHandler._display_name(chat_id, sender_id, fallback="")` | 显示名回退链：手动昵称 → fallback → 群昵称 → 消息表昵称 → wxid | `chat_id: str, sender_id: str, fallback: str` | `str` |
 | `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
@@ -1174,12 +1180,18 @@ WcdbBackend.start(callback)
   │
   └── while self._running:           # 主轮询循环
         ├── _poll_cycle(callback)
-        │     └── for each group:
-        │           _poll_group(group_name, talker, callback)
-        │             ├── get_messages(talker, limit=50)
-        │             ├── _standardize() → 统一消息格式
-        │             ├── [退群事件] _send_leave_warning() → 线程池提交
-        │             └── _handle_message() → 线程池提交
+        │     ├── for each group:
+        │     │     _poll_group(group_name, talker, callback)
+        │     │       ├── get_messages(talker, limit=50)
+        │     │       ├── _standardize() → 统一消息格式
+        │     │       │     └── _group_nickname_for() → 新人显示名回退
+        │     │       ├── [入群事件] _refresh_group_nicknames([talker])
+        │     │       ├── [退群事件] _send_leave_warning() → 线程池提交
+        │     │       └── _handle_message() → 线程池提交
+        │     └── _maybe_refresh_group_nicknames()
+        │           └── _refresh_group_nicknames()
+        │                 ├── get_group_nicknames() → 群昵称映射
+        │                 └── _save_group_nicknames() → data/group_nicknames.json
         │
         └── time.sleep(poll_sec)
 ```
@@ -1963,7 +1975,8 @@ MessageRouter.handle(msg)
 - **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**余额**（全部 category）用于消费与被抢
 - `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
 - 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
-- 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时由 `wcdb_get_group_nicknames` 刷新）
+- 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时 + 每 60 秒 + 入群事件时由 `wcdb_get_group_nicknames` 刷新，新入群成员无需重启即可解析）
+- 回复中的成员名回退链：手动昵称 → 群昵称 → 消息表昵称 → wxid；新成员在通讯录缓存里查不到名字时会显示群昵称，而不是 wxid
 - 切磋只转移余额，不计入累计获得，避免打架刷榜
 - 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
 - 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
@@ -2322,7 +2335,7 @@ WCDB_KEY=
 | `data/nicknames.json` | `src/nickname.py` | wxid → 昵称映射 |
 | `data/group_names.json` | `src/wechat/wcdb_backend.py` | chat_id → {name, member_count} |
 | `data/group_members.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: display_name} |
-| `data/group_nicknames.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: 群昵称}，供 @群昵称 解析/切磋目标匹配 |
+| `data/group_nicknames.json` | `src/wechat/wcdb_backend.py` | chat_id → {wxid: 群昵称}，供 @群昵称 解析/切磋目标匹配；启动、每 60 秒、入群事件时刷新 |
 | `data/welcome_templates.json` | `src/welcome.py` | 欢迎模板 + 群映射 |
 | `data/pending_kicks.json` | `src/wechat/inactive_kick.py` | 待执行的未发言成员踢出计时器 |
 | `data/lots.json` | `src/fun.py` | 自定义抽签配置 |

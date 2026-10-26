@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_POLL_SEC = 1.0
 MAX_DEDUP_SIZE = 5000
 MAX_CONSECUTIVE_ERRORS = 5   # trigger reinit after this many consecutive failures
+# 群昵称快照只在启动时拿一次，运行期间新入群的成员不在里面。定期刷新，
+# 否则 @新人 / 切磋 / 钓鱼 只能显示、识别 wxid。
+GROUP_NICKNAME_REFRESH_SEC = 60
 # On startup the poller replays the last 50 messages, including old join
 # events.  Welcome only joins that happened recently, otherwise every
 # restart would welcome people who joined long ago.
@@ -319,6 +322,10 @@ class WcdbBackend(AbstractWeChatBackend):
         # Serialise window operations (sends vs. member removal) so two
         # keyboard/mouse sequences never interleave.
         self._window_lock = threading.Lock()
+        # chat_id -> {wxid: 群昵称}.  Refreshed at startup and periodically
+        # so members who join while the bot runs are resolvable too.
+        self._group_nicknames: dict[str, dict[str, str]] = {}
+        self._last_group_nick_refresh = 0.0
 
     # ── Inactive kick config ───────────────────────────────────────
 
@@ -643,28 +650,48 @@ class WcdbBackend(AbstractWeChatBackend):
         if group_members:
             self._save_group_members(group_members)
         if group_nicknames:
+            self._group_nicknames.update(group_nicknames)
             self._save_group_nicknames(group_nicknames)
+        self._last_group_nick_refresh = time.time()
 
     @staticmethod
     def _save_group_nicknames(
-            chat_nicks: dict[str, dict[str, str]]) -> None:
-        """Persist chat_id -> {wxid: 群昵称} to data/group_nicknames.json."""
+            chat_nicks: dict[str, dict[str, str]],
+            path: Path | str | None = None) -> None:
+        """Merge chat_id -> {wxid: 群昵称} into data/group_nicknames.json.
+
+        The file also holds groups that are not refreshed this round, so
+        entries are merged instead of replacing the whole document.
+        """
         from ..config import PROJECT_ROOT
-        path = Path(PROJECT_ROOT) / "data" / "group_nicknames.json"
+        path = Path(path) if path else (
+            Path(PROJECT_ROOT) / "data" / "group_nicknames.json"
+        )
         try:
+            existing: dict[str, dict[str, str]] = {}
+            if path.exists():
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    existing = {
+                        str(chat_id): nicks
+                        for chat_id, nicks in raw.items()
+                        if not str(chat_id).startswith("_")
+                        and isinstance(nicks, dict)
+                    }
+            existing.update(chat_nicks)
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = path.with_suffix(".tmp")
             tmp_path.write_text(
-                json.dumps(chat_nicks, ensure_ascii=False, indent=2),
+                json.dumps(existing, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             os.replace(tmp_path, path)
-            total = sum(len(m) for m in chat_nicks.values())
+            total = sum(len(m) for m in existing.values())
             logger.info(
                 "Saved %d group nicknames across %d groups to %s",
-                total, len(chat_nicks), path,
+                total, len(existing), path,
             )
-        except OSError as e:
+        except (OSError, ValueError) as e:
             logger.warning("Failed to save group nicknames: %s", e)
 
     @staticmethod
@@ -707,6 +734,51 @@ class WcdbBackend(AbstractWeChatBackend):
                 return name
         return ""
 
+    # ── Group nickname refresh ───────────────────────────────────────
+
+    def _group_nickname_for(self, talker: str, wxid: str) -> str:
+        """Return the cached 群昵称 for *wxid* in *talker*, or ``""``."""
+        nicks = getattr(self, "_group_nicknames", None) or {}
+        return nicks.get(talker, {}).get(wxid, "")
+
+    def _maybe_refresh_group_nicknames(self) -> None:
+        """Refresh 群昵称 at most every ``GROUP_NICKNAME_REFRESH_SEC``."""
+        now = time.time()
+        if now - getattr(self, "_last_group_nick_refresh", 0.0) \
+                < GROUP_NICKNAME_REFRESH_SEC:
+            return
+        self._last_group_nick_refresh = now
+        self._refresh_group_nicknames()
+
+    def _refresh_group_nicknames(
+            self, talkers: list[str] | None = None) -> None:
+        """Re-read 群昵称 from WCDB and persist them.
+
+        Called periodically and immediately after a join event so a
+        member who joined while the bot was running gets a nickname
+        instead of only their wxid.
+        """
+        if self._client is None:
+            return
+        targets = list(talkers or set(self._talker_ids.values()))
+        fresh: dict[str, dict[str, str]] = {}
+        with self._client_lock:
+            for talker in targets:
+                try:
+                    nicks = self._client.get_group_nicknames(talker)
+                except Exception as e:  # noqa: BLE001 - never kill polling
+                    logger.warning(
+                        "Failed to refresh group nicknames for %s: %s",
+                        talker, e,
+                    )
+                    continue
+                if nicks:
+                    fresh[talker] = nicks
+        if not fresh:
+            return
+        self._group_nicknames.update(fresh)
+        self._save_group_nicknames(fresh)
+
     # ── Message polling ──────────────────────────────────────────────
 
     def _poll_cycle(self, callback: MessageCallback) -> None:
@@ -717,6 +789,9 @@ class WcdbBackend(AbstractWeChatBackend):
             if not talker:
                 continue
             self._poll_group(group_name, talker, callback)
+        # New members may have joined since the last snapshot; keep
+        # 群昵称 fresh so @mentions and points replies use names.
+        self._maybe_refresh_group_nicknames()
         # Check shutdown signal before sleeping so stop() is responsive
         if not self._running:
             return
@@ -763,6 +838,11 @@ class WcdbBackend(AbstractWeChatBackend):
                     "New member joined: %s in '%s'",
                     standardized.get("new_member_id"), group_name,
                 )
+                # Pull this group's 群昵称 right away: the joiner is not
+                # in the startup snapshot, and their first messages would
+                # otherwise be stored/resolved as a bare wxid.
+                self._refresh_group_nicknames([talker])
+                self._last_group_nick_refresh = time.time()
                 if self._kick_tracker is not None:
                     wxid = standardized.get("new_member_wxid", "")
                     if wxid:
@@ -1147,6 +1227,13 @@ class WcdbBackend(AbstractWeChatBackend):
             if prev:
                 sender_name = prev
 
+        # New members are often absent from the contacts cache; their
+        # 群昵称 is then the only human-readable name available.
+        if sender_name == sender:
+            group_nick = self._group_nickname_for(talker, sender)
+            if group_nick:
+                sender_name = group_nick
+
         # Resolve @mentions in content.  Keep the underlying wxids so
         # commands (切磋/积分调整…) can target the exact member even when
         # the display name differs from the message table's nickname
@@ -1158,9 +1245,13 @@ class WcdbBackend(AbstractWeChatBackend):
                 at_wxid = match.group(0)[1:]
                 name = self._client.resolve_nickname(at_wxid)
                 if name == at_wxid:
-                    return match.group(0)
+                    # Freshly joined members may not be in the contacts
+                    # cache yet — fall back to the group nickname.
+                    name = self._group_nickname_for(talker, at_wxid) or name
                 is_bot = bool(name) and name in self._bot_names()
                 if not is_bot and at_wxid not in mention_ids:
+                    # Keep the wxid even when the name is unresolved so
+                    # 切磋/查询 can still target an explicit @wxid.
                     mention_ids.append(at_wxid)
                 return f"@{name}"
             resolved_content = re.sub(r'@wxid_[a-zA-Z0-9]+', _replace_at, content)

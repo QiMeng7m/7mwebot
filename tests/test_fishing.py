@@ -477,6 +477,31 @@ class HandlerTests(unittest.TestCase):
         self.assertGreaterEqual(
             self.store.balance_of(self.chat, "wxid_a"), 100)
 
+    def test_fish_announcement_uses_group_nickname(self):
+        """A newly joined member is announced by 群昵称, not their wxid."""
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        path.write_text(
+            json.dumps({self.chat: {"wxid_new": "新人小明"}},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.handler._group_nicknames_path = path
+        self.messages.insert_message({
+            "message_id": "seed-new",
+            "chat_id": self.chat,
+            "sender_id": "wxid_new",
+            "sender_name": "wxid_new",
+            "content": "seed",
+            "msg_type": 1,
+            "timestamp": int(time.time()),
+        })
+        msg = self.msg("钓鱼")
+        msg["sender_id"] = "wxid_new"
+        msg["sender_name"] = "wxid_new"
+        reply = self.handler.handle("钓鱼", msg)
+        self.assertIn("新人小明", reply.ack_text)
+        self.assertNotIn("wxid_new", reply.ack_text)
+
     def test_fish_reply_carries_feedback_delay(self):
         reply = self.handle("钓鱼")
         # The test catalog only has common fish (and a 5s miss delay).

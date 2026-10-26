@@ -1,5 +1,6 @@
 """Command parsing / reply formatting tests for points and duels."""
 
+import json
 import tempfile
 import time
 import unittest
@@ -384,6 +385,43 @@ class DuelCommandTests(HandlerTestBase):
         self.assertEqual(
             self.store.balance_of(self.chat, "wxid_a"), 180,
         )
+
+
+class NewMemberNicknameTests(HandlerTestBase):
+    """A member who joined after startup is only known by 群昵称."""
+
+    def setUp(self):
+        super().setUp()
+        self.add_member("wxid_a", "张三", earned=200)
+        # The backend could not resolve this member, so the message
+        # table stored their wxid as the display name.
+        self.add_member("wxid_new", "wxid_new", earned=200)
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        path.write_text(
+            json.dumps({self.chat: {"wxid_new": "新人小明"}},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+        self.handler._group_nicknames_path = path
+
+    def test_display_name_prefers_group_nickname_over_wxid(self):
+        self.assertEqual(
+            self.handler._display_name(self.chat, "wxid_new"),
+            "新人小明",
+        )
+
+    def test_duel_reply_uses_group_nickname(self):
+        msg = self.msg("@wxid_new 切磋", "wxid_a", "张三")
+        msg["content"] = "wxid_a:\n@wxid_new 切磋"
+        msg["mentioned_ids"] = ["wxid_new"]
+        reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("新人小明", reply)
+        self.assertNotIn("wxid_new", reply)
+
+    def test_duel_by_typed_wxid(self):
+        reply = self.run_cmd("切磋 wxid_new")
+        self.assertIn("新人小明", reply)
+        self.assertNotIn("没找到成员", reply)
 
 
 class AdminTests(HandlerTestBase):

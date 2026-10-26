@@ -148,6 +148,8 @@ class PointHandler:
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
         )
+        self._group_nicks_cache: dict | None = None
+        self._group_nicks_key: tuple[str, float] | None = None
 
     # ── Entry ─────────────────────────────────────────────────────
 
@@ -287,6 +289,11 @@ class PointHandler:
                 pass
         if fallback:
             return fallback
+        # New members may not be in the message table yet; their 群昵称
+        # (what @mentions use) is the only name we have.
+        group_nick = self._load_group_nicknames(chat_id).get(sender_id)
+        if group_nick:
+            return group_nick
         return self._store.member_name(chat_id, sender_id) or sender_id
 
     def _candidate_map(self, chat_id: str) -> dict[str, list[str]]:
@@ -302,7 +309,9 @@ class PointHandler:
 
         for member in self._store.members(chat_id):
             sid = member["sender_id"]
-            names = {member["sender_name"]}
+            # The raw username is also a valid search key: admins are
+            # told to use wxid when a nickname is ambiguous.
+            names = {member["sender_name"], sid}
             nick = nick_map.get(sid)
             if nick:
                 names.add(nick)
@@ -323,23 +332,35 @@ class PointHandler:
         for sid, group_nick in group_nicks.items():
             if sid in known:
                 continue
-            key = _norm_key(group_nick)
-            if not key:
-                continue
-            bucket = mapping.setdefault(key, [])
-            if sid not in bucket:
-                bucket.append(sid)
+            for name in (group_nick, sid):
+                key = _norm_key(name)
+                if not key:
+                    continue
+                bucket = mapping.setdefault(key, [])
+                if sid not in bucket:
+                    bucket.append(sid)
         return mapping
 
     def _load_group_nicknames(self, chat_id: str) -> dict[str, str]:
         """Read ``{wxid: 群昵称}`` for one chat (empty on any error)."""
         try:
-            data = json.loads(
-                self._group_nicknames_path.read_text(encoding="utf-8"),
-            )
-        except (OSError, ValueError):
+            mtime = self._group_nicknames_path.stat().st_mtime
+        except OSError:
+            self._group_nicks_cache = {}
+            self._group_nicks_key = None
             return {}
-        mapping = data.get(chat_id) if isinstance(data, dict) else None
+        key = (str(self._group_nicknames_path), mtime)
+        if self._group_nicks_cache is None \
+                or self._group_nicks_key != key:
+            try:
+                data = json.loads(
+                    self._group_nicknames_path.read_text(encoding="utf-8"),
+                )
+            except (OSError, ValueError):
+                return {}
+            self._group_nicks_cache = data if isinstance(data, dict) else {}
+            self._group_nicks_key = key
+        mapping = self._group_nicks_cache.get(chat_id)
         if not isinstance(mapping, dict):
             return {}
         return {

@@ -1,5 +1,6 @@
 """Tests for WeChat 4.x system-message join detection."""
 
+import json
 import tempfile
 import time
 import unittest
@@ -216,6 +217,86 @@ class StandardizeMentionTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result["is_at_mentioned"])
         self.assertEqual(result["mentioned_ids"], [])
+
+
+class StandardizeNewMemberNicknameTests(unittest.TestCase):
+    """Members who joined after startup are only known by 群昵称."""
+
+    class _Client:
+        def resolve_nickname(self, wxid):
+            # A brand-new member is not in the contacts cache yet.
+            return wxid
+
+    def _backend(self) -> WcdbBackend:
+        backend = WcdbBackend.__new__(WcdbBackend)
+        backend._client = self._Client()
+        backend._store = None
+        backend._voice_config = BotConfig(welcome_enabled=False)
+        backend._bot_name = "柒梦"
+        backend._bot_aliases = []
+        backend._group_nicknames = {
+            "1@chatroom": {"wxid_new": "新人小明"},
+        }
+        return backend
+
+    def test_unresolved_sender_uses_group_nickname(self):
+        result = self._backend()._standardize({
+            "sender_username": "wxid_new",
+            "message_content": "wxid_new:\n大家好",
+            "local_type": 1,
+            "create_time": int(time.time()),
+            "server_id": "m1",
+        }, "测试群", "1@chatroom")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["sender_name"], "新人小明")
+
+    def test_unresolved_mention_uses_group_nickname(self):
+        result = self._backend()._standardize({
+            "sender_username": "wxid_a",
+            "message_content": "wxid_a:\n@wxid_new 切磋",
+            "local_type": 1,
+            "create_time": int(time.time()),
+            "server_id": "m2",
+        }, "测试群", "1@chatroom")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["content"], "wxid_a:\n@新人小明 切磋")
+        self.assertEqual(result["mentioned_ids"], ["wxid_new"])
+
+    def test_raw_wxid_mention_is_targetable_without_a_name(self):
+        result = self._backend()._standardize({
+            "sender_username": "wxid_a",
+            "message_content": "wxid_a:\n@wxid_unknown 切磋",
+            "local_type": 1,
+            "create_time": int(time.time()),
+            "server_id": "m3",
+        }, "测试群", "1@chatroom")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["mentioned_ids"], ["wxid_unknown"])
+
+
+class SaveGroupNicknamesTests(unittest.TestCase):
+    def test_merge_keeps_other_groups(self):
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        WcdbBackend._save_group_nicknames(
+            {"chat1": {"wxid_a": "甲"}}, path=path,
+        )
+        WcdbBackend._save_group_nicknames(
+            {"chat2": {"wxid_b": "乙"}}, path=path,
+        )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["chat1"], {"wxid_a": "甲"})
+        self.assertEqual(data["chat2"], {"wxid_b": "乙"})
+
+    def test_refresh_replaces_group_snapshot(self):
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        WcdbBackend._save_group_nicknames(
+            {"chat1": {"wxid_a": "旧名"}}, path=path,
+        )
+        WcdbBackend._save_group_nicknames(
+            {"chat1": {"wxid_a": "新名"}}, path=path,
+        )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["chat1"], {"wxid_a": "新名"})
 
 
 class StandardizeJoinTests(unittest.TestCase):
