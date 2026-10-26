@@ -20,7 +20,7 @@ from src.config import PROJECT_ROOT
 from . import rules
 from .duel import DuelService
 from .equipment import EquipmentCatalog
-from .fishing import FishingService, format_weight
+from .fishing import FishingService, fishing_level, format_weight
 from .fishing_catalog import RARITIES, RARITY_LABELS
 from .levels import LevelTable
 from .models import Command, DelayedReply
@@ -64,6 +64,8 @@ EXACT_COMMANDS = {
     "战力": ("power", ""),
     "战力榜": ("power_board", ""),
     "切磋记录": ("duel_log", ""),
+    "切磋战绩": ("duel_record", ""),
+    "战神榜": ("duel_board", ""),
     "买免战券": ("buy_shield", ""),
     "免战": ("buy_shield", ""),
     # ── Fishing ──
@@ -257,6 +259,10 @@ class PointHandler:
             return self._power_board(chat_id, msg.get("group_name", ""))
         if kind == "duel_log":
             return self._duel_log(chat_id, sender_id)
+        if kind == "duel_record":
+            return self._duel_record(chat_id, sender_id, sender_name)
+        if kind == "duel_board":
+            return self._duel_board(chat_id, msg.get("group_name", ""))
         if kind == "buy_shield":
             return self._buy_shield(chat_id, sender_id, sender_name)
         if kind == "fish":
@@ -531,8 +537,10 @@ class PointHandler:
         if self._fishing is not None:
             fish = self._fishing.stats(chat_id, sender_id)
             if fish["catches"]:
+                level = fish.get("level") or {}
                 lines.append(
-                    f"钓鱼 {fish['catches']} 条 · 入账 "
+                    f"钓鱼 Lv{level.get('level', 1)} {level.get('title', '')}"
+                    f" · {fish['catches']} 条 · 入账 "
                     f"{fish['total_value']}（只加余额，不计积分）"
                 )
         return "\n".join(lines)
@@ -781,6 +789,13 @@ class PointHandler:
         shield = self._store.shield_expires_at(chat_id, sender_id, now)
         if shield:
             lines.append(f"免战中，剩余 {self._format_duration(shield - now)}")
+
+        record = self._duels.record(chat_id, sender_id)
+        rank = record["rank"]
+        lines.append(
+            f"切磋段位 {rank['title']} · 生涯 {record['wins']}胜"
+            f"{record['losses']}负"
+        )
         return "\n".join(lines)
 
     def _power_board(self, chat_id: str, group_name: str) -> str:
@@ -892,6 +907,53 @@ class PointHandler:
             lines.append(
                 f"{when} {row['attacker_name']} vs "
                 f"{row['defender_name']}：{outcome}"
+            )
+        return "\n".join(lines)
+
+    def _duel_record(self, chat_id: str, sender_id: str,
+                     sender_name: str) -> str:
+        if not getattr(self._config, "duel_enabled", False):
+            return "切磋功能未开启。"
+        record = self._duels.record(chat_id, sender_id)
+        rank = record["rank"]
+        power = self._duels.power(chat_id, sender_id)
+        win_rate = (
+            f"{round(record['wins'] / record['total'] * 100)}%"
+            if record["total"] else "—"
+        )
+        lines = [
+            f"{sender_name} 切磋战绩 · {rank['title']}段（战力 {power.total}）",
+            f"生涯 {record['total']} 战 · 胜 {record['wins']} · "
+            f"负 {record['losses']} · 胜率 {win_rate} · "
+            f"累计抢 {record['stolen']} 分",
+        ]
+        nxt = rank.get("next")
+        if nxt:
+            lines.append(
+                f"距 {nxt['title']}段 还差 {rank['wins_to_next']} 胜"
+            )
+        else:
+            lines.append("已达最高段位：战神")
+        return "\n".join(lines)
+
+    def _duel_board(self, chat_id: str, group_name: str) -> str:
+        if not getattr(self._config, "duel_enabled", False):
+            return "切磋功能未开启。"
+        size = int(getattr(self._config, "points_board_size", 10))
+        rows = self._duels.leaderboard(chat_id, size)
+        group = _strip_invisible(group_name) or chat_id
+        lines = [f"战神榜 · {group}（按生涯胜场）"]
+        if not rows:
+            lines.append("本群还没有切磋记录，先发「@某人 切磋」试试。")
+            return "\n".join(lines)
+        for index, row in enumerate(rows, 1):
+            wins = int(row.get("wins", 0))
+            total = int(row.get("total", 0))
+            losses = max(0, total - wins)
+            rank = row["rank"]
+            lines.append(
+                f"{index}. {row['sender_name']} {rank['title']}段 · "
+                f"{wins}胜{losses}负 · 抢 {row['stolen']} 分"
             )
         return "\n".join(lines)
 
@@ -1196,6 +1258,21 @@ class PointHandler:
             f"鱼竿：{rod['name']}（稀有+{self._pct(rod['rare_bonus'])} "
             f"价值+{self._pct(rod['value_bonus'])}）"
         )
+        level = stats.get("level") or {}
+        if level:
+            lines.append(
+                f"钓鱼等级 Lv{level['level']} {level['title']}"
+                f"（熟练 稀有+{self._pct(level.get('rare_bonus'))} "
+                f"价值+{self._pct(level.get('value_bonus'))}）"
+            )
+            nxt = level.get("next")
+            if nxt:
+                lines.append(
+                    f"距 Lv{nxt['level']} {nxt['title']} 还差 "
+                    f"{level.get('catches_to_next', 0)} 条"
+                )
+            else:
+                lines.append("已达最高钓鱼等级：渔神")
         if stats["baits"]:
             lines.append("鱼饵：" + " · ".join(
                 f"{bait['name']}×{bait['quantity']}"
@@ -1226,9 +1303,12 @@ class PointHandler:
             return "钓鱼功能未开启。"
         species = self._fishing.catalog.species()
         caught = set(self._store.fishing_collection(chat_id, sender_id))
+        totals = self._store.fishing_totals(chat_id, sender_id)
+        level = fishing_level(int(totals.get("catches", 0)))
 
         lines = [
-            f"{sender_name} 的钓鱼图鉴 {len(caught)}/{len(species)}",
+            f"{sender_name} 的钓鱼图鉴 {len(caught)}/{len(species)}"
+            f" · Lv{level['level']} {level['title']}",
         ]
         for rarity in RARITIES:
             group = [item for item in species if item["rarity"] == rarity]
@@ -1363,8 +1443,9 @@ class PointHandler:
             "· 积分分两类：累计获得决定等级与总榜，"
             "余额用于购买装备和免战券\n"
             f"· 切磋每日 {cfg.duel_daily_attempts} 次，"
-            f"单次最多抢 {cfg.duel_per_fight_cap} 分\n"
-            "· 钓鱼只增加余额，不影响累计积分、等级和榜单"
+            f"单次最多抢 {cfg.duel_per_fight_cap} 分；生涯胜场决定段位\n"
+            "· 钓鱼只增加余额，不影响累计积分、等级和榜单\n"
+            "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成"
         )
 
     @staticmethod

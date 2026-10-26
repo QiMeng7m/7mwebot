@@ -18,6 +18,7 @@ DEFAULT_SLOTS: list[dict] = [
     {"id": "weapon", "name": "武器"},
     {"id": "armor", "name": "护甲"},
     {"id": "charm", "name": "饰品"},
+    {"id": "mount", "name": "坐骑"},
 ]
 
 DEFAULT_ITEMS: list[dict] = [
@@ -25,16 +26,30 @@ DEFAULT_ITEMS: list[dict] = [
     {"id": "iron_sword", "name": "铁剑", "slot": "weapon", "power": 9, "price": 90},
     {"id": "black_blade", "name": "玄铁刀", "slot": "weapon", "power": 16, "price": 220},
     {"id": "dragon_sword", "name": "龙纹剑", "slot": "weapon", "power": 24, "price": 480},
+    {"id": "star_sword", "name": "星陨剑", "slot": "weapon", "power": 34, "price": 900},
+    {"id": "god_slayer", "name": "弑神刃", "slot": "weapon", "power": 46, "price": 1700},
+    {"id": "origin_sword", "name": "太初剑", "slot": "weapon", "power": 60, "price": 3200},
 
     {"id": "cloth_armor", "name": "布衣", "slot": "armor", "power": 3, "price": 25},
     {"id": "leather", "name": "皮甲", "slot": "armor", "power": 8, "price": 80},
     {"id": "chainmail", "name": "锁子甲", "slot": "armor", "power": 14, "price": 200},
     {"id": "black_armor", "name": "玄铁甲", "slot": "armor", "power": 21, "price": 450},
+    {"id": "dragon_scale", "name": "龙鳞甲", "slot": "armor", "power": 30, "price": 850},
+    {"id": "silk_armor", "name": "天蚕甲", "slot": "armor", "power": 42, "price": 1600},
+    {"id": "immortal_armor", "name": "不朽战甲", "slot": "armor", "power": 55, "price": 3000},
 
     {"id": "straw_rope", "name": "草绳", "slot": "charm", "power": 2, "price": 20},
     {"id": "jade", "name": "玉坠", "slot": "charm", "power": 6, "price": 70},
     {"id": "mirror", "name": "护心镜", "slot": "charm", "power": 12, "price": 180},
     {"id": "dragon_jade", "name": "龙纹佩", "slot": "charm", "power": 18, "price": 400},
+    {"id": "taiji_jade", "name": "太极玉", "slot": "charm", "power": 26, "price": 750},
+    {"id": "chaos_pearl", "name": "混沌珠", "slot": "charm", "power": 38, "price": 1500},
+    {"id": "samsara_jade", "name": "轮回佩", "slot": "charm", "power": 50, "price": 2800},
+
+    {"id": "bay_horse", "name": "枣红马", "slot": "mount", "power": 8, "price": 150},
+    {"id": "snow_horse", "name": "踏雪马", "slot": "mount", "power": 20, "price": 550},
+    {"id": "red_hare", "name": "赤兔", "slot": "mount", "power": 35, "price": 1400},
+    {"id": "qilin", "name": "麒麟", "slot": "mount", "power": 52, "price": 3000},
 ]
 
 DEFAULT_CATALOG_PATH = PROJECT_ROOT / "data/equipment.json"

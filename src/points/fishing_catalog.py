@@ -18,7 +18,7 @@ from src.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-RARITIES = ("junk", "common", "rare", "epic", "legendary")
+RARITIES = ("junk", "common", "rare", "epic", "legendary", "mythic")
 
 RARITY_LABELS = {
     "junk": "垃圾",
@@ -26,6 +26,7 @@ RARITY_LABELS = {
     "rare": "稀有",
     "epic": "史诗",
     "legendary": "传说",
+    "mythic": "神话",
 }
 
 # How strongly fishing gear improves the odds of rarer species.  Junk
@@ -37,11 +38,13 @@ RARITY_BONUS_MULT = {
     "rare": 1.0,
     "epic": 1.5,
     "legendary": 2.0,
+    "mythic": 3.0,
 }
 
 # Suspense timing: the rarer the catch, the longer the bot "waits" before
 # posting the result.  Misses and junk come back fast; a legendary fish
-# takes a full minute.  Values are seconds, editable in fishing.json.
+# takes a full minute, a mythic one even longer.  Values are seconds,
+# editable in fishing.json.
 DEFAULT_DELAYS: dict[str, int] = {
     "miss": 5,
     "junk": 5,
@@ -49,6 +52,7 @@ DEFAULT_DELAYS: dict[str, int] = {
     "rare": 15,
     "epic": 30,
     "legendary": 60,
+    "mythic": 90,
 }
 
 DEFAULT_RODS: list[dict] = [
@@ -63,6 +67,10 @@ DEFAULT_RODS: list[dict] = [
      "rare_bonus": 0.50, "value_bonus": 0.35, "miss_reduction": 0.06},
     {"id": "abyss", "name": "龙渊竿", "price": 1500,
      "rare_bonus": 0.80, "value_bonus": 0.50, "miss_reduction": 0.08},
+    {"id": "starlight", "name": "星辉竿", "price": 3000,
+     "rare_bonus": 0.95, "value_bonus": 0.65, "miss_reduction": 0.10},
+    {"id": "origin", "name": "太初竿", "price": 6500,
+     "rare_bonus": 1.20, "value_bonus": 0.85, "miss_reduction": 0.12},
 ]
 
 DEFAULT_BAITS: list[dict] = [
@@ -72,6 +80,10 @@ DEFAULT_BAITS: list[dict] = [
      "rare_bonus": 0.25, "value_bonus": 0.10},
     {"id": "mystic", "name": "神秘饵", "price": 15,
      "rare_bonus": 0.60, "value_bonus": 0.20},
+    {"id": "dragon_incense", "name": "龙涎香", "price": 40,
+     "rare_bonus": 0.90, "value_bonus": 0.30},
+    {"id": "origin_bait", "name": "太初饵", "price": 100,
+     "rare_bonus": 1.30, "value_bonus": 0.50},
 ]
 
 DEFAULT_SPECIES: list[dict] = [
@@ -114,6 +126,8 @@ DEFAULT_SPECIES: list[dict] = [
      "min_weight_g": 150, "max_weight_g": 500, "base_value": 35},
     {"id": "puffer", "name": "河豚", "rarity": "epic", "weight": 2,
      "min_weight_g": 300, "max_weight_g": 1200, "base_value": 40},
+    {"id": "arapaima", "name": "巨骨舌鱼", "rarity": "epic", "weight": 1.8,
+     "min_weight_g": 3000, "max_weight_g": 12000, "base_value": 55},
 
     # 传说
     {"id": "koi", "name": "锦鲤", "rarity": "legendary", "weight": 0.8,
@@ -123,6 +137,21 @@ DEFAULT_SPECIES: list[dict] = [
     {"id": "golden_carp", "name": "黄金鲤鱼", "rarity": "legendary",
      "weight": 0.15, "min_weight_g": 800, "max_weight_g": 4000,
      "base_value": 200},
+    {"id": "silver_arowana", "name": "银龙鱼", "rarity": "legendary",
+     "weight": 0.10, "min_weight_g": 800, "max_weight_g": 4000,
+     "base_value": 150},
+    {"id": "phoenix_koi", "name": "凤凰鲤", "rarity": "legendary",
+     "weight": 0.05, "min_weight_g": 600, "max_weight_g": 2500,
+     "base_value": 260},
+
+    # 神话（终局目标，出货率极低）
+    {"id": "flood_dragon", "name": "蛟龙", "rarity": "mythic", "weight": 0.10,
+     "min_weight_g": 3000, "max_weight_g": 12000, "base_value": 420},
+    {"id": "kun", "name": "鲲", "rarity": "mythic", "weight": 0.06,
+     "min_weight_g": 8000, "max_weight_g": 30000, "base_value": 650},
+    {"id": "nine_color", "name": "九色神鱼", "rarity": "mythic",
+     "weight": 0.03, "min_weight_g": 500, "max_weight_g": 3000,
+     "base_value": 999},
 ]
 
 DEFAULT_CATALOG_PATH = PROJECT_ROOT / "data/fishing.json"

@@ -271,6 +271,7 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter._schedule_delayed_reply(msg, reply)` | — | 识别 `DelayedReply.delay_sec`，起 daemon 线程延时调用发送器；无发送器返回 False | `msg: dict, reply` | `bool` |
 | `MessageRouter._load_group_names()` | ~115 | 加载 chat_id → 群名映射(懒加载；兼容 `{name, member_count}` 与旧版纯字符串) | 无 | `dict[str, str]` |
 | `MessageRouter._is_todo_group(chat_id)` | ~125 | 判断群聊是否启用待办功能 | `chat_id: str` | `bool` |
+| `MessageRouter._handle_todo_command(msg, content)` | — | 分发群待办命令（@ 与裸文本共用），并触发自动清理 | `msg: dict, content: str` | `str \| None` |
 | `MessageRouter._get_group_memory(chat_id)` | ~140 | 获取群聊记忆文本 | `chat_id: str` | `str` |
 | `MessageRouter._handle_summary(msg)` | ~145 | 生成聊天总结 | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_chat(msg, clean_content)` | ~230 | 处理 @bot AI 对话 | `msg: dict, clean_content: str` | `str \| None` |
@@ -567,6 +568,7 @@ todo_delete_keywords: list[str] = [
 |---|---|---|---|
 | `__init__(store, config)` | 初始化待办命令处理器 | `store: TodoStore, config` | `None` |
 | `handle(clean_content, chat_id, sender_id, sender_name, is_admin)` | 解析并执行待办命令 | `clean_content, chat_id, sender_id, sender_name, is_admin` | `TodoResult \| None` |
+| `looks_like_command(content)` | 裸文本分发前的语法预检；查看类直接命中，增/改/删/恢复要求带参数，避免「不要了」等日常用语误触发 | `content: str` | `bool` |
 | `_contains_any(text, keywords)` | 子串匹配(静态) | `text: str, keywords: list[str]` | `bool` |
 | `_match_prefix(text, keywords)` | 前缀匹配(静态, 长关键词优先) | `text: str, keywords: list[str]` | `tuple[Optional[str], str]` |
 | `format_todo_reply(result, sender_name)` | 格式化待办回复(模块级) | `result: TodoResult, sender_name: str` | `str` |
@@ -829,11 +831,12 @@ todo_delete_keywords: list[str] = [
 | `rules.py` | `normalize_text(text)` | 去空白/标点，用于重复检测 | `text: str` | `str` |
 | `rules.py` | `distinct_char_count(text)` | 去重字符数 | `text: str` | `int` |
 | `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
-| `levels.py` | `LevelTable(path=None).load()/save(levels)/for_points(points)/next_for(points)/label(points)` | 等级表读写与查询（`data/point_levels.json`） | 见签名 | 见签名 |
-| `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`） | 见签名 | 见签名 |
-| `fishing_catalog.py` | `validate_catalog(data)` | 校验鱼竿/鱼饵/鱼种/延迟目录（唯一 id、默认竿、稀有度、重量、0~300 秒） | `data: dict` | `dict` |
+| `levels.py` | `LevelTable(path=None).load()/save(levels)/for_points(points)/next_for(points)/label(points)` | 等级表读写与查询（`data/point_levels.json`，默认 Lv0~Lv12） | 见签名 | 见签名 |
+| `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`，默认 4 槽位） | 见签名 | 见签名 |
+| `fishing_catalog.py` | `validate_catalog(data)` | 校验鱼竿/鱼饵/鱼种/延迟目录（唯一 id、默认竿、6 种稀有度、重量、0~300 秒） | `data: dict` | `dict` |
 | `fishing_catalog.py` | `FishingCatalog(path=None).load()/save(catalog)/rods()/baits()/species()/find_rod(key)/by_rod_id(id)/find_bait(key)/by_bait_id(id)/by_species_id(id)/default_rod()/delay_for(rarity)` | 钓鱼目录读写与查询（`data/fishing.json`，失败回退内置默认值） | 见签名 | 见签名 |
-| `fishing.py` | `species_weight(species, rare_bonus)` | 稀有度加权后的有效权重（rare/epic/legendary 才受加成） | 见签名 | `float` |
+| `fishing.py` | `fishing_level(catches)` | 钓鱼熟练度：按累计条数返回等级、称号、稀有/价值加成与下一级差 | `catches: int` | `dict` |
+| `fishing.py` | `species_weight(species, rare_bonus)` | 稀有度加权后的有效权重（rare/epic/legendary/mythic 才受加成） | 见签名 | `float` |
 | `fishing.py` | `pick_species(species, rare_bonus, roll)` | 按权重抽取鱼种 | 见签名 | `dict \| None` |
 | `fishing.py` | `roll_weight(species, roll)` | 在鱼种重量区间内取样（克） | 见签名 | `int` |
 | `fishing.py` | `catch_amount(species, weight_g, rod_value_bonus=0, bait_value_bonus=0)` | 渔获价值 = 基础价值 × 尺寸系数 × 装备加成 | 见签名 | `int` |
@@ -846,7 +849,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `buy_fishing_rod(...)` / `buy_fishing_bait(...)` / `equip_fishing_rod(...)` | 条件扣款购买鱼竿/鱼饵、切换鱼竿 | 见签名 | 见签名 |
 | `store.py` | `commit_fishing_cast(...)` | 单事务写入 cast + 扣饵 + `category='fish'` 入账；`UNIQUE(message_id, cast_index)` 幂等 | 见签名 | `(bool, bait_used)` |
 | `store.py` | `fishing_recent/fishing_board/fishing_collection` | 最近渔获、总榜/今日/条数/大鱼榜、图鉴 | 见签名 | `list` |
-| `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
+| `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案（鱼篓/图鉴附带钓鱼等级与熟练加成）；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
+| `handler.py` | `_duel_record(chat_id, sender_id, sender_name)` / `_duel_board(chat_id, group_name)` | 「切磋战绩」段位与生涯数据 / 「战神榜」生涯胜场排行 | 见签名 | `str` |
 | `store.py` | `PointStore(conn, lock=None)` | 积分流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
 | `store.py` | `record_events(chat_id, message_id, awards, now_ts=None)` | 幂等写入流水（`UNIQUE(message_id, reason)`） | 见签名 | `int` |
 | `store.py` | `board(chat_id, scope='total', limit=10, now_ts=None)` | 榜单（total/season/day，含余额与并列名次） | 见签名 | `list[dict]` |
@@ -856,6 +860,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `equip_item(...)` / `owned_items(...)` | 装备切换 / 已购清单 | 见签名 | 见签名 |
 | `store.py` | `buy_shield(...)` / `shield_expires_at(...)` | 购买/查询限时免战 | 见签名 | 见签名 |
 | `store.py` | `duel_attempts/duel_stolen/defender_received/pair_duels/last_pair_at/last_loss_at` | 切磋次数与冷却查询（`pair_duels` 按攻击方→防守方统计当天次数） | 见签名 | `int` |
+| `store.py` | `duel_record(chat_id, sender_id)` | 某人生涯切磋：总场次/胜场/累计抢分（不含免战拦截） | 见签名 | `dict` |
+| `store.py` | `duel_leaderboard(chat_id, limit=10)` | 战神榜：按生涯胜场、抢分排序 | 见签名 | `list[dict]` |
 | `store.py` | `record_duel(...)` | 原子写入切磋记录与积分转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
 | `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日积分（含 0） | 见签名 | `list[dict]` |
@@ -868,7 +874,10 @@ todo_delete_keywords: list[str] = [
 | `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
 | `duel.py` | `win_probability(a, d, k=1.15, min_prob=0.08, max_prob=0.92)` | 胜率公式（tanh 曲线，上下限夹取） | 见签名 | `float` |
 | `duel.py` | `steal_amount(a, d, defender_balance, ...)` | 抢分公式（差距越大抢得越少） | 见签名 | `int` |
+| `duel.py` | `duel_rank(wins)` | 生涯胜场 → 段位（青铜/白银/黄金/铂金/钻石/王者/战神）及升级差 | `wins: int` | `dict` |
 | `duel.py` | `DuelService.power(chat_id, sender_id)` | 武力值 = 10 + 等级×5 + 装备 | 见签名 | `PowerBreakdown` |
+| `duel.py` | `DuelService.record(chat_id, sender_id)` | 生涯战绩 + 当前段位 | 见签名 | `dict` |
+| `duel.py` | `DuelService.leaderboard(chat_id, limit=10)` | 战神榜行，附带段位 | 见签名 | `list[dict]` |
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
@@ -877,10 +886,13 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `PointHandler._display_name(chat_id, sender_id, fallback="")` | 显示名回退链：手动昵称 → fallback → 群昵称 → 消息表昵称 → wxid | `chat_id: str, sender_id: str, fallback: str` | `str` |
 | `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
 
-模块常量：`DEFAULT_LEVELS`（6 级）、`DEFAULT_ITEMS`（12 件装备）、
-`DEFAULT_RODS`（5 根鱼竿）、`DEFAULT_BAITS`（3 种鱼饵）、
-`DEFAULT_SPECIES`（19 种鱼）、`DEFAULT_DELAYS`（空竿/普通 5s、稀有 15s、
-史诗 30s、传说 60s）、`BASE_POWER=10`、`POWER_PER_LEVEL=5`。
+模块常量：`DEFAULT_LEVELS`（13 级，Lv0 潜水员 ~ Lv12 永恒）、
+`DEFAULT_SLOTS`（4 槽位：武器/护甲/饰品/坐骑）、`DEFAULT_ITEMS`（25 件装备）、
+`DEFAULT_RODS`（7 根鱼竿）、`DEFAULT_BAITS`（5 种鱼饵）、
+`DEFAULT_SPECIES`（25 种鱼，含 3 种神话）、`DEFAULT_DELAYS`（空竿/普通 5s、
+稀有 15s、史诗 30s、传说 60s、神话 90s）、`FISHING_LEVELS`（Lv1 新手 ~
+Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
+`POWER_PER_LEVEL=5`。
 
 命令行：`tools/points_backfill.py --all | --chat <chat_id> --days N
 [--rebuild] [--db <path>]`——按 `messages` 表重放计分；`--rebuild`
@@ -1109,13 +1121,18 @@ AbstractSummarizer (base.py)
          │      │
          │      ├─ 帮助/管理命令 → AdminCommandHandler.handle(config, is_admin)
          │      │     └─ 帮助 → _help_text()（按功能开关/管理员身份生成游玩清单）
-         │      ├─ todo command → TodoHandler.handle()
+         │      ├─ todo command → _handle_todo_command() → TodoHandler.handle()
          │      ├─ feishu export → FeishuExportService.export_recent_chat()
          │      └─ fun (抽签/解签) → _handle_fun_command()
          │            ├─ 抽签 → draw_lot() + save_fun_draw()
          │            └─ 解签 → get_fun_draw() + summarizer.chat()（带上下文）
          │
          └─→ [Proactive 路径 / 裸关键词]
+                │
+                ├─ 帮助/管理命令/待办（裸文本，仅 5 分钟内新消息）
+                │     ├─ 帮助 → AdminCommandHandler.handle(config, is_admin)
+                │     ├─ 管理命令（仅管理员） → AdminCommandHandler.handle()
+                │     └─ TodoHandler.looks_like_command() → _handle_todo_command()
                 │
                 ├─ TriggerDetector.is_trigger() — 裸关键词 → _handle_summary()
                 │     (仅 5 分钟内的新消息)
@@ -1577,10 +1594,11 @@ class TriggerDetector:
 #### 调用链
 
 ```
-@bot 消息 → MessageRouter.handle(msg)
+@bot / 裸文本消息 → MessageRouter.handle(msg)
   │
   └── TodoHandler.handle(clean_content, chat_id, sender_id, sender_name, is_admin)
         │
+        ├── 裸文本先经 looks_like_command() 预检（避免日常用语误触发）
         ├── 优先级1: 查看活跃待办 → list_active()
         ├── 优先级2: 查看已完成 → list_completed()
         ├── 优先级3: 查看已删除 → list_deleted()
@@ -1963,11 +1981,13 @@ MessageRouter.handle(msg)
 | `查询 名字` / `查询 我` | 一行查询他人：积分 / 余额 / 武力值（无需 @；匹配不到成员时保持沉默） |
 | `积分榜` / `月榜` / `积分榜 今日` | 总榜 / 赛季榜 / 今日榜 |
 | `积分规则` | 规则摘要 |
-| `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统 |
-| `武力值` / `战力榜` | 武力值拆解 / 战力排行 |
+| `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位，含 Lv7+ 进阶装备） |
+| `武力值` / `战力榜` | 武力值拆解 + 切磋段位 / 战力排行 |
 | `切磋 @某人` / 引用后 `切磋` | 发起切磋 |
 | `买免战券` / `免战` | 购买 4 小时免战 |
 | `切磋记录` | 自己最近 10 场 |
+| `切磋战绩` | 生涯胜/负/胜率/抢分 + 段位（青铜~战神）与升级差 |
+| `战神榜` | 本群生涯胜场排行 |
 | `积分调整 名字 ±N [理由]` / `积分重算` | 管理员专用 |
 
 #### 计分与切磋公式
@@ -2015,9 +2035,10 @@ MessageRouter.handle(msg)
 | `解签` / `@机器人 解签` | 每人每群每天限一次；取当天抽到的签，带最近 600 秒群聊上下文调用 AI 解签 |
 | `解签`（今天还没抽/已解过） | 提示先「抽签」或「今天已经解过签啦」 |
 
-**概率固定，不可配置**：`FIXED_WEIGHTS = [5, 20, 40, 25, 10]`（大吉/中吉/
-小吉/末吉/凶）。`lots.json` 中的 `weights` 与 `POST /api/lots` 的权重入参
-都会被忽略；只有等级名称、emoji、签文内容可自定义。
+**概率固定，不可配置**：`FIXED_WEIGHTS = [2, 5, 18, 40, 25, 10]`（上上签/
+大吉/中吉/小吉/末吉/凶）。`lots.json` 中的 `weights` 与 `POST /api/lots` 的
+权重入参都会被忽略；只有等级名称、emoji、签文内容可自定义。旧版 5 级
+`lots.json` 会在读取时自动补上默认「上上签」，自定义签文不会丢失。
 
 裸文本指令受 300 秒消息年龄保护（启动回放不响应）；`FUN_ENABLED=false`
 时两者都不触发。解签失败时归还当天解签名额并回退为原签文文本。
@@ -2111,17 +2132,21 @@ PointHandler.handle("钓鱼 5")
 | 输入 | 行为 |
 |---|---|
 | `钓鱼` / `钓鱼 5` / `钓鱼 五` | 抛 1~N 竿（单条消息最多 `FISHING_MAX_BATCH`） |
-| `鱼竿` / `买鱼竿 名称` / `换鱼竿 名称` | 鱼竿商店、购买自动装备、切换 |
-| `鱼饵` / `买鱼饵 [名称] [数量]` | 鱼饵商店、购买（默认 10 个） |
-| `鱼篓` / `我的鱼` | 今日次数/收益、鱼竿、鱼饵、累计渔获、图鉴进度 |
-| `图鉴` / `钓鱼图鉴` | 按稀有度展示鱼种与已钓标记 |
+| `鱼竿` / `买鱼竿 名称` / `换鱼竿 名称` | 鱼竿商店（7 档）、购买自动装备、切换 |
+| `鱼饵` / `买鱼饵 [名称] [数量]` | 鱼饵商店（5 档）、购买（默认 10 个） |
+| `鱼篓` / `我的鱼` | 今日次数/收益、鱼竿、鱼饵、钓鱼等级与熟练加成、累计渔获、图鉴进度 |
+| `图鉴` / `钓鱼图鉴` | 按稀有度展示鱼种（含神话）与已钓标记、当前钓鱼等级 |
 | `钓鱼榜` / `钓鱼榜 今日` / `钓鱼榜 大鱼` / `钓鱼榜 数量` | 余额/今日/大鱼/条数榜 |
 | `钓鱼记录` | 自己最近 10 条渔获 |
 
 #### 反馈延迟
 
-空竿/垃圾 5s、普通 5s、稀有 15s、史诗 30s、传说 60s；可在
+空竿/垃圾 5s、普通 5s、稀有 15s、史诗 30s、传说 60s、神话 90s；可在
 `data/fishing.json` 的 `delays` 中修改。延迟只影响播报，不影响结算。
+
+钓鱼熟练度由累计钓到的鱼条数决定（0/25/80/200/500/1000/2000 条 →
+Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠加；空竿不计入
+条数，熟练度不改变累计积分、等级和榜单。
 
 ---
 

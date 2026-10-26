@@ -270,6 +270,8 @@ class MessageRouter:
             self._sticky is not None
             and self._sticky.consume(msg["chat_id"], msg["sender_id"])
         )
+        is_admin = bool(self._config.admin_wxid) and \
+            msg.get("sender_id") == self._config.admin_wxid
 
         # ── Activity query (bare keyword or @bot, anyone) ─────────
         # Handled before the @mention split so "活跃查询" works without @.
@@ -417,10 +419,11 @@ class MessageRouter:
 
             # Help text is available to everyone; admin-only commands
             # are only listed for the configured admin.
-            is_admin = bool(self._config.admin_wxid) and \
-                msg["sender_id"] == self._config.admin_wxid
-
-            if reply is None and clean_content.strip() in ("帮助", "help", "命令"):
+            if (
+                reply is None
+                and self._admin is not None
+                and clean_content.strip() in ("帮助", "help", "命令")
+            ):
                 reply = self._admin.handle(
                     clean_content, msg["sender_name"],
                     config=self._config, is_admin=is_admin,
@@ -429,40 +432,15 @@ class MessageRouter:
             if reply is None:
                 reply = self._handle_fun_command(msg)
 
-            if reply is None and is_admin:
+            if reply is None and is_admin and self._admin is not None:
                 reply = self._admin.handle(
                     clean_content, msg["sender_name"],
                     config=self._config, is_admin=True,
                 )
 
             # ── Todo: group todo commands ───────────────────
-            if (
-                reply is None
-                and self._todo_handler is not None
-                and self._is_todo_group(msg["chat_id"])
-            ):
-                is_admin = (
-                    bool(self._config.admin_wxid)
-                    and msg["sender_id"] == self._config.admin_wxid
-                )
-                try:
-                    result = self._todo_handler.handle(
-                        clean_content,
-                        msg["chat_id"],
-                        msg["sender_id"],
-                        msg["sender_name"],
-                        is_admin,
-                    )
-                    if result is not None:
-                        reply = format_todo_reply(result, msg["sender_name"])
-                    # 触发自动清理
-                    self._todo_store.cleanup(
-                        msg["chat_id"],
-                        self._config.todo_completed_retention_days,
-                        self._config.todo_deleted_retention_days,
-                    )
-                except Exception:
-                    logger.exception("Todo command failed")
+            if reply is None:
+                reply = self._handle_todo_command(msg, clean_content)
 
             if reply is None and self._detector.is_trigger(
                 content=clean_content,
@@ -480,6 +458,41 @@ class MessageRouter:
             # (e.g. "总结一下") is enough; only stale messages replayed
             # on startup are ignored.
             msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
+            clean_content = clean_command_text(
+                msg.get("content", ""), bot_name, self._bot_aliases(),
+            )
+
+            # ── Help / admin / todo commands (bare text, no @ needed) ──
+            # Only fresh messages are accepted so replayed history does
+            # not re-run commands on startup.
+            if msg_age_sec <= AT_MENTION_MAX_AGE_SEC and clean_content.strip():
+                if self._admin is not None and clean_content.strip() in (
+                    "帮助", "help", "命令",
+                ):
+                    reply = self._admin.handle(
+                        clean_content, msg["sender_name"],
+                        config=self._config, is_admin=is_admin,
+                    )
+                    if reply:
+                        return self._strip_markdown(reply)
+                if is_admin and self._admin is not None:
+                    reply = self._admin.handle(
+                        clean_content, msg["sender_name"],
+                        config=self._config, is_admin=True,
+                    )
+                    if reply:
+                        return self._strip_markdown(reply)
+                if (
+                    self._todo_handler is not None
+                    and self._is_todo_group(msg["chat_id"])
+                    and self._todo_handler.looks_like_command(clean_content)
+                ):
+                    todo_reply = self._handle_todo_command(
+                        msg, clean_content,
+                    )
+                    if todo_reply:
+                        return self._strip_markdown(todo_reply)
+
             if (
                 msg_age_sec <= AT_MENTION_MAX_AGE_SEC
                 and self._config.summarize_enabled
@@ -575,6 +588,37 @@ class MessageRouter:
             if display_name and g_lower in display_name.lower():
                 return True
         return False
+
+    def _handle_todo_command(self, msg: dict, content: str) -> str | None:
+        """Dispatch a group todo command; returns reply text or None."""
+        if self._todo_handler is None or not self._is_todo_group(msg["chat_id"]):
+            return None
+        is_admin = (
+            bool(self._config.admin_wxid)
+            and msg["sender_id"] == self._config.admin_wxid
+        )
+        try:
+            result = self._todo_handler.handle(
+                content,
+                msg["chat_id"],
+                msg["sender_id"],
+                msg["sender_name"],
+                is_admin,
+            )
+            reply = (
+                format_todo_reply(result, msg["sender_name"])
+                if result is not None else None
+            )
+            # 触发自动清理
+            self._todo_store.cleanup(
+                msg["chat_id"],
+                self._config.todo_completed_retention_days,
+                self._config.todo_deleted_retention_days,
+            )
+            return reply
+        except Exception:
+            logger.exception("Todo command failed")
+            return None
 
     # ── Memory helper ────────────────────────────────────────────
 

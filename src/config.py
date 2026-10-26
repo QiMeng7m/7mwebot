@@ -229,7 +229,7 @@ class BotConfig:
     db_path: str = "data/messages.db"
 
     # === Fun Features ===
-    # @抽签 — draw a fortune lot (大吉/中吉/小吉/末吉/凶)
+    # @抽签 — draw a fortune lot (上上签/大吉/中吉/小吉/末吉/凶)
     fun_enabled: bool = True
 
     # === Proactive Participation ===

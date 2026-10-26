@@ -23,6 +23,13 @@ DEFAULT_LEVELS: list[dict] = [
     {"level": 4, "title": "话痨", "min_points": 500},
     {"level": 5, "title": "群柱", "min_points": 1200},
     {"level": 6, "title": "传说", "min_points": 3000},
+    # ── 进阶段位（老玩家继续提升的目标）──────────────────────────
+    {"level": 7, "title": "宗师", "min_points": 6000},
+    {"level": 8, "title": "传奇", "min_points": 10000},
+    {"level": 9, "title": "王者", "min_points": 18000},
+    {"level": 10, "title": "神话", "min_points": 30000},
+    {"level": 11, "title": "超凡", "min_points": 60000},
+    {"level": 12, "title": "永恒", "min_points": 120000},
 ]
 
 DEFAULT_LEVELS_PATH = PROJECT_ROOT / "data/point_levels.json"

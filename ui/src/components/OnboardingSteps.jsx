@@ -689,7 +689,7 @@ export function Step4Features({ data, updateData, onComplete }) {
 
       <div className="space-y-4 mt-4">
         <div className="divide-y divide-border-main/40">
-          <ToggleRow label="趣味抽签" desc={'@机器人说「抽签」，随机返回运势签文（大吉/中吉/小吉/末吉/凶）'} enabled={data.fun_enabled ?? true}
+          <ToggleRow label="趣味抽签" desc={'@机器人说「抽签」，随机返回运势签文（上上签/大吉/中吉/小吉/末吉/凶）'} enabled={data.fun_enabled ?? true}
             onChange={v => updateData({ fun_enabled: v })} />
           <ToggleRow label="主动发言" desc="根据群聊活跃度自动参与对话" enabled={data.proactive_enabled ?? false}
             onChange={v => updateData({ proactive_enabled: v })} />

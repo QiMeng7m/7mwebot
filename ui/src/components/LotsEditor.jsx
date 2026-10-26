@@ -133,7 +133,7 @@ export default function LotsEditor() {
     <div className="space-y-2.5">
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-text-muted">
-          自定义各等级签文与 emoji。各等级概率固定（大吉 5% / 中吉 20% /
+          自定义各等级签文与 emoji。各等级概率固定（上上签 2% / 大吉 5% / 中吉 18% /
           小吉 40% / 末吉 25% / 凶 10%），不可调整。
         </p>
       </div>

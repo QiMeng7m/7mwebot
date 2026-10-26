@@ -19,6 +19,38 @@ BASE_POWER = 10
 POWER_PER_LEVEL = 5
 MIN_DEFENDER_BALANCE = 2
 
+# 切磋段位 — based on career wins (not daily), so strong players keep a
+# long-term ladder after their daily attempts are spent.
+DUEL_RANKS: list[dict] = [
+    {"rank": 0, "title": "青铜", "min_wins": 0},
+    {"rank": 1, "title": "白银", "min_wins": 5},
+    {"rank": 2, "title": "黄金", "min_wins": 15},
+    {"rank": 3, "title": "铂金", "min_wins": 30},
+    {"rank": 4, "title": "钻石", "min_wins": 50},
+    {"rank": 5, "title": "王者", "min_wins": 80},
+    {"rank": 6, "title": "战神", "min_wins": 120},
+]
+
+
+def duel_rank(wins: int) -> dict:
+    """Return the duel rank entry for *wins*, plus progress to the next."""
+    wins = max(0, int(wins or 0))
+    current = DUEL_RANKS[0]
+    for entry in DUEL_RANKS:
+        if wins >= entry["min_wins"]:
+            current = entry
+        else:
+            break
+    index = DUEL_RANKS.index(current)
+    nxt = DUEL_RANKS[index + 1] if index + 1 < len(DUEL_RANKS) else None
+    return {
+        **current,
+        "next": nxt,
+        "wins_to_next": (
+            max(0, int(nxt["min_wins"]) - wins) if nxt else 0
+        ),
+    }
+
 
 # ── Pure formulas ────────────────────────────────────────────────────
 
@@ -101,6 +133,28 @@ class DuelService:
             equipment=equipment_power,
             items=items,
         )
+
+    # ── Career record ─────────────────────────────────────────────
+
+    def record(self, chat_id: str, sender_id: str) -> dict:
+        """Career duel record with the member's current rank."""
+        row = self._store.duel_record(chat_id, sender_id)
+        wins = int(row.get("wins", 0))
+        total = int(row.get("total", 0))
+        return {
+            "wins": wins,
+            "losses": max(0, total - wins),
+            "total": total,
+            "stolen": int(row.get("stolen", 0)),
+            "rank": duel_rank(wins),
+        }
+
+    def leaderboard(self, chat_id: str, limit: int = 10) -> list[dict]:
+        """Career win leaderboard, each row annotated with its rank."""
+        rows = self._store.duel_leaderboard(chat_id, limit)
+        for row in rows:
+            row["rank"] = duel_rank(int(row.get("wins", 0)))
+        return rows
 
     # ── Duel ──────────────────────────────────────────────────────
 

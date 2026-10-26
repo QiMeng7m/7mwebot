@@ -293,7 +293,7 @@ class TestPointsApi:
         assert data["ok"] is True
         names = [item["name"] for item in data["catalog"]["items"]]
         assert "木剑" in names
-        assert len(data["catalog"]["slots"]) == 3
+        assert len(data["catalog"]["slots"]) == 4
 
     def test_duels_endpoint(self, server):
         status, data = _api_get("/api/duels?chat_id=test@chatroom")

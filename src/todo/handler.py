@@ -115,6 +115,32 @@ class TodoHandler:
 
         return None  # Not a todo command
 
+    def looks_like_command(self, content: str) -> bool:
+        """Cheap syntax check for bare (no @mention) dispatch.
+
+        Requires an argument for add/complete/delete/restore so casual
+        group phrases like「不要了」「取消」don't trigger usage errors.
+        """
+        text = (content or "").strip()
+        if not text:
+            return False
+        if self._contains_any(
+            text,
+            _VIEW_KEYWORDS + _COMPLETED_LIST_KEYWORDS
+            + _DELETED_LIST_KEYWORDS + _CLEAR_KEYWORDS,
+        ):
+            return True
+        for keywords in (
+            self._config.todo_add_keywords,
+            self._config.todo_complete_keywords,
+            self._config.todo_delete_keywords,
+            _RESTORE_KEYWORDS,
+        ):
+            kw, arg = self._match_prefix(text, keywords)
+            if kw and arg:
+                return True
+        return False
+
     @staticmethod
     def _contains_any(text: str, keywords: list[str]) -> bool:
         """True if text contains any of the keywords as a substring."""

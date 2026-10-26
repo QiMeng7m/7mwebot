@@ -751,6 +751,37 @@ class PointStore:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def duel_record(self, chat_id: str, sender_id: str) -> dict:
+        """Career duels initiated by one member (shields excluded)."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) AS total,
+                          COALESCE(SUM(attacker_win), 0) AS wins,
+                          COALESCE(SUM(points_moved), 0) AS stolen
+                   FROM duels
+                   WHERE chat_id = ? AND attacker_id = ?
+                     AND shield_blocked = 0""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return dict(row) if row else {"total": 0, "wins": 0, "stolen": 0}
+
+    def duel_leaderboard(self, chat_id: str, limit: int = 10) -> list[dict]:
+        """Career win leaderboard for one group."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT attacker_id, MAX(attacker_name) AS sender_name,
+                          COUNT(*) AS total,
+                          COALESCE(SUM(attacker_win), 0) AS wins,
+                          COALESCE(SUM(points_moved), 0) AS stolen
+                   FROM duels
+                   WHERE chat_id = ? AND shield_blocked = 0
+                   GROUP BY attacker_id
+                   ORDER BY wins DESC, stolen DESC, attacker_id ASC
+                   LIMIT ?""",
+                (str(chat_id), int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # ── Fishing ───────────────────────────────────────────────────
 
     def fishing_attempts_since(self, chat_id: str, sender_id: str,

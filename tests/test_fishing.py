@@ -87,7 +87,7 @@ class CatalogTests(unittest.TestCase):
 
     def test_bad_rarity_is_rejected(self):
         data = default_catalog()
-        data["species"][0]["rarity"] = "mythic"
+        data["species"][0]["rarity"] = "mythicx"
         with self.assertRaises(ValueError):
             validate_catalog(data)
 

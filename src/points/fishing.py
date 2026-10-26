@@ -28,6 +28,53 @@ logger = logging.getLogger(__name__)
 MIN_MISS_CHANCE = 0.02
 MAX_MISS_CHANCE = 0.50
 
+# ── 钓鱼熟练度（终局成长）────────────────────────────────────────────
+# Every member starts at Lv1 with no bonus.  Cumulative catches raise the
+# level permanently, adding a small rare/value bonus on top of gear — so
+# old players keep improving even after buying every rod and completing
+# the catalog.
+FISHING_LEVELS: list[dict] = [
+    {"level": 1, "title": "新手", "min_catches": 0,
+     "rare_bonus": 0.0, "value_bonus": 0.0},
+    {"level": 2, "title": "钓客", "min_catches": 25,
+     "rare_bonus": 0.03, "value_bonus": 0.02},
+    {"level": 3, "title": "老手", "min_catches": 80,
+     "rare_bonus": 0.06, "value_bonus": 0.05},
+    {"level": 4, "title": "高手", "min_catches": 200,
+     "rare_bonus": 0.10, "value_bonus": 0.08},
+    {"level": 5, "title": "大师", "min_catches": 500,
+     "rare_bonus": 0.15, "value_bonus": 0.12},
+    {"level": 6, "title": "宗师", "min_catches": 1000,
+     "rare_bonus": 0.20, "value_bonus": 0.16},
+    {"level": 7, "title": "渔神", "min_catches": 2000,
+     "rare_bonus": 0.26, "value_bonus": 0.20},
+]
+
+
+def fishing_level(catches: int) -> dict:
+    """Proficiency entry for *catches*, with the next threshold attached.
+
+    Returns the level row plus ``next`` (or None at max level) and
+    ``catches_to_next`` (0 at max level).
+    """
+    catches = max(0, int(catches or 0))
+    current = FISHING_LEVELS[0]
+    for entry in FISHING_LEVELS:
+        if catches >= entry["min_catches"]:
+            current = entry
+        else:
+            break
+
+    index = FISHING_LEVELS.index(current)
+    nxt = FISHING_LEVELS[index + 1] if index + 1 < len(FISHING_LEVELS) else None
+    return {
+        **current,
+        "next": nxt,
+        "catches_to_next": (
+            max(0, int(nxt["min_catches"]) - catches) if nxt else 0
+        ),
+    }
+
 
 # ── Pure formulas ────────────────────────────────────────────────────
 
@@ -226,6 +273,12 @@ class FishingService:
 
         rod = self.rod_of(chat_id, sender_id)
         species_list = self._catalog.species()
+        # Proficiency is based on catches before this command, so a
+        # multi-cast command levels up only on the next one.
+        proficiency = fishing_level(
+            int(self._store.fishing_totals(chat_id, sender_id).get(
+                "catches", 0))
+        )
         cast_rows: list[FishCatch] = []
         total_value = 0
 
@@ -236,9 +289,11 @@ class FishingService:
             bait = self._next_bait(chat_id, sender_id)
             bait_id = bait["id"] if bait else ""
             rare_bonus = float(rod.get("rare_bonus", 0) or 0) + \
-                float(bait.get("rare_bonus", 0) if bait else 0)
+                float(bait.get("rare_bonus", 0) if bait else 0) + \
+                float(proficiency["rare_bonus"])
             value_bonus = float(rod.get("value_bonus", 0) or 0) + \
-                float(bait.get("value_bonus", 0) if bait else 0)
+                float(bait.get("value_bonus", 0) if bait else 0) + \
+                float(proficiency["value_bonus"])
 
             miss = _roll(rng) < effective_miss_chance(
                 base_miss, float(rod.get("miss_reduction", 0) or 0),
@@ -343,6 +398,7 @@ class FishingService:
 
         totals = self._store.fishing_totals(chat_id, sender_id)
         caught = self._store.fishing_collection(chat_id, sender_id)
+        catches = int(totals.get("catches", 0))
         return {
             "attempts": self._store.fishing_attempts_since(
                 chat_id, sender_id, hour_start),
@@ -355,10 +411,11 @@ class FishingService:
             "rod": rod,
             "baits": baits,
             "total_value": int(totals.get("value", 0)),
-            "catches": int(totals.get("catches", 0)),
+            "catches": catches,
             "biggest_weight": int(totals.get("biggest", 0)),
             "caught_species": caught,
             "species_total": len(self._catalog.species()),
+            "level": fishing_level(catches),
             "last_cast_at": self._store.fishing_last_cast_at(
                 chat_id, sender_id),
         }

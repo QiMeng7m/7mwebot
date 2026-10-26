@@ -12,6 +12,28 @@ logger = logging.getLogger(__name__)
 # ── 默认签文数据（用户未自定义时使用）──────────────────────────────
 
 _DEFAULT_LEVELS = [
+    ("上上签", "🟣", [
+        "鸿运当头，今天做什么都像自带主角光环",
+        "天时地利人和，连排队都能刚好叫到你",
+        "惊喜在路上，可能不止一件",
+        "运势开挂，难题今天主动让路",
+        "贵人扎堆，关键时刻总有人递梯子",
+        "心想事成，连拖延症都主动请假",
+        "手气爆棚，抽卡都像内部员工",
+        "好运连击，好消息可能一波接一波",
+        "万事胜意，今天适合把愿望说大声点",
+        "紫气东来，连空气都像在给你让道",
+        "灵感与财运同时上线，别浪费",
+        "旗开得胜，今天立的旗基本不会倒",
+        "人逢喜事，笑点低一点也没关系",
+        "福气加满，麻烦见了都绕道",
+        "顺到离谱，建议趁机推进最重要的事",
+        "锦鲤本鲤，运气好得有点不真实",
+        "状态封神，今天你就是群里的欧皇",
+        "心想事成，连小愿望都可能被听见",
+        "好运爆表，适合大胆一点",
+        "万事皆宜，今天值得认真开心",
+    ]),
     ("大吉", "🟢", [
         "福星在线，连外卖都能准点到",
         "好运爆棚，随手一抽全是惊喜",
@@ -124,9 +146,9 @@ _DEFAULT_LEVELS = [
     ]),
 ]
 
-_DEFAULT_WEIGHTS = [5, 20, 40, 25, 10]
+_DEFAULT_WEIGHTS = [2, 5, 18, 40, 25, 10]
 
-# 概率固定，不允许通过配置修改（大吉/中吉/小吉/末吉/凶）。
+# 概率固定，不允许通过配置修改（上上签/大吉/中吉/小吉/末吉/凶）。
 # 顺序与 _DEFAULT_LEVELS 一致，合计 100。
 FIXED_WEIGHTS = list(_DEFAULT_WEIGHTS)
 
@@ -229,6 +251,14 @@ def _load_lots_from_json() -> tuple[list, list] | None:
     try:
         data = json.loads(_LOTS_PATH.read_text(encoding="utf-8"))
         levels = data.get("levels", [])
+
+        # Legacy files created before 上上签 existed have one tier fewer.
+        # Prepend the default top tier so custom phrases are not lost.
+        if isinstance(levels, list) and \
+                len(levels) == len(FIXED_WEIGHTS) - 1:
+            name, emoji, phrases = _DEFAULT_LEVELS[0]
+            levels = [{"name": name, "emoji": emoji,
+                       "phrases": list(phrases)}] + levels
 
         # 快速校验（不做完整校验——save 时已经校验过；这里只防文件被手动损坏）
         if not levels or len(levels) != len(FIXED_WEIGHTS):

@@ -217,7 +217,7 @@ function FunSection({ form, update }) {
       <div className="flex items-center justify-between mb-4">
         <div className="flex-1 mr-8">
           <p className="text-[15px] text-text-main font-medium">趣味抽签</p>
-          <p className="text-sm text-text-muted mt-1.5">@机器人说"抽签"，随机返回运势签文（大吉/中吉/小吉/末吉/凶）</p>
+          <p className="text-sm text-text-muted mt-1.5">@机器人说"抽签"，随机返回运势签文（上上签/大吉/中吉/小吉/末吉/凶）</p>
         </div>
         <Toggle enabled={form.fun_enabled} onChange={v => update('fun_enabled', v)} />
       </div>

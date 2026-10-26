@@ -1,6 +1,10 @@
 """Fortune lots: drawing, formatting and 解签 persistence."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from src.db.schema import initialize_db
 from src.db.store import MessageStore
@@ -10,10 +14,14 @@ from src.fun import (
     draw_lots,
     format_lot,
     load_lots_config,
+    reset_lots_cache,
 )
 
 
 class DrawLotTests(unittest.TestCase):
+    def tearDown(self):
+        reset_lots_cache()
+
     def test_draw_lot_returns_configured_level(self):
         levels = load_lots_config()["levels"]
         lot = draw_lot()
@@ -23,6 +31,29 @@ class DrawLotTests(unittest.TestCase):
     def test_probabilities_are_fixed(self):
         self.assertEqual(load_lots_config()["weights"], FIXED_WEIGHTS)
         self.assertEqual(sum(FIXED_WEIGHTS), 100)
+        self.assertEqual(len(FIXED_WEIGHTS), 6)
+
+    def test_default_levels_start_with_top_tier(self):
+        levels = load_lots_config()["levels"]
+        self.assertEqual(len(levels), len(FIXED_WEIGHTS))
+        self.assertEqual(levels[0]["name"], "上上签")
+        self.assertEqual(levels[-1]["name"], "凶")
+
+    def test_legacy_five_level_file_gains_top_tier(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lots.json"
+            path.write_text(json.dumps({"levels": [
+                {"name": name, "emoji": "x", "phrases": [f"{name}签文"]}
+                for name in ("大吉", "中吉", "小吉", "末吉", "凶")
+            ]}, ensure_ascii=False), encoding="utf-8")
+            import src.fun as fun
+            with patch.object(fun, "_LOTS_PATH", path):
+                reset_lots_cache()
+                config = load_lots_config()
+        self.assertEqual(len(config["levels"]), 6)
+        self.assertEqual(config["levels"][0]["name"], "上上签")
+        self.assertEqual(config["levels"][1]["name"], "大吉")
+        self.assertEqual(config["levels"][1]["phrases"], ["大吉签文"])
 
     def test_draw_lots_formats_reply(self):
         reply = draw_lots("张三")
