@@ -660,7 +660,8 @@ todo_delete_keywords: list[str] = [
 > `_help_text` 按 `points_enabled` / `fun_enabled` / `equipment_enabled` /
 > `duel_enabled` / `fishing_enabled` / `todo_enabled` / `summarize_enabled`
 > 隐藏对应分节；切磋、钓鱼、免战券的数值从 config 实时读取。
-> 管理命令分节只在 `is_admin=True` 时出现。
+> 管理命令分节只在 `is_admin=True` 时出现。装备与切磋分节包含
+> 「切磋战绩」「战神榜」，钓鱼分节说明鱼篓/图鉴可查看钓鱼等级。
 
 ### 2.25 `src/fun.py`
 

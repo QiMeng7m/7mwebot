@@ -18,6 +18,7 @@ const DELAY_LABELS = {
   rare: '稀有',
   epic: '史诗',
   legendary: '传说',
+  mythic: '神话',
 }
 
 async function api(path, options = {}) {
