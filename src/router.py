@@ -415,17 +415,25 @@ class MessageRouter:
                         "AI 总结或飞书写入临时不可用，稍后再试一次。"
                     )
 
+            # Help text is available to everyone; admin-only commands
+            # are only listed for the configured admin.
+            is_admin = bool(self._config.admin_wxid) and \
+                msg["sender_id"] == self._config.admin_wxid
+
             if reply is None and clean_content.strip() in ("帮助", "help", "命令"):
-                reply = self._admin.handle(clean_content, msg["sender_name"])
+                reply = self._admin.handle(
+                    clean_content, msg["sender_name"],
+                    config=self._config, is_admin=is_admin,
+                )
 
             if reply is None:
                 reply = self._handle_fun_command(msg)
 
-            if reply is None and (
-                self._config.admin_wxid
-                and msg["sender_id"] == self._config.admin_wxid
-            ):
-                reply = self._admin.handle(clean_content, msg["sender_name"])
+            if reply is None and is_admin:
+                reply = self._admin.handle(
+                    clean_content, msg["sender_name"],
+                    config=self._config, is_admin=True,
+                )
 
             # ── Todo: group todo commands ───────────────────
             if (

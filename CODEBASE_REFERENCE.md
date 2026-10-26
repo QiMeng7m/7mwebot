@@ -647,9 +647,18 @@ todo_delete_keywords: list[str] = [
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
 | `__init__(nickname_service)` | 初始化管理员命令处理器 | `nickname_service: NicknameService` | `None` |
-| `handle(content, requester_name)` | 解析并执行管理命令 | `content: str, requester_name: str` | `str \| None` |
+| `handle(content, requester_name, config=None, is_admin=False)` | 解析并执行管理命令；`帮助/help/命令` 返回游玩清单 | `content: str, requester_name: str, config=None, is_admin: bool = False` | `str \| None` |
+| `_flag(config, name)` | 读取功能开关；`config=None` 视为启用 | `config, name: str` | `bool` |
+| `_cfg_int(config, name, default)` | 读取整数配置，非法值回退默认 | `config, name: str, default: int` | `int` |
+| `_hours(seconds)` | 秒转小时（去掉多余小数） | `seconds: int` | `str` |
+| `_help_text(requester_name, config, is_admin)` | 按功能开关和管理员身份拼装游玩清单 | `requester_name: str, config, is_admin: bool` | `str` |
 | `_cmd_rename(content, requester_name)` | 处理"改名"命令 | `content: str, requester_name: str` | `str \| None` |
 | `_cmd_delete_nickname(content, requester_name)` | 处理"删除昵称"命令 | `content: str, requester_name: str` | `str \| None` |
+
+> `_help_text` 按 `points_enabled` / `fun_enabled` / `equipment_enabled` /
+> `duel_enabled` / `fishing_enabled` / `todo_enabled` / `summarize_enabled`
+> 隐藏对应分节；切磋、钓鱼、免战券的数值从 config 实时读取。
+> 管理命令分节只在 `is_admin=True` 时出现。
 
 ### 2.25 `src/fun.py`
 
@@ -1098,7 +1107,8 @@ AbstractSummarizer (base.py)
          │      │     ├─ MessageStore.get_messages_since() (上下文)
          │      │     └─ AbstractSummarizer.chat()
          │      │
-         │      ├─ admin command → AdminCommandHandler.handle()
+         │      ├─ 帮助/管理命令 → AdminCommandHandler.handle(config, is_admin)
+         │      │     └─ 帮助 → _help_text()（按功能开关/管理员身份生成游玩清单）
          │      ├─ todo command → TodoHandler.handle()
          │      ├─ feishu export → FeishuExportService.export_recent_chat()
          │      └─ fun (抽签/解签) → _handle_fun_command()
