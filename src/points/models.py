@@ -68,6 +68,8 @@ class PowerBreakdown:
     level: int
     title: str
     equipment: int
+    realm: int = 0
+    realm_bonus: int = 0
     items: list[dict] = field(default_factory=list)
 
 

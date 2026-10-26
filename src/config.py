@@ -338,6 +338,17 @@ class BotConfig:
     fishing_max_batch: int = 10
     fishing_miss_chance: float = 0.15
 
+    # === World Boss / 群副本 ===
+    # Weekly cooperative boss: HP scales with group size, each member gets
+    # a few daily attempts, and the kill pool is split by damage share.
+    boss_enabled: bool = True
+    boss_groups: list[str] = field(default_factory=lambda: ["*"])
+    boss_daily_attempts: int = 3
+    boss_hp_per_member: int = 600
+    boss_min_hp: int = 3000
+    boss_max_hp: int = 30000
+    boss_reward_ratio: float = 0.15
+
     # === Tuning ===
     poll_interval_sec: float = 1.0
     dedup_window_sec: int = 60
@@ -727,6 +738,13 @@ def load_config() -> BotConfig:
         "fishing_cooldown_sec": _safe_int(os.getenv("FISHING_COOLDOWN_SEC", "5"), 5, "FISHING_COOLDOWN_SEC"),
         "fishing_max_batch": _safe_int(os.getenv("FISHING_MAX_BATCH", "10"), 10, "FISHING_MAX_BATCH"),
         "fishing_miss_chance": _safe_float(os.getenv("FISHING_MISS_CHANCE", "0.15"), 0.15, "FISHING_MISS_CHANCE"),
+        "boss_enabled": os.getenv("BOSS_ENABLED", "true").strip().lower() == "true",
+        "boss_groups": [g.strip() for g in os.getenv("BOSS_GROUPS", "*").split(",") if g.strip()],
+        "boss_daily_attempts": _safe_int(os.getenv("BOSS_DAILY_ATTEMPTS", "3"), 3, "BOSS_DAILY_ATTEMPTS"),
+        "boss_hp_per_member": _safe_int(os.getenv("BOSS_HP_PER_MEMBER", "600"), 600, "BOSS_HP_PER_MEMBER"),
+        "boss_min_hp": _safe_int(os.getenv("BOSS_MIN_HP", "3000"), 3000, "BOSS_MIN_HP"),
+        "boss_max_hp": _safe_int(os.getenv("BOSS_MAX_HP", "30000"), 30000, "BOSS_MAX_HP"),
+        "boss_reward_ratio": _safe_float(os.getenv("BOSS_REWARD_RATIO", "0.15"), 0.15, "BOSS_REWARD_RATIO"),
         "log_level": os.getenv("LOG_LEVEL", "INFO").strip(),
         "log_file": os.getenv("LOG_FILE", "data/bot.log").strip(),
         # Voice recognition

@@ -123,11 +123,12 @@ CREATE TABLE IF NOT EXISTS point_seasons (
 
 -- ── Equipment ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS equipment_owned (
-    chat_id      TEXT    NOT NULL,
-    sender_id    TEXT    NOT NULL,
-    item_id      TEXT    NOT NULL,
-    purchased_at INTEGER NOT NULL,
-    equipped     INTEGER NOT NULL DEFAULT 0,
+    chat_id       TEXT    NOT NULL,
+    sender_id     TEXT    NOT NULL,
+    item_id       TEXT    NOT NULL,
+    purchased_at  INTEGER NOT NULL,
+    equipped      INTEGER NOT NULL DEFAULT 0,
+    enhance_level INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chat_id, sender_id, item_id)
 );
 
@@ -216,6 +217,67 @@ CREATE TABLE IF NOT EXISTS fishing_inventory (
 
 CREATE INDEX IF NOT EXISTS idx_fish_inventory_member
     ON fishing_inventory(chat_id, sender_id);
+
+-- ── Endgame: world boss / achievements / realms ───────────────────
+-- One boss per group per ISO week.  HP scales with the group size when
+-- the boss is first summoned.
+CREATE TABLE IF NOT EXISTS boss_state (
+    chat_id    TEXT    NOT NULL,
+    season     TEXT    NOT NULL,              -- ISO week YYYY-Www
+    boss_name  TEXT    NOT NULL,
+    hp_total   INTEGER NOT NULL,
+    hp_left    INTEGER NOT NULL,
+    killed_at  INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, season)
+);
+
+-- Every boss hit.  UNIQUE(chat_id, message_id) makes command replay safe.
+CREATE TABLE IF NOT EXISTS boss_attacks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    season      TEXT    NOT NULL,
+    message_id  TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    damage      INTEGER NOT NULL,
+    crit        INTEGER NOT NULL DEFAULT 0,
+    day         TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_boss_attacks_member
+    ON boss_attacks(chat_id, season, sender_id);
+CREATE INDEX IF NOT EXISTS idx_boss_attacks_day
+    ON boss_attacks(chat_id, season, day, sender_id);
+
+-- Unlocked achievements (definitions live in src/points/achievements.py).
+CREATE TABLE IF NOT EXISTS achievements (
+    chat_id        TEXT    NOT NULL,
+    sender_id      TEXT    NOT NULL,
+    achievement_id TEXT    NOT NULL,
+    unlocked_at    INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, achievement_id)
+);
+
+-- Equipped display title per member.
+CREATE TABLE IF NOT EXISTS member_profiles (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    title      TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+-- 境界 (realm) progression after Lv12.
+CREATE TABLE IF NOT EXISTS member_realms (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    realm      INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
 """
 
 
@@ -249,6 +311,9 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
     _ensure_columns(conn, "fun_draws", {
         "day": "day TEXT NOT NULL DEFAULT ''",
         "interpreted_at": "interpreted_at INTEGER NOT NULL DEFAULT 0",
+    })
+    _ensure_columns(conn, "equipment_owned", {
+        "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
     })
 
     conn.commit()

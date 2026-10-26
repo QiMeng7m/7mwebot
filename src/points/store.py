@@ -442,7 +442,7 @@ class PointStore:
     def owned_items(self, chat_id: str, sender_id: str) -> list[dict]:
         with self._lock:
             rows = self.conn.execute(
-                """SELECT item_id, purchased_at, equipped
+                """SELECT item_id, purchased_at, equipped, enhance_level
                    FROM equipment_owned
                    WHERE chat_id = ? AND sender_id = ?
                    ORDER BY purchased_at ASC""",
@@ -550,6 +550,93 @@ class PointStore:
                  str(item_id)),
             )
         return True
+
+    def item_enhance_level(self, chat_id: str, sender_id: str,
+                           item_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT enhance_level FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), str(item_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def max_enhance_level(self, chat_id: str, sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(MAX(enhance_level), 0)
+                   FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def enhance_item(self, chat_id: str, sender_id: str,
+                     sender_name: str, item_id: str, cost: int,
+                     max_level: int, message_id: str,
+                     now_ts: int | None = None,
+                     ) -> tuple[bool, str, int, int]:
+        """Spend balance to raise one item's enhance level by 1.
+
+        Returns ``(ok, code, new_level, balance_after)``.  ``code`` is
+        ``ok`` / ``not_owned`` / ``max`` / ``insufficient`` / ``duplicate``.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        cost = max(0, int(cost))
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                """SELECT enhance_level FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), str(item_id)),
+            ).fetchone()
+            if not row:
+                return False, "not_owned", 0, self._balance_locked(
+                    chat_id, sender_id)
+            level = int(row[0])
+            if level >= int(max_level):
+                return False, "max", level, self._balance_locked(
+                    chat_id, sender_id)
+
+            balance = self._balance_locked(chat_id, sender_id)
+            if balance < cost:
+                return False, "insufficient", level, balance
+
+            if cost > 0:
+                cur = self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, ?, ?, 'enhance', 'spend', ?, ?, ?, ?
+                       WHERE (SELECT COALESCE(SUM(points), 0)
+                              FROM point_events
+                              WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     str(message_id), -cost, local_day(now),
+                     local_season(now), now, str(chat_id), str(sender_id),
+                     cost),
+                )
+                if cur.rowcount == 0:
+                    return False, "duplicate", level, self._balance_locked(
+                        chat_id, sender_id)
+
+            self.conn.execute(
+                """UPDATE equipment_owned
+                   SET enhance_level = enhance_level + 1
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), str(item_id)),
+            )
+            new_level = level + 1
+            balance = self._balance_locked(chat_id, sender_id)
+        return True, "ok", new_level, balance
+
+    def _balance_locked(self, chat_id: str, sender_id: str) -> int:
+        """Balance helper that assumes the caller already holds the lock."""
+        row = self.conn.execute(
+            """SELECT COALESCE(SUM(points), 0) FROM point_events
+               WHERE chat_id = ? AND sender_id = ?""",
+            (str(chat_id), str(sender_id)),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     # ── Shields ───────────────────────────────────────────────────
 
@@ -781,6 +868,90 @@ class PointStore:
                 (str(chat_id), int(limit)),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    # ── 境界 (realm) ──────────────────────────────────────────────
+
+    def realm_of(self, chat_id: str, sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT realm FROM member_realms
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def realm_leaderboard(self, chat_id: str, limit: int = 10) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT r.sender_id,
+                          COALESCE(u.sender_name, r.sender_id) AS sender_name,
+                          r.realm
+                   FROM member_realms r
+                   LEFT JOIN user_last_message u
+                     ON u.chat_id = r.chat_id AND u.sender_id = r.sender_id
+                   WHERE r.chat_id = ? AND r.realm > 0
+                   ORDER BY r.realm DESC, r.updated_at ASC
+                   LIMIT ?""",
+                (str(chat_id), int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def breakthrough(self, chat_id: str, sender_id: str,
+                     sender_name: str, cost: int, max_realm: int,
+                     message_id: str,
+                     now_ts: int | None = None,
+                     ) -> tuple[bool, str, int, int]:
+        """Spend balance to advance one realm.
+
+        Returns ``(ok, code, new_realm, balance_after)``.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        cost = max(0, int(cost))
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                """SELECT realm FROM member_realms
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+            realm = int(row[0]) if row else 0
+            if realm >= int(max_realm):
+                return False, "max", realm, self._balance_locked(
+                    chat_id, sender_id)
+
+            balance = self._balance_locked(chat_id, sender_id)
+            if balance < cost:
+                return False, "insufficient", realm, balance
+
+            if cost > 0:
+                cur = self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, ?, ?, 'breakthrough', 'spend', ?, ?, ?, ?
+                       WHERE (SELECT COALESCE(SUM(points), 0)
+                              FROM point_events
+                              WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     str(message_id), -cost, local_day(now),
+                     local_season(now), now, str(chat_id), str(sender_id),
+                     cost),
+                )
+                if cur.rowcount == 0:
+                    return False, "duplicate", realm, self._balance_locked(
+                        chat_id, sender_id)
+
+            new_realm = realm + 1
+            self.conn.execute(
+                """INSERT INTO member_realms
+                   (chat_id, sender_id, realm, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                     realm = excluded.realm,
+                     updated_at = excluded.updated_at""",
+                (str(chat_id), str(sender_id), new_realm, now),
+            )
+            balance = self._balance_locked(chat_id, sender_id)
+        return True, "ok", new_realm, balance
 
     # ── Fishing ───────────────────────────────────────────────────
 
@@ -1127,6 +1298,290 @@ class PointStore:
                 (str(chat_id), str(sender_id)),
             ).fetchall()
         return [str(row[0]) for row in rows]
+
+    def has_rarity_catch(self, chat_id: str, sender_id: str,
+                         rarity: str) -> bool:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM fishing_casts
+                   WHERE chat_id = ? AND sender_id = ? AND rarity = ?
+                     AND species_id != '' LIMIT 1""",
+                (str(chat_id), str(sender_id), str(rarity)),
+            ).fetchone()
+        return row is not None
+
+    # ── World boss ────────────────────────────────────────────────
+
+    def boss_state(self, chat_id: str, season: str) -> dict | None:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT chat_id, season, boss_name, hp_total, hp_left,
+                          killed_at, created_at
+                   FROM boss_state WHERE chat_id = ? AND season = ?""",
+                (str(chat_id), str(season)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def ensure_boss_state(self, chat_id: str, season: str,
+                          boss_name: str, hp_total: int,
+                          now_ts: int) -> dict:
+        """Insert the week's boss row once, then return it."""
+        hp_total = max(1, int(hp_total))
+        with self._lock, self.conn:
+            self.conn.execute(
+                """INSERT OR IGNORE INTO boss_state
+                   (chat_id, season, boss_name, hp_total, hp_left,
+                    killed_at, created_at)
+                   VALUES (?, ?, ?, ?, ?, 0, ?)""",
+                (str(chat_id), str(season), str(boss_name), hp_total,
+                 hp_total, int(now_ts)),
+            )
+            row = self.conn.execute(
+                """SELECT chat_id, season, boss_name, hp_total, hp_left,
+                          killed_at, created_at
+                   FROM boss_state WHERE chat_id = ? AND season = ?""",
+                (str(chat_id), str(season)),
+            ).fetchone()
+        return dict(row)
+
+    def boss_attempts(self, chat_id: str, season: str, sender_id: str,
+                      day: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM boss_attacks
+                   WHERE chat_id = ? AND season = ? AND sender_id = ?
+                     AND day = ?""",
+                (str(chat_id), str(season), str(sender_id), str(day)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def boss_attack(self, chat_id: str, season: str, message_id: str,
+                    sender_id: str, sender_name: str, damage: int,
+                    crit: bool, day: str,
+                    now_ts: int) -> tuple[bool, int, int]:
+        """Record one hit and reduce boss HP atomically.
+
+        Returns ``(inserted, hp_left, damage)``.
+        """
+        damage = max(0, int(damage))
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO boss_attacks
+                   (chat_id, season, message_id, sender_id, sender_name,
+                    damage, crit, day, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(chat_id), str(season), str(message_id),
+                 str(sender_id), str(sender_name or ""), damage,
+                 1 if crit else 0, str(day), int(now_ts)),
+            )
+            if cur.rowcount == 0:
+                row = self.conn.execute(
+                    """SELECT hp_left FROM boss_state
+                       WHERE chat_id = ? AND season = ?""",
+                    (str(chat_id), str(season)),
+                ).fetchone()
+                return False, int(row[0]) if row else 0, 0
+
+            self.conn.execute(
+                """UPDATE boss_state
+                   SET hp_left = MAX(0, hp_left - ?)
+                   WHERE chat_id = ? AND season = ?""",
+                (damage, str(chat_id), str(season)),
+            )
+            row = self.conn.execute(
+                """SELECT hp_left FROM boss_state
+                   WHERE chat_id = ? AND season = ?""",
+                (str(chat_id), str(season)),
+            ).fetchone()
+        return True, int(row[0]) if row else 0, damage
+
+    def boss_damage_board(self, chat_id: str, season: str,
+                          limit: int = 10) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT sender_id, MAX(sender_name) AS sender_name,
+                          COALESCE(SUM(damage), 0) AS damage,
+                          COUNT(*) AS attacks,
+                          COALESCE(MAX(crit), 0) AS crits
+                   FROM boss_attacks
+                   WHERE chat_id = ? AND season = ?
+                   GROUP BY sender_id
+                   ORDER BY damage DESC, sender_id ASC
+                   LIMIT ?""",
+                (str(chat_id), str(season), int(limit)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def boss_totals(self, chat_id: str, season: str) -> dict:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(SUM(damage), 0) AS damage,
+                          COUNT(*) AS attacks,
+                          COUNT(DISTINCT sender_id) AS participants
+                   FROM boss_attacks
+                   WHERE chat_id = ? AND season = ?""",
+                (str(chat_id), str(season)),
+            ).fetchone()
+        return dict(row) if row else {
+            "damage": 0, "attacks": 0, "participants": 0}
+
+    def boss_member_damage(self, chat_id: str, season: str,
+                           sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(SUM(damage), 0) FROM boss_attacks
+                   WHERE chat_id = ? AND season = ? AND sender_id = ?""",
+                (str(chat_id), str(season), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def boss_total_damage(self, chat_id: str, sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(SUM(damage), 0) FROM boss_attacks
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def boss_kill(self, chat_id: str, season: str, now_ts: int) -> bool:
+        """Mark the boss dead once.  True means this call killed it."""
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """UPDATE boss_state SET killed_at = ?
+                   WHERE chat_id = ? AND season = ? AND killed_at = 0""",
+                (int(now_ts), str(chat_id), str(season)),
+            )
+        return cur.rowcount > 0
+
+    def boss_distribute_rewards(self, chat_id: str, season: str,
+                                pool: int, now_ts: int) -> list[dict]:
+        """Split *pool* balance across participants by damage share.
+
+        Rewards are ledger rows with ``category='boss'`` (balance only).
+        """
+        pool = max(0, int(pool))
+        rows = self.boss_damage_board(
+            chat_id, season, limit=1_000_000)
+        total_damage = sum(int(row["damage"]) for row in rows)
+        if pool <= 0 or total_damage <= 0 or not rows:
+            return []
+
+        remaining = pool
+        rewards: list[dict] = []
+        with self._lock, self.conn:
+            for index, row in enumerate(rows):
+                if remaining <= 0:
+                    break
+                if index == len(rows) - 1:
+                    share = remaining
+                else:
+                    share = max(1, int(
+                        row["damage"] * pool / total_damage))
+                    share = min(share, remaining)
+                remaining -= share
+                if share <= 0:
+                    continue
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       VALUES (?, ?, ?, ?, 'boss_reward', 'boss', ?, ?, ?, ?)""",
+                    (str(chat_id), str(row["sender_id"]),
+                     str(row.get("sender_name") or ""),
+                     f"bossreward:{chat_id}:{season}:{row['sender_id']}",
+                     share, local_day(now_ts), local_season(now_ts),
+                     int(now_ts)),
+                )
+                rewards.append({
+                    "sender_id": row["sender_id"],
+                    "sender_name": row.get("sender_name")
+                    or row["sender_id"],
+                    "damage": int(row["damage"]),
+                    "amount": share,
+                })
+        return rewards
+
+    # ── Achievements / titles ─────────────────────────────────────
+
+    def equipped_title(self, chat_id: str, sender_id: str) -> str:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT title FROM member_profiles
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return str(row[0] or "") if row else ""
+
+    def set_equipped_title(self, chat_id: str, sender_id: str,
+                           title: str, now_ts: int | None = None) -> None:
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            self.conn.execute(
+                """INSERT INTO member_profiles
+                   (chat_id, sender_id, title, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                     title = excluded.title,
+                     updated_at = excluded.updated_at""",
+                (str(chat_id), str(sender_id), str(title or ""), now),
+            )
+
+    def achievements_of(self, chat_id: str, sender_id: str) -> set[str]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT achievement_id FROM achievements
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
+
+    def unlock_achievement(self, chat_id: str, sender_id: str,
+                           achievement_id: str, reward: int,
+                           now_ts: int | None = None) -> bool:
+        """Record an unlock once and credit its one-time balance reward."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO achievements
+                   (chat_id, sender_id, achievement_id, unlocked_at)
+                   VALUES (?, ?, ?, ?)""",
+                (str(chat_id), str(sender_id), str(achievement_id), now),
+            )
+            if cur.rowcount == 0:
+                return False
+            reward = max(0, int(reward))
+            if reward:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, COALESCE(
+                                  (SELECT sender_name
+                                   FROM user_last_message
+                                   WHERE chat_id = ? AND sender_id = ?), ''),
+                              ?, 'achievement', 'achievement', ?, ?, ?, ?""",
+                    (str(chat_id), str(sender_id), str(chat_id),
+                     str(sender_id),
+                     f"achv:{chat_id}:{sender_id}:{achievement_id}",
+                     reward, local_day(now), local_season(now), now),
+                )
+        return True
+
+    def equipment_count(self, chat_id: str, sender_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COUNT(*) FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def streak_days(self, chat_id: str, sender_id: str,
+                    now_ts: int | None = None) -> int:
+        """Public wrapper around the private streak calculation."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        return self._streak_days(chat_id, sender_id, now)
 
     # ── Maintenance / backfill ────────────────────────────────────
 

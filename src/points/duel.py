@@ -7,9 +7,10 @@ import math
 import random
 import time
 
-from .equipment import EquipmentCatalog
+from .equipment import EquipmentCatalog, effective_power
 from .levels import LevelTable
 from .models import DuelResult, PowerBreakdown
+from .realm import realm_info
 from .store import PointStore
 from .util import is_group_enabled, local_day
 
@@ -122,15 +123,23 @@ class DuelService:
             item = self._catalog.by_id(owned["item_id"])
             if item is None:
                 continue
-            items.append(item)
-            equipment_power += int(item["power"])
+            enhance_level = int(owned.get("enhance_level", 0) or 0)
+            items.append({**item, "enhance_level": enhance_level,
+                          "effective_power": effective_power(
+                              item, enhance_level)})
+            equipment_power += effective_power(item, enhance_level)
+
+        realm = self._store.realm_of(chat_id, sender_id)
+        realm_bonus = realm_info(realm)["power_bonus"]
 
         return PowerBreakdown(
-            total=base + equipment_power,
+            total=base + equipment_power + realm_bonus,
             base=base,
             level=int(level["level"]),
             title=str(level["title"]),
             equipment=equipment_power,
+            realm=realm,
+            realm_bonus=realm_bonus,
             items=items,
         )
 

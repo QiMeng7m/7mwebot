@@ -108,6 +108,7 @@ class AdminCommandHandler:
         fish_hourly = self._cfg_int(config, "fishing_hourly_attempts", 30)
         fish_batch = self._cfg_int(config, "fishing_max_batch", 10)
         fish_daily = self._cfg_int(config, "fishing_daily_cap", 120)
+        boss_attempts = self._cfg_int(config, "boss_daily_attempts", 3)
 
         points_on = self._flag(config, "points_enabled")
         lines = [
@@ -172,6 +173,26 @@ class AdminCommandHandler:
                 "  钓鱼记录                   我的钓鱼记录",
                 "",
             ])
+
+        advanced: list[str] = []
+        if self._flag(config, "equipment_enabled"):
+            advanced.append("  强化 装备名                 强化装备（最高 +15）")
+        if self._flag(config, "boss_enabled"):
+            advanced.extend([
+                f"  Boss / 挑战Boss / 打Boss    挑战本周群 Boss"
+                f"（每日 {boss_attempts} 次）",
+                "  Boss状态                   血量、伤害与剩余时间",
+                "  Boss榜                     本周伤害排行",
+            ])
+        advanced.extend([
+            "  境界 / 突破                 境界进度 / 满级后突破",
+            "  成就 / 称号                 成就进度 / 已解锁称号",
+            "  佩戴称号 名称               切换显示称号",
+        ])
+        if points_on and advanced:
+            lines.append("【进阶挑战】")
+            lines.extend(advanced)
+            lines.append("")
 
         if self._flag(config, "todo_enabled"):
             lines.extend([

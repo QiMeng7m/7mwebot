@@ -18,12 +18,28 @@ from pathlib import Path
 from src.config import PROJECT_ROOT
 
 from . import rules
+from .achievements import (
+    ACHIEVEMENTS,
+    AchievementService,
+    achievement_by_title,
+)
+from .boss import BossService
 from .duel import DuelService
-from .equipment import EquipmentCatalog
+from .equipment import (
+    ENHANCE_MAX,
+    EquipmentCatalog,
+    effective_power,
+    enhance_cost,
+)
 from .fishing import FishingService, fishing_level, format_weight
 from .fishing_catalog import RARITIES, RARITY_LABELS
 from .levels import LevelTable
 from .models import Command, DelayedReply
+from .realm import (
+    REALM_MAX,
+    realm_cost,
+    realm_info,
+)
 from .rules import (
     INVISIBLE_WS as _WS,
     clean_command_text as _clean_for_commands,
@@ -78,11 +94,23 @@ EXACT_COMMANDS = {
     "图鉴": ("fish_book", ""),
     "钓鱼榜": ("fish_board", "total"),
     "钓鱼记录": ("fish_log", ""),
+    # ── Endgame ──
+    "Boss": ("boss_attack", ""),
+    "boss": ("boss_attack", ""),
+    "挑战Boss": ("boss_attack", ""),
+    "打Boss": ("boss_attack", ""),
+    "Boss状态": ("boss_status", ""),
+    "Boss榜": ("boss_board", ""),
+    "成就": ("achievements", ""),
+    "称号": ("titles", ""),
+    "境界": ("realm", ""),
+    "突破": ("breakthrough", ""),
 }
 
 PREFIX_COMMANDS = (
     "购买", "装备", "卸下", "查询", "切磋", "积分调整", "积分重算",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
+    "强化", "精炼", "佩戴称号", "戴上称号",
 )
 
 _BOARD_SCOPES = {
@@ -147,6 +175,10 @@ class PointHandler:
         self._engine = engine
         self._fishing = fishing
         self._nicks = nickname_service
+        self._boss = BossService(store, config, duels)
+        self._achievements = AchievementService(
+            store, config, levels, duels, fishing,
+        )
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
         )
@@ -222,6 +254,11 @@ class PointHandler:
             return self._buy_bait(chat_id, sender_id, sender_name, rest)
         if head == "换鱼竿":
             return self._equip_rod(chat_id, sender_id, rest)
+        if head in ("强化", "精炼"):
+            return self._enhance(msg, chat_id, sender_id, sender_name, rest)
+        if head in ("佩戴称号", "戴上称号"):
+            return self._equip_title(
+                chat_id, sender_id, sender_name, rest)
         if head == "积分重算":
             return self._rebuild(chat_id, is_admin)
         if head == "积分调整":
@@ -280,6 +317,22 @@ class PointHandler:
                 chat_id, msg.get("group_name", ""), arg or "value")
         if kind == "fish_log":
             return self._fish_log(chat_id, sender_id)
+        if kind == "boss_attack":
+            return self._boss_attack(msg, chat_id, sender_id, sender_name)
+        if kind == "boss_status":
+            return self._boss_status(chat_id, msg.get("group_name", ""),
+                                     sender_id)
+        if kind == "boss_board":
+            return self._boss_board(chat_id, msg.get("group_name", ""))
+        if kind == "achievements":
+            return self._achievements_command(
+                chat_id, sender_id, sender_name)
+        if kind == "titles":
+            return self._titles_command(chat_id, sender_id, sender_name)
+        if kind == "realm":
+            return self._realm_command(chat_id, sender_id, sender_name)
+        if kind == "breakthrough":
+            return self._breakthrough(msg, chat_id, sender_id, sender_name)
         return None
 
     # ── Identity helpers ──────────────────────────────────────────
@@ -507,9 +560,13 @@ class PointHandler:
                  sender_name: str) -> str:
         stats = self._store.member_stats(chat_id, sender_id, sender_name)
         power = self._duels.power(chat_id, sender_id)
+        title = self._store.equipped_title(chat_id, sender_id)
+        prefix = f"【{title}】" if title else ""
+        realm = realm_info(self._store.realm_of(chat_id, sender_id))
         return (
-            f"{stats.sender_name} 积分：{stats.earned} "
+            f"{prefix}{stats.sender_name} 积分：{stats.earned} "
             f"余额：{stats.balance} 武力值：{power.total}"
+            f" 境界：{realm['title']}"
         )
 
     def _member_card(self, chat_id: str, sender_id: str,
@@ -518,14 +575,19 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         level = self._levels.for_points(stats.earned)
         nxt = self._levels.next_for(stats.earned)
+        title = self._store.equipped_title(chat_id, sender_id)
+        realm = realm_info(power.realm)
+        ach = self._achievements.evaluate(chat_id, sender_id)
 
         lines = [
             f"{stats.sender_name} 积分：{stats.earned} "
-            f"· Lv{level['level']} {level['title']}",
+            f"· Lv{level['level']} {level['title']}"
+            + (f" · 称号「{title}」" if title else ""),
             f"余额 {stats.balance} · 本月 {stats.season_points}"
             + (f"（第{stats.season_rank}名）" if stats.season_rank else "")
             + f" · 今日 {stats.day_points}",
-            f"武力值 {power.total}（基础 {power.base} + 装备 {power.equipment}）",
+            f"武力值 {power.total}（基础 {power.base} + 装备 {power.equipment}"
+            f" + 境界 {power.realm_bonus}）· 境界 {realm['title']}",
         ]
         if nxt is not None:
             lines.append(
@@ -534,6 +596,13 @@ class PointHandler:
             )
         if stats.streak_days:
             lines.append(f"连续活跃 {stats.streak_days} 天")
+        if ach["new"]:
+            lines.append(
+                "新解锁成就：" + "、".join(
+                    f"{item['name']}（称号「{item['title']}」）"
+                    for item in ach["new"]
+                )
+            )
         if self._fishing is not None:
             fish = self._fishing.stats(chat_id, sender_id)
             if fish["catches"]:
@@ -751,9 +820,12 @@ class PointHandler:
             item = self._catalog.by_id(row["item_id"])
             if item is None:
                 continue
+            level = int(row.get("enhance_level", 0) or 0)
             mark = "（已装备）" if row.get("equipped") else ""
+            suffix = f"(+{level})" if level else ""
             by_slot.setdefault(item["slot"], []).append(
-                f"{item['name']} +{item['power']}{mark}"
+                f"{item['name']} +{effective_power(item, level)}"
+                f"{suffix}{mark}"
             )
 
         lines = [f"{sender_name} 的装备 · 武力值 {power.total}"]
@@ -770,9 +842,16 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         parts = [f"基础 {power.base}（Lv{power.level} {power.title}）"]
         for item in power.items:
+            level = int(item.get("enhance_level", 0) or 0)
+            suffix = f"(+{level})" if level else ""
             parts.append(
                 f"{self._catalog.slot_name(item['slot'])} {item['name']} "
-                f"+{item['power']}"
+                f"+{item.get('effective_power', item['power'])}{suffix}"
+            )
+        if power.realm_bonus:
+            parts.append(
+                f"境界 {realm_info(power.realm)['title']} "
+                f"+{power.realm_bonus}"
             )
         lines = [
             f"{sender_name} 的武力值：{power.total}",
@@ -1381,6 +1460,263 @@ class PointHandler:
             )
         return "\n".join(lines)
 
+    # ── Endgame: enhance / realm / boss / achievements ────────────
+
+    def _enhance(self, msg: dict, chat_id: str, sender_id: str,
+                 sender_name: str, raw: str) -> str:
+        if not getattr(self._config, "equipment_enabled", False):
+            return "装备系统未开启。"
+        name = _strip_invisible(raw).strip()
+        if not name:
+            return f"用法：强化 装备名（最高 +{ENHANCE_MAX}）"
+        item = self._catalog.find(name)
+        if item is None:
+            return f"没有找到「{name}」，发「商店」查看装备名。"
+        if not self._store.owns(chat_id, sender_id, item["id"]):
+            return f"你还没有 {item['name']}，先「购买 {item['name']}」。"
+
+        level = self._store.item_enhance_level(
+            chat_id, sender_id, item["id"])
+        if level >= ENHANCE_MAX:
+            return f"{item['name']} 已经强化到 +{ENHANCE_MAX} 了。"
+        cost = enhance_cost(item, level)
+        balance = self._store.balance_of(chat_id, sender_id)
+        if balance < cost:
+            return (
+                f"余额不足：把 {item['name']} 强化到 "
+                f"+{level + 1} 需要 {cost} 余额，你只有 {balance}。"
+            )
+
+        ok, code, new_level, balance = self._store.enhance_item(
+            chat_id, sender_id, sender_name, item["id"], cost,
+            ENHANCE_MAX, f"enhance:{msg.get('message_id') or ''}",
+        )
+        if code == "max":
+            return f"{item['name']} 已经强化到 +{ENHANCE_MAX} 了。"
+        if code == "insufficient":
+            return (
+                f"余额不足：需要 {cost} 余额，你只有 {balance}。"
+            )
+        if not ok:
+            return "强化失败，请稍后再试。"
+
+        power = self._duels.power(chat_id, sender_id)
+        return (
+            f"强化成功：{item['name']} +{new_level}"
+            f"（武力 +{effective_power(item, new_level)}，"
+            f"强化加成 +{new_level * 2}），花费 {cost} 余额，"
+            f"余额 {balance}，当前战力 {power.total}。"
+        )
+
+    def _realm_command(self, chat_id: str, sender_id: str,
+                       sender_name: str) -> str:
+        realm = self._store.realm_of(chat_id, sender_id)
+        info = realm_info(realm)
+        power = self._duels.power(chat_id, sender_id)
+        lines = [
+            f"{sender_name} 境界：{info['title']}（武力 +{info['power_bonus']}）"
+            f" · 当前战力 {power.total}",
+        ]
+        if info["next"] is not None:
+            max_level = self._levels.load()[-1]
+            earned = self._store.earned_of(chat_id, sender_id)
+            lines.append(
+                f"下一境界：{info['next_title']}"
+                f"（武力 +{realm_info(info['next'])['power_bonus']}）"
+            )
+            lines.append(
+                f"突破消耗 {info['next_cost']} 余额 · "
+                f"需要 Lv{max_level['level']} {max_level['title']}"
+                f"（当前累计 {earned}/{max_level['min_points']}）"
+            )
+            lines.append("发送「突破」即可尝试。")
+        else:
+            lines.append("已达最高境界：渡劫。")
+        return "\n".join(lines)
+
+    def _breakthrough(self, msg: dict, chat_id: str, sender_id: str,
+                      sender_name: str) -> str:
+        realm = self._store.realm_of(chat_id, sender_id)
+        if realm >= REALM_MAX:
+            return "你已经达到最高境界：渡劫。"
+        max_level = self._levels.load()[-1]
+        earned = self._store.earned_of(chat_id, sender_id)
+        if earned < int(max_level["min_points"]):
+            return (
+                f"境界突破需要先达到 Lv{max_level['level']} "
+                f"{max_level['title']}（累计 {max_level['min_points']} 分），"
+                f"你当前 {earned} 分。"
+            )
+        cost = realm_cost(realm)
+        balance = self._store.balance_of(chat_id, sender_id)
+        if balance < cost:
+            return (
+                f"余额不足：突破到 {realm_info(realm + 1)['title']} "
+                f"需要 {cost} 余额，你只有 {balance}。"
+            )
+        ok, code, new_realm, balance = self._store.breakthrough(
+            chat_id, sender_id, sender_name, cost, REALM_MAX,
+            f"realm:{msg.get('message_id') or ''}",
+        )
+        if code == "max":
+            return "你已经达到最高境界：渡劫。"
+        if code == "insufficient":
+            return f"余额不足：需要 {cost} 余额，你只有 {balance}。"
+        if not ok:
+            return "突破失败，请稍后再试。"
+
+        info = realm_info(new_realm)
+        self._achievements.evaluate(chat_id, sender_id)
+        power = self._duels.power(chat_id, sender_id)
+        return (
+            f"突破成功！境界 → {info['title']}，"
+            f"武力 +{info['power_bonus']}，花费 {cost} 余额，"
+            f"余额 {balance}，当前战力 {power.total}。"
+        )
+
+    def _boss_attack(self, msg: dict, chat_id: str, sender_id: str,
+                     sender_name: str) -> str:
+        result = self._boss.attack(msg)
+        if not result.get("ok"):
+            return result.get("reply") or "挑战失败，请稍后再试。"
+
+        self._achievements.evaluate(chat_id, sender_id)
+        lines = [
+            f"{sender_name} 对 {result['boss_name']} 造成 "
+            f"{result['damage']} 伤害"
+            + ("（暴击！）" if result.get("crit") else ""),
+            f"Boss 剩余 {result['hp_left']}/{result['hp_total']}",
+            f"今日 {result['attempts_used']}/{result['attempts_limit']} 次"
+            f" · 我的累计伤害 {result['my_damage']}",
+        ]
+        if result.get("killed"):
+            lines.append(
+                f"Boss 已被击败！{result['reward_pool']} 余额奖励"
+                "已按伤害占比发放。"
+            )
+            mine = next(
+                (row for row in result.get("rewards", [])
+                 if row["sender_id"] == sender_id),
+                None,
+            )
+            if mine:
+                lines.append(f"你获得 {mine['amount']} 余额。")
+        return "\n".join(lines)
+
+    def _boss_status(self, chat_id: str, group_name: str,
+                     sender_id: str) -> str:
+        state = self._boss.status(chat_id, group_name, sender_id)
+        if not state.get("ok"):
+            return state.get("reply") or "群 Boss 玩法未开启。"
+        lines = [
+            f"本周 Boss：{state['boss_name']}（{state['season']}）",
+            f"血量 {state['hp_left']}/{state['hp_total']}"
+            f" · 参与 {state['participants']} 人"
+            f" · 总伤害 {state['total_damage']}",
+            f"我的伤害 {state['my_damage']}"
+            f" · 今日 {state['attempts_used']}/{state['attempts_limit']} 次"
+            f" · 剩余 {state['days_left']} 天",
+            f"击杀奖励池 {state['reward_pool']} 余额（按伤害分配）",
+        ]
+        if state.get("killed"):
+            lines.append("本周 Boss 已击杀，下周刷新新目标。")
+        else:
+            lines.append("发送「挑战Boss」参与，发「Boss榜」看伤害排行。")
+        return "\n".join(lines)
+
+    def _boss_board(self, chat_id: str, group_name: str) -> str:
+        state = self._boss.status(chat_id, group_name, "")
+        if not state.get("ok"):
+            return state.get("reply") or "群 Boss 玩法未开启。"
+        group = _strip_invisible(group_name) or chat_id
+        lines = [f"Boss 伤害榜 · {group}（{state['boss_name']}）"]
+        rows = state.get("board") or []
+        if not rows:
+            lines.append("本周还没有人出手，先发「挑战Boss」。")
+            return "\n".join(lines)
+        for index, row in enumerate(rows, 1):
+            lines.append(
+                f"{index}. {row['sender_name']} {row['damage']} 伤害"
+                f" · {row['attacks']} 次"
+            )
+        return "\n".join(lines)
+
+    # ── Achievements / titles ─────────────────────────────────────
+
+    def _achievement_progress(self, definition: dict,
+                              snapshot: dict) -> str:
+        kind = definition.get("kind", "")
+        if kind == "species_complete":
+            return (f"{snapshot.get('species_count', 0)}/"
+                    f"{snapshot.get('species_total', 0)} 种")
+        current = int(snapshot.get(kind, 0) or 0)
+        target = int(definition.get("value", 0) or 0)
+        return f"{min(current, target)}/{target}"
+
+    def _achievements_command(self, chat_id: str, sender_id: str,
+                              sender_name: str) -> str:
+        result = self._achievements.evaluate(chat_id, sender_id)
+        unlocked = self._achievements.unlocked(chat_id, sender_id)
+        snapshot = result["snapshot"]
+        lines = [
+            f"{sender_name} 的成就 {len(unlocked)}/{len(ACHIEVEMENTS)}",
+        ]
+        if result["new"]:
+            lines.append(
+                "新解锁：" + "、".join(
+                    f"{item['name']}（称号「{item['title']}」，"
+                    f"余额 +{item['reward']}）"
+                    for item in result["new"]
+                )
+            )
+        if unlocked:
+            lines.append(
+                "已解锁称号：" + "、".join(
+                    item["title"] for item in unlocked)
+            )
+
+        locked = [
+            item for item in ACHIEVEMENTS
+            if item["id"] not in result["unlocked"]
+        ]
+        if locked:
+            lines.append("── 未解锁 ──")
+            for item in locked[:6]:
+                lines.append(
+                    f"· {item['name']}：{item['desc']}"
+                    f"（{self._achievement_progress(item, snapshot)}）"
+                )
+        lines.append("发「称号」查看/佩戴称号。")
+        return "\n".join(lines)
+
+    def _titles_command(self, chat_id: str, sender_id: str,
+                        sender_name: str) -> str:
+        unlocked = self._achievements.unlocked(chat_id, sender_id)
+        equipped = self._store.equipped_title(chat_id, sender_id)
+        lines = [f"{sender_name} 的称号（已解锁 {len(unlocked)} 个）"]
+        if not unlocked:
+            lines.append("还没有称号，先发「成就」看看能解锁什么。")
+            return "\n".join(lines)
+        for item in unlocked:
+            mark = " ← 佩戴中" if item["title"] == equipped else ""
+            lines.append(f"· {item['title']}（{item['name']}）{mark}")
+        lines.append("发送「佩戴称号 名称」切换，例如：佩戴称号 战神")
+        return "\n".join(lines)
+
+    def _equip_title(self, chat_id: str, sender_id: str,
+                     sender_name: str, raw: str) -> str:
+        name = _strip_invisible(raw).strip()
+        if not name:
+            return "用法：佩戴称号 名称（先发「称号」看已解锁列表）"
+        item = achievement_by_title(name)
+        if item is None:
+            return f"没有称号「{name}」，发「称号」查看可佩戴称号。"
+        unlocked = self._store.achievements_of(chat_id, sender_id)
+        if item["id"] not in unlocked:
+            return f"你还没有解锁称号「{name}」，先发「成就」看看进度。"
+        self._store.set_equipped_title(chat_id, sender_id, item["title"])
+        return f"{sender_name} 已佩戴称号「{item['title']}」。"
+
     # ── Admin ─────────────────────────────────────────────────────
 
     def _admin_adjust(self, chat_id: str, text: str,
@@ -1445,7 +1781,10 @@ class PointHandler:
             f"· 切磋每日 {cfg.duel_daily_attempts} 次，"
             f"单次最多抢 {cfg.duel_per_fight_cap} 分；生涯胜场决定段位\n"
             "· 钓鱼只增加余额，不影响累计积分、等级和榜单\n"
-            "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成"
+            "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成\n"
+            "· 装备可用「强化 名称」提升，最高 +15（每级 +2 武力）\n"
+            "· 满级后可花余额「突破」境界，每重境界永久 +10 武力\n"
+            "· 群 Boss 每周刷新，伤害按战力结算，击杀奖励按伤害分配"
         )
 
     @staticmethod

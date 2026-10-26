@@ -54,6 +54,31 @@ DEFAULT_ITEMS: list[dict] = [
 
 DEFAULT_CATALOG_PATH = PROJECT_ROOT / "data/equipment.json"
 
+# 强化（精炼）: every level adds a flat power bonus; cost grows linearly
+# with the item price and the current level, so endgame gear is a long
+# balance sink rather than a one-off purchase.
+ENHANCE_MAX = 15
+ENHANCE_POWER_PER_LEVEL = 2
+ENHANCE_COST_RATIO = 0.10
+ENHANCE_MIN_COST = 10
+
+
+def enhance_cost(item: dict, level: int) -> int:
+    """Balance cost to go from *level* to *level + 1*."""
+    level = max(0, int(level))
+    if level >= ENHANCE_MAX:
+        return 0
+    price = max(0, int(item.get("price", 0) or 0))
+    return max(ENHANCE_MIN_COST,
+               int(round(price * ENHANCE_COST_RATIO * (level + 1))))
+
+
+def effective_power(item: dict, level: int) -> int:
+    """Power after enhancement."""
+    level = max(0, min(ENHANCE_MAX, int(level or 0)))
+    return int(item.get("power", 0) or 0) + \
+        level * ENHANCE_POWER_PER_LEVEL
+
 
 def resolve_path(path: str | Path | None) -> Path:
     if not path:

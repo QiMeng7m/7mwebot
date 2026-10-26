@@ -32,6 +32,19 @@ def local_season(ts: int | float | None = None) -> str:
     ))
 
 
+def local_week(ts: int | float | None = None) -> str:
+    """ISO week key ``YYYY-Www`` (the world-boss cycle)."""
+    moment = time.time() if ts is None else ts
+    iso = date.fromtimestamp(moment).isocalendar()
+    return f"{iso.year:04d}-W{iso.week:02d}"
+
+
+def days_until_week_end(ts: int | float | None = None) -> int:
+    """Days remaining in the current ISO week (0 on Sunday)."""
+    moment = time.time() if ts is None else ts
+    return max(0, 7 - date.fromtimestamp(moment).isoweekday())
+
+
 def previous_season(ts: int | float | None = None) -> str:
     """The season immediately before the one containing *ts*."""
     d = date.fromtimestamp(time.time() if ts is None else ts)
