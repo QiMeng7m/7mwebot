@@ -929,7 +929,9 @@ class PointHandler:
                 return f"没找到成员「{name}」，确认一下昵称。"
 
         target_name = target_name or self._display_name(chat_id, target_id)
-        result = self._duels.challenge(msg, target_id)
+        result = self._duels.challenge(
+            msg, target_id, defender_name=target_name,
+        )
         return self._format_duel(result, target_name, sender_name)
 
     def _format_duel(self, result, defender_name: str,
@@ -1581,12 +1583,16 @@ class PointHandler:
             return result.get("reply") or "挑战失败，请稍后再试。"
 
         self._achievements.evaluate(chat_id, sender_id)
+        ready = (
+            f"{self._format_duration(result['cooldown_left'])}后可再次挑战"
+            if result.get("cooldown_left") else "可再次挑战"
+        )
         lines = [
             f"{sender_name} 对 {result['boss_name']} 造成 "
             f"{result['damage']} 伤害"
             + ("（暴击！）" if result.get("crit") else ""),
             f"Boss 剩余 {result['hp_left']}/{result['hp_total']}",
-            f"今日 {result['attempts_used']}/{result['attempts_limit']} 次"
+            f"今日第 {result['attempts_used']} 次 · {ready}"
             f" · 我的累计伤害 {result['my_damage']}",
         ]
         if result.get("killed"):
@@ -1614,10 +1620,17 @@ class PointHandler:
             f" · 参与 {state['participants']} 人"
             f" · 总伤害 {state['total_damage']}",
             f"我的伤害 {state['my_damage']}"
-            f" · 今日 {state['attempts_used']}/{state['attempts_limit']} 次"
+            f" · 今日 {state['attempts_used']} 次"
             f" · 剩余 {state['days_left']} 天",
             f"击杀奖励池 {state['reward_pool']} 余额（按伤害分配）",
         ]
+        if state.get("cooldown_left"):
+            lines.append(
+                f"挑战冷却：{self._format_duration(state['cooldown_left'])}"
+                "后可再次挑战"
+            )
+        else:
+            lines.append("现在可以挑战")
         if state.get("killed"):
             lines.append("本周 Boss 已击杀，下周刷新新目标。")
         else:

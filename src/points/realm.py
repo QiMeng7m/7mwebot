@@ -14,7 +14,7 @@ REALM_TITLES: list[str] = [
 
 REALM_MAX = len(REALM_TITLES) - 1
 REALM_POWER_PER_LEVEL = 10
-REALM_BASE_COST = 3000
+REALM_BASE_COST = 300
 
 
 def realm_title(realm: int) -> str:

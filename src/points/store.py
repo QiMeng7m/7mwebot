@@ -1355,6 +1355,31 @@ class PointStore:
             ).fetchone()
         return int(row[0]) if row else 0
 
+    def boss_last_attack_at(self, chat_id: str, season: str,
+                            sender_id: str) -> int:
+        """Timestamp of this member's latest hit on the current boss."""
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT COALESCE(MAX(created_at), 0) FROM boss_attacks
+                   WHERE chat_id = ? AND season = ? AND sender_id = ?""",
+                (str(chat_id), str(season), str(sender_id)),
+            ).fetchone()
+        return int(row[0]) if row else 0
+
+    def boss_attack_recorded(self, chat_id: str, season: str,
+                             message_id: str) -> bool:
+        """True when this exact message already dealt boss damage."""
+        if not message_id:
+            return False
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT 1 FROM boss_attacks
+                   WHERE chat_id = ? AND season = ? AND message_id = ?
+                   LIMIT 1""",
+                (str(chat_id), str(season), str(message_id)),
+            ).fetchone()
+        return row is not None
+
     def boss_attack(self, chat_id: str, season: str, message_id: str,
                     sender_id: str, sender_name: str, damage: int,
                     crit: bool, day: str,

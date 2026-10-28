@@ -168,11 +168,13 @@ class DuelService:
     # ── Duel ──────────────────────────────────────────────────────
 
     def challenge(self, msg: dict, target_id: str,
-                  rng=None) -> DuelResult:
+                  rng=None, defender_name: str = "") -> DuelResult:
         """Run one duel attempt.
 
         ``rng`` may be a ``random.Random`` instance or a zero-arg callable
         returning a float; tests inject deterministic values.
+        ``defender_name`` is the caller-resolved display name (group
+        nickname); it falls back to the name stored on messages.
         """
         cfg = self._config
         chat_id = str(msg.get("chat_id") or "")
@@ -196,7 +198,10 @@ class DuelService:
                 False, "not_member",
                 "对方还没在本群发过言，暂时不能切磋。",
             )
-        defender_name = self._store.member_name(chat_id, target_id)
+        defender_name = (
+            str(defender_name or "").strip()
+            or self._store.member_name(chat_id, target_id)
+        )
 
         attempts_limit = int(getattr(cfg, "duel_daily_attempts", 10))
         steal_cap = int(getattr(cfg, "duel_daily_steal_cap", 50))

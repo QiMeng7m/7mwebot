@@ -57,6 +57,18 @@ def boss_hp_for(members: int, config) -> int:
     return max(minimum, min(maximum, max(1, int(members)) * per_member))
 
 
+def format_cooldown(seconds: int) -> str:
+    """Human-readable cooldown, e.g. 1800 -> "30 分钟"."""
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f"{seconds} 秒"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    hours, rem = divmod(minutes, 60)
+    return f"{hours} 小时 {rem} 分钟" if rem else f"{hours} 小时"
+
+
 class BossService:
     """Resolves 「挑战Boss」 against the store."""
 
@@ -86,8 +98,8 @@ class BossService:
             chat_id, season, boss_name_for(chat_id, season), hp, now,
         )
 
-    def _attempts_limit(self) -> int:
-        return max(1, int(getattr(self._config, "boss_daily_attempts", 3)))
+    def _cooldown_sec(self) -> int:
+        return max(0, int(getattr(self._config, "boss_cooldown_sec", 1800)))
 
     # ── Public API ────────────────────────────────────────────────
 
@@ -101,6 +113,11 @@ class BossService:
         season = state["season"]
         board = self._store.boss_damage_board(chat_id, season, 10)
         totals = self._store.boss_totals(chat_id, season)
+        cooldown = self._cooldown_sec()
+        last = self._store.boss_last_attack_at(chat_id, season, sender_id)
+        cooldown_left = (
+            max(0, cooldown - (now - last)) if last else 0
+        )
         return {
             "ok": True,
             "code": "ok",
@@ -112,7 +129,8 @@ class BossService:
             "days_left": days_until_week_end(now),
             "attempts_used": self._store.boss_attempts(
                 chat_id, season, sender_id, local_day(now)),
-            "attempts_limit": self._attempts_limit(),
+            "cooldown_sec": cooldown,
+            "cooldown_left": cooldown_left,
             "my_damage": self._store.boss_member_damage(
                 chat_id, season, sender_id),
             "participants": int(totals.get("participants", 0)),
@@ -144,15 +162,26 @@ class BossService:
                 "boss_name": state["boss_name"],
             }
 
-        limit = self._attempts_limit()
+        if message_id and self._store.boss_attack_recorded(
+            chat_id, season, message_id,
+        ):
+            return {"ok": False, "code": "duplicate",
+                    "reply": "这次攻击已经记录过了，请稍后再试。"}
+
+        cooldown = self._cooldown_sec()
+        last = self._store.boss_last_attack_at(chat_id, season, sender_id)
+        if cooldown > 0 and last and now - last < cooldown:
+            left = cooldown - (now - last)
+            return {
+                "ok": False, "code": "cooldown",
+                "reply": f"挑战冷却中，还需 {format_cooldown(left)}"
+                         "才能再次挑战。",
+                "cooldown_left": left,
+                "cooldown_sec": cooldown,
+            }
+
         day = local_day(now)
         used = self._store.boss_attempts(chat_id, season, sender_id, day)
-        if used >= limit:
-            return {
-                "ok": False, "code": "attempts",
-                "reply": f"今天的挑战次数已用完（{limit} 次），明天再来。",
-                "attempts_used": used, "attempts_limit": limit,
-            }
 
         power = self._duels.power(chat_id, sender_id)
         damage, crit = roll_damage(
@@ -185,7 +214,8 @@ class BossService:
             "killed": killed,
             "power": power.total,
             "attempts_used": used + 1,
-            "attempts_limit": limit,
+            "cooldown_sec": cooldown,
+            "cooldown_left": cooldown,
             "my_damage": self._store.boss_member_damage(
                 chat_id, season, sender_id),
             "participants": int(totals.get("participants", 0)),

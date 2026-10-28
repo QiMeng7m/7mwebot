@@ -201,6 +201,19 @@ class ChallengeTests(DuelServiceTestBase):
         self.assertFalse(again.ok)
         self.assertEqual(again.code, "pair_cooldown")
 
+    def test_pair_cooldown_uses_caller_display_name(self):
+        self.duel.challenge(
+            self.msg("wxid_a", "张三"), "wxid_b", rng=_Rng(0.0),
+            defender_name="西湖-小李",
+        )
+        again = self.duel.challenge(
+            self.msg("wxid_a", "张三"), "wxid_b", rng=_Rng(0.0),
+            defender_name="西湖-小李",
+        )
+        self.assertEqual(again.code, "pair_cooldown")
+        self.assertIn("西湖-小李", again.reply)
+        self.assertNotIn("李四", again.reply)
+
     def test_daily_attempt_limit(self):
         self.config.duel_daily_attempts = 1
         first = self.challenge(_Rng(0.0))

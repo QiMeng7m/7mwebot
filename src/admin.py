@@ -108,7 +108,9 @@ class AdminCommandHandler:
         fish_hourly = self._cfg_int(config, "fishing_hourly_attempts", 30)
         fish_batch = self._cfg_int(config, "fishing_max_batch", 10)
         fish_daily = self._cfg_int(config, "fishing_daily_cap", 120)
-        boss_attempts = self._cfg_int(config, "boss_daily_attempts", 3)
+        boss_cooldown_min = max(
+            1, self._cfg_int(config, "boss_cooldown_sec", 1800) // 60,
+        )
 
         points_on = self._flag(config, "points_enabled")
         lines = [
@@ -180,7 +182,7 @@ class AdminCommandHandler:
         if self._flag(config, "boss_enabled"):
             advanced.extend([
                 f"  Boss / 挑战Boss / 打Boss    挑战本周群 Boss"
-                f"（每日 {boss_attempts} 次）",
+                f"（每 {boss_cooldown_min} 分钟 1 次）",
                 "  Boss状态                   血量、伤害与剩余时间",
                 "  Boss榜                     本周伤害排行",
             ])

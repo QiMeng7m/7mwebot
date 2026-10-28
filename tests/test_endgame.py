@@ -59,8 +59,8 @@ class RealmFormulaTests(unittest.TestCase):
         self.assertEqual(realm_title(0), "凡人")
         self.assertEqual(realm_title(1), "炼气")
         self.assertEqual(realm_title(REALM_MAX), "渡劫")
-        self.assertEqual(realm_cost(0), 3000)
-        self.assertEqual(realm_cost(1), 6000)
+        self.assertEqual(realm_cost(0), 300)
+        self.assertEqual(realm_cost(1), 600)
         self.assertEqual(realm_cost(REALM_MAX), 0)
         self.assertEqual(realm_info(2)["power_bonus"], 20)
         self.assertEqual(realm_info(2)["next"], 3)
@@ -271,7 +271,7 @@ class BossServiceTests(EndgameTestBase):
         self.config.boss_min_hp = 100
         self.config.boss_max_hp = 100
         self.config.boss_hp_per_member = 1
-        self.config.boss_daily_attempts = 2
+        self.config.boss_cooldown_sec = 1800
 
     def test_status_creates_weekly_boss(self):
         state = self.boss.status(
@@ -279,7 +279,8 @@ class BossServiceTests(EndgameTestBase):
         self.assertTrue(state["ok"])
         self.assertEqual(state["hp_total"], 100)
         self.assertEqual(state["hp_left"], 100)
-        self.assertEqual(state["attempts_limit"], 2)
+        self.assertEqual(state["cooldown_sec"], 1800)
+        self.assertEqual(state["cooldown_left"], 0)
         self.assertIn(state["boss_name"], BOSS_NAMES)
 
     def test_attack_damages_and_is_idempotent(self):
@@ -292,15 +293,19 @@ class BossServiceTests(EndgameTestBase):
         self.assertFalse(replay["ok"])
         self.assertEqual(replay["code"], "duplicate")
 
-    def test_attempt_limit(self):
-        self.boss.attack(self.msg("Boss"), now_ts=NOW,
-                         rng=_Rng(0.0, 0.99))
-        self.boss.attack(self.msg("Boss"), now_ts=NOW + 1,
-                         rng=_Rng(0.0, 0.99))
+    def test_attack_cooldown(self):
+        first = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW, rng=_Rng(0.0, 0.99))
+        self.assertTrue(first["ok"])
         blocked = self.boss.attack(
-            self.msg("Boss"), now_ts=NOW + 2, rng=_Rng(0.0, 0.99))
+            self.msg("Boss"), now_ts=NOW + 1, rng=_Rng(0.0, 0.99))
         self.assertFalse(blocked["ok"])
-        self.assertEqual(blocked["code"], "attempts")
+        self.assertEqual(blocked["code"], "cooldown")
+        self.assertEqual(blocked["cooldown_left"], 1799)
+        # Half an hour later the member may hit again.
+        again = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW + 1800, rng=_Rng(0.0, 0.99))
+        self.assertTrue(again["ok"])
 
     def test_kill_distributes_rewards(self):
         self.config.boss_min_hp = 10
@@ -395,7 +400,7 @@ class HelpUpgradeTests(unittest.TestCase):
             shield_price=20, shield_duration_sec=14400,
             shield_max_sec=86400, fishing_hourly_attempts=30,
             fishing_max_batch=10, fishing_daily_cap=120,
-            boss_daily_attempts=3,
+            boss_cooldown_sec=1800,
         )
         reply = AdminCommandHandler(MagicMock()).handle(
             "帮助", "张三", config=config, is_admin=False)

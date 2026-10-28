@@ -343,7 +343,7 @@ class BotConfig:
     # a few daily attempts, and the kill pool is split by damage share.
     boss_enabled: bool = True
     boss_groups: list[str] = field(default_factory=lambda: ["*"])
-    boss_daily_attempts: int = 3
+    boss_cooldown_sec: int = 1800
     boss_hp_per_member: int = 600
     boss_min_hp: int = 3000
     boss_max_hp: int = 30000
@@ -740,7 +740,7 @@ def load_config() -> BotConfig:
         "fishing_miss_chance": _safe_float(os.getenv("FISHING_MISS_CHANCE", "0.15"), 0.15, "FISHING_MISS_CHANCE"),
         "boss_enabled": os.getenv("BOSS_ENABLED", "true").strip().lower() == "true",
         "boss_groups": [g.strip() for g in os.getenv("BOSS_GROUPS", "*").split(",") if g.strip()],
-        "boss_daily_attempts": _safe_int(os.getenv("BOSS_DAILY_ATTEMPTS", "3"), 3, "BOSS_DAILY_ATTEMPTS"),
+        "boss_cooldown_sec": _safe_int(os.getenv("BOSS_COOLDOWN_SEC", "1800"), 1800, "BOSS_COOLDOWN_SEC"),
         "boss_hp_per_member": _safe_int(os.getenv("BOSS_HP_PER_MEMBER", "600"), 600, "BOSS_HP_PER_MEMBER"),
         "boss_min_hp": _safe_int(os.getenv("BOSS_MIN_HP", "3000"), 3000, "BOSS_MIN_HP"),
         "boss_max_hp": _safe_int(os.getenv("BOSS_MAX_HP", "30000"), 30000, "BOSS_MAX_HP"),

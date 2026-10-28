@@ -166,7 +166,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `FISHING_MISS_CHANCE` | `float` | `0.15` | `src/config.py:load_config()` | `src/points/fishing.py:effective_miss_chance()` |
 | `BOSS_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/boss.py:BossService.is_enabled()` |
 | `BOSS_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/boss.py:BossService.is_enabled()` |
-| `BOSS_DAILY_ATTEMPTS` | `int` | `3` | `src/config.py:load_config()` | `src/points/boss.py:BossService.attack()` / `status()` |
+| `BOSS_COOLDOWN_SEC` | `int` | `1800` | `src/config.py:load_config()` | `src/points/boss.py:BossService.attack()` / `status()` |
 | `BOSS_HP_PER_MEMBER` | `int` | `600` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_MIN_HP` | `int` | `3000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_MAX_HP` | `int` | `30000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
@@ -857,8 +857,9 @@ todo_delete_keywords: list[str] = [
 | `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 本小时次数/重置倒计时、今日收益、余额、鱼竿、鱼饵、累计渔获、图鉴、钓鱼等级 | 见签名 | `dict` |
 | `boss.py` | `roll_damage(power, roll, crit_roll)` | 单次 Boss 伤害：80%~120% 战力，10% 概率暴击 ×2 | 见签名 | `(int, bool)` |
 | `boss.py` | `boss_name_for(chat_id, season)` / `boss_hp_for(members, config)` | 按群/周稳定选 Boss 名 / 按成员数缩放并夹取 HP | 见签名 | `str/int` |
-| `boss.py` | `BossService.status(chat_id, group_name, sender_id="", now_ts=None)` | 本周 Boss 血量、参与人数、总伤害、个人伤害、剩余天数、伤害榜 | 见签名 | `dict` |
-| `boss.py` | `BossService.attack(msg, now_ts=None, rng=None)` | 每日次数校验、按战力结算伤害、扣血、击杀后按伤害分奖励 | 见签名 | `dict` |
+| `boss.py` | `format_cooldown(seconds)` | 冷却秒数转「30 分钟 / 1 小时」文案 | `seconds: int` | `str` |
+| `boss.py` | `BossService.status(chat_id, group_name, sender_id="", now_ts=None)` | 本周 Boss 血量、参与人数、总伤害、个人伤害、剩余天数、伤害榜、个人冷却 | 见签名 | `dict` |
+| `boss.py` | `BossService.attack(msg, now_ts=None, rng=None)` | 冷却校验（默认 30 分钟）、按战力结算伤害、扣血、击杀后按伤害分奖励 | 见签名 | `dict` |
 | `achievements.py` | `AchievementService.snapshot(chat_id, sender_id, now_ts=None)` | 汇总成就判定所需数据（积分/装备/强化/切磋/钓鱼/连签/Boss/境界） | 见签名 | `dict` |
 | `achievements.py` | `AchievementService.qualifies(definition, snapshot)` | 判断单个成就是否达标（`species_complete` 比较图鉴总数） | 见签名 | `bool` |
 | `achievements.py` | `AchievementService.evaluate(chat_id, sender_id, now_ts=None)` | 解锁新成就并发放一次性余额奖励 | 见签名 | `dict` |
@@ -887,7 +888,7 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `duel_leaderboard(chat_id, limit=10)` | 战神榜：按生涯胜场、抢分排序 | 见签名 | `list[dict]` |
 | `store.py` | `enhance_item(...)` / `item_enhance_level(...)` / `max_enhance_level(...)` | 条件扣款强化装备（幂等）/ 查询单件与最高强化等级 | 见签名 | 见签名 |
 | `store.py` | `realm_of(...)` / `realm_leaderboard(...)` / `breakthrough(...)` | 境界查询、境界榜、条件扣款突破（幂等） | 见签名 | 见签名 |
-| `store.py` | `boss_state/ensure_boss_state/boss_attempts/boss_attack` | 周 Boss 状态、每日次数、原子扣血与攻击幂等 | 见签名 | 见签名 |
+| `store.py` | `boss_state/ensure_boss_state/boss_attempts/boss_last_attack_at/boss_attack_recorded/boss_attack` | 周 Boss 状态、今日次数统计、最后攻击时间（冷却）、攻击幂等与原子扣血 | 见签名 | 见签名 |
 | `store.py` | `boss_damage_board/boss_totals/boss_member_damage/boss_total_damage` | 伤害榜、总伤害/参与人数、个人本周与生涯伤害 | 见签名 | 见签名 |
 | `store.py` | `boss_kill/boss_distribute_rewards` | 标记击杀一次、按伤害占比写入 `category='boss'` 余额奖励 | 见签名 | 见签名 |
 | `store.py` | `achievements_of/unlock_achievement/equipped_title/set_equipped_title` | 成就解锁（幂等 + 一次性余额奖励）、佩戴称号 | 见签名 | 见签名 |
@@ -908,7 +909,7 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.power(chat_id, sender_id)` | 武力值 = 10 + 等级×5 + 装备（含强化）+ 境界加成 | 见签名 | `PowerBreakdown` |
 | `duel.py` | `DuelService.record(chat_id, sender_id)` | 生涯战绩 + 当前段位 | 见签名 | `dict` |
 | `duel.py` | `DuelService.leaderboard(chat_id, limit=10)` | 战神榜行，附带段位 | 见签名 | `list[dict]` |
-| `duel.py` | `DuelService.challenge(msg, target_id, rng=None)` | 执行切磋（护盾/冷却/次数/新手保护/结算） | 见签名 | `DuelResult` |
+| `duel.py` | `DuelService.challenge(msg, target_id, rng=None, defender_name="")` | 执行切磋（护盾/冷却/次数/新手保护/结算）；`defender_name` 为调用方解析好的群昵称 | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
 | `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
 | `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称 + 原始 wxid（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
@@ -924,7 +925,7 @@ todo_delete_keywords: list[str] = [
 Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 `POWER_PER_LEVEL=5`。终局常量：`ENHANCE_MAX=15`、
 `ENHANCE_POWER_PER_LEVEL=2`、`ENHANCE_COST_RATIO=0.10`、
-`REALM_TITLES`（凡人 ~ 渡劫）、`REALM_BASE_COST=3000`、
+`REALM_TITLES`（凡人 ~ 渡劫）、`REALM_BASE_COST=300`、
 `REALM_POWER_PER_LEVEL=10`、`BOSS_CRIT_CHANCE=0.10`、
 `BOSS_CRIT_MULTIPLIER=2.0`、`ACHIEVEMENTS`（15 个成就/称号）。
 
@@ -2032,7 +2033,7 @@ MessageRouter.handle(msg)
 | `战神榜` | 本群生涯胜场排行 |
 | `强化 装备名` / `精炼 装备名` | 花费余额强化已拥有装备，最高 +15（每级 +2 武力） |
 | `境界` / `突破` | 查看境界进度 / 满级后花余额突破（每重 +10 武力） |
-| `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每日 3 次，按战力造成伤害） |
+| `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟 1 次，按战力造成伤害） |
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
 | `成就` / `称号` / `佩戴称号 名称` | 查看成就进度、已解锁称号、切换显示称号 |
 | `积分调整 名字 ±N [理由]` / `积分重算` | 管理员专用 |
@@ -2047,7 +2048,7 @@ MessageRouter.handle(msg)
 武力值    = 10 + 等级×5 + Σ(装备基础武力 + 强化等级×2) + 境界×10
 Boss 伤害 = round(战力 × (0.8 + 0.4·roll))，10% 概率 ×2 暴击
 Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
-突破费用  = 3000 × (当前境界 + 1)，需达到最高等级
+突破费用  = 300 × (当前境界 + 1)，需达到最高等级
 ```
 
 #### 关键约定
@@ -2272,7 +2273,8 @@ PointHandler.handle("成就")
 
 - Boss 每周刷新，HP 在首次查询/攻击时按当时群成员数确定并写入
   `boss_state`，之后固定；未击杀则下周一自动换新 Boss。
-- 每个成员每天 `BOSS_DAILY_ATTEMPTS` 次（默认 3），按本地自然日重置。
+- 每个成员挑战后进入冷却，`BOSS_COOLDOWN_SEC`（默认 1800 秒 = 30 分钟）
+  后可再次挑战；跨周自动重置。状态里显示剩余冷却时间。
 - Boss 名称通过 `sum(ord(ch))` 稳定选曲，不依赖 Python 字符串 hash。
 - 成就判定在「成就」「积分」「我的信息」「突破」「Boss」等指令触发；
   称号只影响展示，不额外加属性。
@@ -2399,7 +2401,7 @@ FISHING_MISS_CHANCE=0.15
 # === World Boss / 群副本 ===
 BOSS_ENABLED=true
 BOSS_GROUPS=*
-BOSS_DAILY_ATTEMPTS=3
+BOSS_COOLDOWN_SEC=1800
 BOSS_HP_PER_MEMBER=600
 BOSS_MIN_HP=3000
 BOSS_MAX_HP=30000
