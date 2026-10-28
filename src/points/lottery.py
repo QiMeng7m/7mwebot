@@ -257,7 +257,8 @@ class LotteryService:
             if code == "insufficient":
                 return {
                     "ok": False, "code": "insufficient",
-                    "reply": f"灵石不足：抽奖需要 {self.cost()} 灵石，"
+                    "reply": f"灵石不足：今日首抽已用，再抽一次需要 "
+                             f"{result.get('charge', self.cost())} 灵石，"
                              f"你只有 {result.get('balance', 0)}。",
                     "balance": result.get("balance", 0),
                 }
@@ -272,6 +273,8 @@ class LotteryService:
             "used": result.get("used", 0),
             "limit": result.get("limit", self.daily_limit()),
             "cost": self.cost(),
+            "free": bool(result.get("free")),
+            "charge": int(result.get("charge", 0) or 0),
             "balance": result.get("balance", 0),
         }
 

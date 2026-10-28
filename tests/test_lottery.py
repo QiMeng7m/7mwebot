@@ -158,17 +158,33 @@ class LotteryBase(unittest.TestCase):
 
 
 class StoreDrawTests(LotteryBase):
-    def test_balance_reward_charges_ticket(self):
+    def test_first_draw_is_free(self):
         self.add_member()
         result = self.commit("m1", {
             "kind": "balance", "name": "灵石 +50", "amount": 50,
         })
         self.assertTrue(result["ok"])
+        self.assertTrue(result["free"])
+        self.assertEqual(result["charge"], 0)
         self.assertEqual(result["used"], 1)
-        self.assertEqual(result["balance"], 950)
+        self.assertEqual(result["balance"], 1050)
         self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 1000)
         self.assertEqual(
             self.store.lottery_draws_today(self.chat, "wxid_a", DAY), 1)
+
+    def test_second_draw_costs_100(self):
+        self.add_member()
+        self.commit("m1", {
+            "kind": "balance", "name": "灵石 +50", "amount": 50,
+        })
+        second = self.commit("m2", {
+            "kind": "balance", "name": "灵石 +50", "amount": 50,
+        })
+        self.assertTrue(second["ok"])
+        self.assertFalse(second["free"])
+        self.assertEqual(second["charge"], 100)
+        # 1000 + 50 (free) - 100 + 50 (paid)
+        self.assertEqual(second["balance"], 1000)
 
     def test_points_reward_counts_as_earned(self):
         self.add_member()
@@ -178,7 +194,7 @@ class StoreDrawTests(LotteryBase):
         self.assertTrue(result["ok"])
         self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 1020)
         # Earned points are also spendable balance in this economy.
-        self.assertEqual(result["balance"], 920)
+        self.assertEqual(result["balance"], 1020)
 
     def test_daily_limit(self):
         self.add_member()
@@ -191,13 +207,18 @@ class StoreDrawTests(LotteryBase):
         self.assertFalse(blocked["ok"])
         self.assertEqual(blocked["code"], "limit")
 
-    def test_insufficient_balance(self):
+    def test_insufficient_balance_blocks_second_draw(self):
         self.add_member(earned=50)
-        result = self.commit("m1", {
+        first = self.commit("m1", {
+            "kind": "shield", "name": "免战券 2 小时",
+            "duration_sec": 7200, "max_sec": 86400,
+        })
+        self.assertTrue(first["free"])
+        second = self.commit("m2", {
             "kind": "balance", "name": "灵石 +20", "amount": 20,
         })
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["code"], "insufficient")
+        self.assertFalse(second["ok"])
+        self.assertEqual(second["code"], "insufficient")
         self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 50)
 
     def test_replay_is_idempotent(self):
@@ -211,7 +232,7 @@ class StoreDrawTests(LotteryBase):
         self.assertTrue(first["ok"])
         self.assertFalse(second["ok"])
         self.assertEqual(second["code"], "duplicate")
-        self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 950)
+        self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 1050)
         self.assertEqual(
             self.store.lottery_draws_today(self.chat, "wxid_a", DAY), 1)
 
@@ -232,8 +253,8 @@ class StoreDrawTests(LotteryBase):
         second = self.commit("m2", reward)
         self.assertTrue(second["ok"])
         self.assertIn("折算", second["detail"])
-        # 1000 - 100 - 100 + 15 refund
-        self.assertEqual(second["balance"], 815)
+        # First free; second paid 100 with a 15 refund.
+        self.assertEqual(second["balance"], 915)
         self.assertEqual(
             len(self.store.owned_items(self.chat, "wxid_a")), 1)
 
@@ -288,7 +309,9 @@ class ServiceDrawTests(LotteryBase):
         self.assertEqual(result["reward"]["kind"], "balance")
         self.assertEqual(result["reward"]["amount"], 20)
         self.assertEqual(result["used"], 1)
-        self.assertEqual(result["balance"], 920)
+        self.assertTrue(result["free"])
+        self.assertEqual(result["charge"], 0)
+        self.assertEqual(result["balance"], 1020)
 
     def test_high_roll_gets_rarest_entry(self):
         self.add_member()
@@ -297,6 +320,27 @@ class ServiceDrawTests(LotteryBase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["reward"]["kind"], "shield")
         self.assertEqual(result["reward"]["duration_sec"], 24 * 3600)
+
+    def test_second_draw_charges_and_blocks_when_broke(self):
+        self.add_member(earned=0)
+        first = self.lottery.draw(
+            self.msg("抽奖"), now_ts=NOW, rng=_Rng(0.999999))
+        self.assertTrue(first["free"])
+        second = self.lottery.draw(
+            self.msg("抽奖"), now_ts=NOW, rng=_Rng(0.999999))
+        self.assertFalse(second["ok"])
+        self.assertEqual(second["code"], "insufficient")
+        self.assertIn("今日首抽已用", second["reply"])
+
+    def test_second_draw_with_balance_is_paid(self):
+        self.add_member()
+        self.lottery.draw(self.msg("抽奖"), now_ts=NOW, rng=_Rng(0.999999))
+        second = self.lottery.draw(
+            self.msg("抽奖"), now_ts=NOW, rng=_Rng(0.999999))
+        self.assertTrue(second["ok"])
+        self.assertFalse(second["free"])
+        self.assertEqual(second["charge"], 100)
+        self.assertEqual(second["balance"], 900)
 
     def test_status_and_history(self):
         self.add_member()
@@ -331,14 +375,17 @@ class HandlerLotteryTests(LotteryBase):
         self.add_member()
         reply = self.run_cmd("抽奖")
         self.assertIn("抽奖：", reply)
+        self.assertIn("今日首抽免费", reply)
         self.assertIn("今日 1/3 次", reply)
         log = self.run_cmd("抽奖记录")
         self.assertIn("最近的抽奖记录", log)
 
-    def test_draw_insufficient(self):
-        self.add_member(earned=50)
-        reply = self.run_cmd("抽奖")
-        self.assertIn("灵石不足", reply)
+    def test_second_draw_is_paid(self):
+        self.add_member()
+        self.run_cmd("抽奖")
+        second = self.run_cmd("抽奖")
+        self.assertIn("花费 100 灵石", second)
+        self.assertIn("今日 2/3 次", second)
 
     def test_daily_limit_command(self):
         self.add_member()
@@ -370,7 +417,8 @@ class HelpLotteryTests(unittest.TestCase):
         reply = AdminCommandHandler(MagicMock()).handle(
             "帮助", "张三", config=config, is_admin=False)
         self.assertIn("抽奖 / 奖池", reply)
-        self.assertIn("100 灵石一次", reply)
+        self.assertIn("每日首抽免费", reply)
+        self.assertIn("100 灵石/次", reply)
         self.assertIn("每日 3 次", reply)
 
 

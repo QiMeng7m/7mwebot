@@ -881,6 +881,7 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案（鱼篓/图鉴附带钓鱼等级与熟练加成）；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
 | `handler.py` | `_duel_record(chat_id, sender_id, sender_name)` / `_duel_board(chat_id, group_name)` | 「切磋战绩」段位与生涯数据 / 「战神榜」生涯胜场排行 | 见签名 | `str` |
 | `handler.py` | `_enhance(msg, chat_id, sender_id, sender_name, raw)` | 「强化/精炼 装备名」：查拥有、算费用、扣灵石、+1 强化等级 | 见签名 | `str` |
+| `handler.py` | `_sell(chat_id, sender_id, sender_name, raw)` | 「出售/卖掉/卖出 名称」：优先装备、其次鱼竿，按原价 50% 返还灵石 | 见签名 | `str` |
 | `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：累计修炼值门槛校验（不扣修炼值）、境界 +1 | 见签名 | `str` |
 | `handler.py` | `_boss_attack/_boss_status/_boss_board` | 「Boss / 挑战Boss」「Boss状态」「Boss榜」文案 | 见签名 | `str` |
 | `handler.py` | `_achievements_command/_titles_command/_equip_title` | 「成就」「称号」「佩戴称号 名称」 | 见签名 | `str` |
@@ -903,7 +904,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `boss_kill/boss_distribute_rewards` | 标记击杀一次、按伤害占比写入 `category='boss'` 灵石奖励 | 见签名 | 见签名 |
 | `store.py` | `achievements_of/unlock_achievement/equipped_title/set_equipped_title` | 成就解锁（幂等 + 一次性灵石奖励）、佩戴称号 | 见签名 | 见签名 |
 | `store.py` | `equipment_count/has_rarity_catch/streak_days` | 成就判定辅助统计 | 见签名 | `int/bool` |
-| `store.py` | `commit_lottery_draw(...)` / `lottery_draws_today(...)` / `lottery_history(...)` | 单事务完成扣费+发奖+抽奖记录；每日次数与历史查询 | 见签名 | 见签名 |
+| `store.py` | `sell_item(...)` / `sell_fishing_rod(...)` | 删除已拥有装备/鱼竿并按原价 50% 写入 `category='sell'` 灵石返还 | 见签名 | `(bool, code, refund, balance)` |
+| `store.py` | `commit_lottery_draw(...)` / `lottery_draws_today(...)` / `lottery_history(...)` | 单事务完成首抽免费/后续扣费+发奖+抽奖记录；每日次数与历史查询 | 见签名 | 见签名 |
 | `store.py` | `record_duel(...)` | 原子写入切磋记录与修炼值转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
 | `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日修炼值（含 0） | 见签名 | `list[dict]` |
@@ -2046,6 +2048,7 @@ MessageRouter.handle(msg)
 | `切磋战绩` | 生涯胜/负/胜率/抢分 + 段位（青铜~战神）与升级差 |
 | `战神榜` | 本群生涯胜场排行 |
 | `强化 装备名` / `精炼 装备名` | 花费灵石强化已拥有装备，最高 +15（每级 +2 武力） |
+| `出售 名称` / `卖掉 名称` / `卖出 名称` | 按原价 50% 回收已拥有的装备或鱼竿（默认竹竿不可出售） |
 | `境界` / `突破` | 查看境界进度 / 累计修炼值达到门槛即可突破（不扣修炼值，每重 +10 武力） |
 | `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟恢复 1 次，最多存 3 次，按战力造成伤害） |
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
@@ -2330,8 +2333,9 @@ PointHandler.handle("成就")
 
 #### 结算语义
 
-- 每次抽奖先写 `point_events(category='spend', reason='lottery_ticket', -100)`，
-  灵石不足则不写；`message_id` 唯一保证重放幂等。
+- **每日首抽免费**；`lottery_draws` 当天已有记录时，后续每次写
+  `point_events(category='spend', reason='lottery_ticket', -LOTTERY_COST)`，
+  灵石不足则不开奖；`message_id` 在 `lottery_draws` 中唯一，保证重放幂等。
 - 灵石奖励：`category='lottery', reason='lottery_reward'`，只加灵石。
 - 修炼值奖励：`category='adjust', reason='lottery_points'`，计入累计修炼值/等级/榜单，
   但不占用每日聊天修炼值上限（`day_earned` 只统计 `earn`）。
@@ -2341,14 +2345,15 @@ PointHandler.handle("成就")
   已拥有同样折算灵石。
 - 鱼饵奖励：累加 `fishing_inventory` 数量。
 - 免战奖励：延长 `duel_shields.expires_at`，上限 `SHIELD_MAX_SEC`。
-- 每日次数：`lottery_draws` 按 `(chat_id, sender_id, day)` 计数，默认 3 次。
+- 每日次数：`lottery_draws` 按 `(chat_id, sender_id, day)` 计数，默认 3 次
+  （免费 1 次 + 最多 2 次付费）。
 
 #### 指令
 
 | 输入 | 行为 |
 |---|---|
-| `抽奖` / `每日抽奖` | 扣 100 灵石抽一次（每日 3 次），展示奖励、花费、今日次数与灵石 |
-| `奖池` | 展示分类概率、灵石/修炼值档位与规则 |
+| `抽奖` / `每日抽奖` | 当天首抽免费，之后每次 100 灵石（每日 3 次）；展示奖励、花费或免费、今日次数与灵石 |
+| `奖池` | 展示分类概率、免费规则、灵石/修炼值档位与规则 |
 | `抽奖记录` | 自己最近 10 次抽奖结果 |
 
 ---
@@ -2483,6 +2488,7 @@ BOSS_REWARD_RATIO=0.15
 # === Daily Lottery / 每日抽奖 ===
 LOTTERY_ENABLED=true
 LOTTERY_GROUPS=*
+# 每日首抽免费，之后每次抽奖消耗的灵石
 LOTTERY_COST=100
 LOTTERY_DAILY_ATTEMPTS=3
 

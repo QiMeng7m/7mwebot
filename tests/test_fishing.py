@@ -373,6 +373,34 @@ class ServiceTests(ServiceTestBase):
         self.assertEqual(code, "insufficient")
         self.assertEqual(balance, 100)
 
+    def test_sell_rod_refunds_half_price(self):
+        self.store.adjust(self.chat, "wxid_a", "张三", 300)
+        rod = self.catalog.find_rod("pro")
+        ok, _, _ = self.store.buy_fishing_rod(
+            self.chat, "wxid_a", "张三", rod)
+        self.assertTrue(ok)
+        ok, code, refund, balance = self.store.sell_fishing_rod(
+            self.chat, "wxid_a", "张三", rod)
+        self.assertTrue(ok)
+        self.assertEqual(code, "ok")
+        self.assertEqual(refund, 100)
+        self.assertEqual(balance, 300)
+        rods = [
+            row for row in self.store.fishing_inventory(
+                self.chat, "wxid_a")
+            if row["kind"] == "rod"
+        ]
+        self.assertEqual(rods, [])
+
+    def test_sell_rod_requires_ownership(self):
+        rod = self.catalog.find_rod("pro")
+        ok, code, refund, balance = self.store.sell_fishing_rod(
+            self.chat, "wxid_a", "张三", rod)
+        self.assertFalse(ok)
+        self.assertEqual(code, "not_owned")
+        self.assertEqual(refund, 0)
+        self.assertEqual(balance, 100)
+
     def test_buy_bait_without_balance_fails(self):
         ok, code, _ = self.store.buy_fishing_bait(
             self.chat, "wxid_a", "张三",

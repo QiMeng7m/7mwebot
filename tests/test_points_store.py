@@ -193,6 +193,30 @@ class EquipmentTests(PointStoreTestBase):
             self.chat, "wxid_a", "iron_sword", ["iron_sword"], equip=True,
         ))
 
+    def test_sell_refunds_half_price(self):
+        item = {"id": "iron_sword", "name": "铁剑", "slot": "weapon",
+                "power": 9, "price": 90}
+        self.store.buy_item(
+            self.chat, "wxid_a", "张三", item, ["iron_sword"])
+        ok, code, refund, balance = self.store.sell_item(
+            self.chat, "wxid_a", "张三", item)
+        self.assertTrue(ok)
+        self.assertEqual(code, "ok")
+        self.assertEqual(refund, 45)
+        self.assertEqual(balance, 55)
+        self.assertEqual(
+            self.store.owned_items(self.chat, "wxid_a"), [])
+
+    def test_sell_requires_ownership(self):
+        item = {"id": "iron_sword", "name": "铁剑", "slot": "weapon",
+                "power": 9, "price": 90}
+        ok, code, refund, balance = self.store.sell_item(
+            self.chat, "wxid_a", "张三", item)
+        self.assertFalse(ok)
+        self.assertEqual(code, "not_owned")
+        self.assertEqual(refund, 0)
+        self.assertEqual(balance, 100)
+
 
 class ShieldTests(PointStoreTestBase):
     def setUp(self):

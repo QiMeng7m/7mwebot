@@ -629,6 +629,43 @@ class PointStore:
             balance = self._balance_locked(chat_id, sender_id)
         return True, "ok", new_level, balance
 
+    def sell_item(self, chat_id: str, sender_id: str, sender_name: str,
+                  item: dict, now_ts: int | None = None,
+                  ) -> tuple[bool, str, int, int]:
+        """Sell an owned equipment item for half its catalog price.
+
+        Returns ``(ok, code, refund, balance_after)``.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        item_id = str(item.get("id") or "")
+        refund = max(1, int(item.get("price", 0) or 0) // 2)
+        with self._lock, self.conn:
+            owned = self.conn.execute(
+                """SELECT 1 FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), item_id),
+            ).fetchone()
+            if not owned:
+                return False, "not_owned", 0, self._balance_locked(
+                    chat_id, sender_id)
+
+            self.conn.execute(
+                """DELETE FROM equipment_owned
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), item_id),
+            )
+            self.conn.execute(
+                """INSERT INTO point_events
+                   (chat_id, sender_id, sender_name, message_id, reason,
+                    category, points, day, season, created_at)
+                   VALUES (?, ?, ?, ?, 'sell_item', 'sell', ?, ?, ?, ?)""",
+                (str(chat_id), str(sender_id), str(sender_name or ""),
+                 f"sell:{uuid.uuid4().hex}", refund, local_day(now),
+                 local_season(now), now),
+            )
+            balance = self._balance_locked(chat_id, sender_id)
+        return True, "ok", refund, balance
+
     def _balance_locked(self, chat_id: str, sender_id: str) -> int:
         """Balance helper that assumes the caller already holds the lock."""
         row = self.conn.execute(
@@ -1159,6 +1196,47 @@ class PointStore:
                     (str(chat_id), str(sender_id), str(rod_id)),
                 )
         return True
+
+    def sell_fishing_rod(self, chat_id: str, sender_id: str,
+                         sender_name: str, rod: dict,
+                         now_ts: int | None = None,
+                         ) -> tuple[bool, str, int, int]:
+        """Sell an owned rod for half its catalog price.
+
+        Returns ``(ok, code, refund, balance_after)``.  Selling the
+        equipped rod simply falls back to the default rod.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        rod_id = str(rod.get("id") or "")
+        refund = max(1, int(rod.get("price", 0) or 0) // 2)
+        with self._lock, self.conn:
+            owned = self.conn.execute(
+                """SELECT 1 FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND kind = 'rod' AND item_id = ?""",
+                (str(chat_id), str(sender_id), rod_id),
+            ).fetchone()
+            if not owned:
+                return False, "not_owned", 0, self._balance_locked(
+                    chat_id, sender_id)
+
+            self.conn.execute(
+                """DELETE FROM fishing_inventory
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND kind = 'rod' AND item_id = ?""",
+                (str(chat_id), str(sender_id), rod_id),
+            )
+            self.conn.execute(
+                """INSERT INTO point_events
+                   (chat_id, sender_id, sender_name, message_id, reason,
+                    category, points, day, season, created_at)
+                   VALUES (?, ?, ?, ?, 'sell_rod', 'sell', ?, ?, ?, ?)""",
+                (str(chat_id), str(sender_id), str(sender_name or ""),
+                 f"sell:{uuid.uuid4().hex}", refund, local_day(now),
+                 local_season(now), now),
+            )
+            balance = self._balance_locked(chat_id, sender_id)
+        return True, "ok", refund, balance
 
     def commit_fishing_cast(self, *, chat_id: str, sender_id: str,
                             sender_name: str, message_id: str,
@@ -1807,14 +1885,27 @@ class PointStore:
                             sender_name: str, message_id: str,
                             day: str, now_ts: int, cost: int,
                             limit: int, reward: dict) -> dict:
-        """Charge one ticket and apply a lottery reward atomically.
+        """Apply one lottery draw atomically.
 
-        Returns a result dict with ``ok/code/used/limit/balance/detail``.
-        ``code`` is ``ok`` / ``limit`` / ``insufficient`` / ``duplicate``.
+        The first draw of each local day is free; later draws cost
+        ``cost`` balance.  Returns a result dict with
+        ``ok/code/used/limit/balance/free/charge/detail``.  ``code`` is
+        ``ok`` / ``limit`` / ``insufficient`` / ``duplicate``.
         """
         now = int(now_ts)
         cost = max(0, int(cost))
         with self._lock, self.conn:
+            if message_id:
+                replay = self.conn.execute(
+                    """SELECT 1 FROM lottery_draws
+                       WHERE chat_id = ? AND message_id = ?""",
+                    (str(chat_id), str(message_id)),
+                ).fetchone()
+                if replay:
+                    return {"ok": False, "code": "duplicate",
+                            "balance": self._balance_locked(
+                                chat_id, sender_id)}
+
             used = self.conn.execute(
                 """SELECT COUNT(*) FROM lottery_draws
                    WHERE chat_id = ? AND sender_id = ? AND day = ?""",
@@ -1825,29 +1916,34 @@ class PointStore:
                 return {"ok": False, "code": "limit", "used": used,
                         "limit": int(limit)}
 
-            balance = self._balance_locked(chat_id, sender_id)
-            if balance < cost:
-                return {"ok": False, "code": "insufficient",
-                        "used": used, "limit": int(limit),
-                        "balance": balance}
+            # First draw of the day is free; the rest pay per ticket.
+            charge = 0 if used == 0 else cost
+            if charge > 0:
+                balance = self._balance_locked(chat_id, sender_id)
+                if balance < charge:
+                    return {"ok": False, "code": "insufficient",
+                            "used": used, "limit": int(limit),
+                            "free": False, "charge": charge,
+                            "balance": balance}
 
-            cur = self.conn.execute(
-                """INSERT OR IGNORE INTO point_events
-                   (chat_id, sender_id, sender_name, message_id, reason,
-                    category, points, day, season, created_at)
-                   SELECT ?, ?, ?, ?, 'lottery_ticket', 'spend', ?, ?, ?, ?
-                   WHERE (SELECT COALESCE(SUM(points), 0)
-                          FROM point_events
-                          WHERE chat_id = ? AND sender_id = ?) >= ?""",
-                (str(chat_id), str(sender_id), str(sender_name or ""),
-                 str(message_id), -cost, str(day), local_season(now), now,
-                 str(chat_id), str(sender_id), cost),
-            )
-            if cur.rowcount == 0:
-                return {"ok": False, "code": "duplicate", "used": used,
-                        "limit": int(limit),
-                        "balance": self._balance_locked(
-                            chat_id, sender_id)}
+                cur = self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, ?, ?, 'lottery_ticket', 'spend', ?, ?, ?, ?
+                       WHERE (SELECT COALESCE(SUM(points), 0)
+                              FROM point_events
+                              WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                    (str(chat_id), str(sender_id),
+                     str(sender_name or ""), str(message_id), -charge,
+                     str(day), local_season(now), now,
+                     str(chat_id), str(sender_id), charge),
+                )
+                if cur.rowcount == 0:
+                    return {"ok": False, "code": "duplicate", "used": used,
+                            "limit": int(limit),
+                            "balance": self._balance_locked(
+                                chat_id, sender_id)}
 
             detail = self._grant_lottery_reward_locked(
                 chat_id, sender_id, sender_name, message_id, reward, now,
@@ -1864,7 +1960,8 @@ class PointStore:
             )
             balance = self._balance_locked(chat_id, sender_id)
         return {"ok": True, "code": "ok", "used": used + 1,
-                "limit": int(limit), "balance": balance, "detail": detail}
+                "limit": int(limit), "free": used == 0,
+                "charge": charge, "balance": balance, "detail": detail}
 
     # ── Maintenance / backfill ────────────────────────────────────
 

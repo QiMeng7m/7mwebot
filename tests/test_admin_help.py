@@ -48,6 +48,7 @@ class AdminHelpTests(unittest.TestCase):
         self.assertIn("抽签 / 解签", reply)
         self.assertIn("钓鱼榜 大鱼", reply)
         self.assertIn("@某人 切磋", reply)
+        self.assertIn("出售 铁剑", reply)
         self.assertIn("记一下 周五聚餐", reply)
         # Admin commands are hidden from regular members.
         self.assertNotIn("管理（仅管理员）", reply)

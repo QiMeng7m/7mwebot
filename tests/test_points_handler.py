@@ -273,6 +273,44 @@ class ShopTests(HandlerTestBase):
         reply = self.run_cmd("购买 龙纹剑")
         self.assertIn("灵石不足", reply)
 
+    def test_sell_item_refunds_half_price(self):
+        self.run_cmd("购买 木剑")
+        reply = self.run_cmd("出售 木剑")
+        self.assertIn("出售成功", reply)
+        self.assertIn("返还 15", reply)
+        self.assertIn("当前灵石 185", reply)
+        self.assertEqual(
+            self.store.owned_items(self.chat, "wxid_a"), [])
+        self.assertEqual(
+            self.duels.power(self.chat, "wxid_a").equipment, 0)
+
+    def test_sell_not_owned_item(self):
+        reply = self.run_cmd("出售 木剑")
+        self.assertIn("还没有 木剑", reply)
+
+    def test_sell_unknown_name(self):
+        reply = self.run_cmd("出售 不存在的东西")
+        self.assertIn("没有找到", reply)
+
+    def test_sell_fishing_rod(self):
+        self.store.adjust(self.chat, "wxid_a", "张三", 300)
+        rod = self.handler._fishing_catalog.find_rod("碳素竿")
+        self.store.buy_fishing_rod(
+            self.chat, "wxid_a", "张三", rod)
+        reply = self.run_cmd("出售 碳素竿")
+        self.assertIn("出售成功", reply)
+        self.assertIn("返还 150", reply)
+        rods = [
+            row for row in self.store.fishing_inventory(
+                self.chat, "wxid_a")
+            if row["kind"] == "rod"
+        ]
+        self.assertEqual(rods, [])
+
+    def test_sell_default_rod_rejected(self):
+        reply = self.run_cmd("出售 竹竿")
+        self.assertIn("不能出售", reply)
+
     def test_bag_and_unequip(self):
         self.run_cmd("购买 木剑")
         reply = self.run_cmd("我的装备")

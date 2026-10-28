@@ -124,6 +124,7 @@ PREFIX_COMMANDS = (
     "积分调整", "积分重算",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
+    "出售", "卖掉", "卖出",
 )
 
 _BOARD_SCOPES = {
@@ -201,6 +202,7 @@ class PointHandler:
         self._lottery = LotteryService(
             store, config, catalog, fishing_catalog,
         )
+        self._fishing_catalog = fishing_catalog
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
         )
@@ -281,6 +283,8 @@ class PointHandler:
         if head in ("佩戴称号", "戴上称号"):
             return self._equip_title(
                 chat_id, sender_id, sender_name, rest)
+        if head in ("出售", "卖掉", "卖出"):
+            return self._sell(chat_id, sender_id, sender_name, rest)
         if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
         if head in ("修炼值调整", "积分调整"):
@@ -833,6 +837,51 @@ class PointHandler:
             if key in (slot["id"], slot["name"]):
                 return slot
         return None
+
+    def _sell(self, chat_id: str, sender_id: str,
+              sender_name: str, raw: str) -> str:
+        """Sell an owned equipment item or fishing rod at 50% price."""
+        name = _strip_invisible(raw).strip()
+        if not name:
+            return "用法：出售 装备名 / 出售 鱼竿名（按原价 50% 回收）"
+
+        item = self._catalog.find(name)
+        if item is not None:
+            ok, code, refund, balance = self._store.sell_item(
+                chat_id, sender_id, sender_name, item,
+            )
+            if not ok:
+                if code == "not_owned":
+                    return f"你还没有 {item['name']}，无法出售。"
+                return "出售失败，请稍后再试。"
+            power = self._duels.power(chat_id, sender_id)
+            return (
+                f"出售成功：{item['name']}，返还 {refund} 灵石"
+                f"（原价 {item['price']} 的 50%），"
+                f"当前灵石 {balance}，战力 {power.total}。"
+            )
+
+        rod = self._fishing_catalog.find_rod(name)
+        if rod is not None:
+            if rod.get("default"):
+                return "竹竿是默认鱼竿，不能出售。"
+            ok, code, refund, balance = self._store.sell_fishing_rod(
+                chat_id, sender_id, sender_name, rod,
+            )
+            if not ok:
+                if code == "not_owned":
+                    return f"你还没有鱼竿 {rod['name']}，无法出售。"
+                return "出售失败，请稍后再试。"
+            return (
+                f"出售成功：鱼竿 {rod['name']}，返还 {refund} 灵石"
+                f"（原价 {rod['price']} 的 50%），"
+                f"当前灵石 {balance}。"
+            )
+
+        return (
+            f"没有找到「{name}」。可以出售商店装备，"
+            "或已拥有的鱼竿。"
+        )
 
     def _bag(self, chat_id: str, sender_id: str, sender_name: str) -> str:
         if not getattr(self._config, "equipment_enabled", False):
@@ -1518,10 +1567,14 @@ class PointHandler:
                     for item in ach["new"]
                 )
             )
+        balance = self._store.balance_of(chat_id, sender_id)
+        if result.get("free"):
+            cost_line = "今日首抽免费"
+        else:
+            cost_line = f"花费 {result.get('charge', result['cost'])} 灵石"
         lines.append(
-            f"花费 {result['cost']} 灵石 · "
-            f"今日 {result['used']}/{result['limit']} 次 · "
-            f"剩余 {result['balance']} 灵石"
+            f"{cost_line} · 今日 {result['used']}/{result['limit']} 次 · "
+            f"剩余 {balance} 灵石"
         )
         return "\n".join(lines)
 
@@ -1536,7 +1589,7 @@ class PointHandler:
         balance_tiers = status["balance_tiers"]
         points_tiers = status["points_tiers"]
         lines = [
-            f"每日抽奖 · {status['cost']} 灵石/次 · "
+            f"每日抽奖 · 首抽免费，之后 {status['cost']} 灵石/次 · "
             f"今日 {status['used']}/{status['limit']} 次",
             f"我的灵石 {status['balance']}",
             "【奖池分类概率】",

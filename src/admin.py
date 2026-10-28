@@ -131,8 +131,8 @@ class AdminCommandHandler:
             daily.append("  抽签 / 解签                每日一签，AI 帮你解签")
         if points_on and self._flag(config, "lottery_enabled"):
             daily.append(
-                f"  抽奖 / 奖池                {lottery_cost} 灵石一次，"
-                f"每日 {lottery_attempts} 次"
+                f"  抽奖 / 奖池                每日首抽免费，之后 "
+                f"{lottery_cost} 灵石/次（每日 {lottery_attempts} 次）"
             )
         if daily:
             lines.append("【每日】")
@@ -156,6 +156,7 @@ class AdminCommandHandler:
                 "  商店                       装备商店",
                 "  购买 铁剑                  购买装备",
                 "  装备 铁剑 / 卸下 铁剑       穿戴 / 卸下",
+                "  出售 铁剑 / 出售 碳素竿      按原价 50% 回收装备或鱼竿",
                 "  背包                       我的装备",
                 "  战力 / 战力榜              战力值与战力排行",
             ])
