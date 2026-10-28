@@ -167,6 +167,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `BOSS_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/boss.py:BossService.is_enabled()` |
 | `BOSS_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/boss.py:BossService.is_enabled()` |
 | `BOSS_COOLDOWN_SEC` | `int` | `1800` | `src/config.py:load_config()` | `src/points/boss.py:BossService.attack()` / `status()` |
+| `BOSS_MAX_ATTEMPTS` | `int` | `3` | `src/config.py:load_config()` | `src/points/boss.py:BossService._max_attempts()` |
 | `BOSS_HP_PER_MEMBER` | `int` | `600` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_MIN_HP` | `int` | `3000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_MAX_HP` | `int` | `30000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
@@ -858,8 +859,9 @@ todo_delete_keywords: list[str] = [
 | `boss.py` | `roll_damage(power, roll, crit_roll)` | 单次 Boss 伤害：80%~120% 战力，10% 概率暴击 ×2 | 见签名 | `(int, bool)` |
 | `boss.py` | `boss_name_for(chat_id, season)` / `boss_hp_for(members, config)` | 按群/周稳定选 Boss 名 / 按成员数缩放并夹取 HP | 见签名 | `str/int` |
 | `boss.py` | `format_cooldown(seconds)` | 冷却秒数转「30 分钟 / 1 小时」文案 | `seconds: int` | `str` |
-| `boss.py` | `BossService.status(chat_id, group_name, sender_id="", now_ts=None)` | 本周 Boss 血量、参与人数、总伤害、个人伤害、剩余天数、伤害榜、个人冷却 | 见签名 | `dict` |
-| `boss.py` | `BossService.attack(msg, now_ts=None, rng=None)` | 冷却校验（默认 30 分钟）、按战力结算伤害、扣血、击杀后按伤害分奖励 | 见签名 | `dict` |
+| `boss.py` | `regen_attempts(attempts, regen_at, cap, cooldown, now)` | 按时间恢复挑战次数（每 `cooldown` 秒 +1，封顶 `cap`） | 见签名 | `(attempts, regen_at)` |
+| `boss.py` | `BossService.status(chat_id, group_name, sender_id="", now_ts=None)` | 本周 Boss 血量、参与人数、个人伤害、剩余天数、伤害榜、剩余次数与下次恢复 | 见签名 | `dict` |
+| `boss.py` | `BossService.attack(msg, now_ts=None, rng=None)` | 消耗 1 次挑战（每 30 分钟恢复、最多存 3 次）、按战力结算伤害、扣血、击杀后分奖励 | 见签名 | `dict` |
 | `achievements.py` | `AchievementService.snapshot(chat_id, sender_id, now_ts=None)` | 汇总成就判定所需数据（积分/装备/强化/切磋/钓鱼/连签/Boss/境界） | 见签名 | `dict` |
 | `achievements.py` | `AchievementService.qualifies(definition, snapshot)` | 判断单个成就是否达标（`species_complete` 比较图鉴总数） | 见签名 | `bool` |
 | `achievements.py` | `AchievementService.evaluate(chat_id, sender_id, now_ts=None)` | 解锁新成就并发放一次性余额奖励 | 见签名 | `dict` |
@@ -872,7 +874,7 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案（鱼篓/图鉴附带钓鱼等级与熟练加成）；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
 | `handler.py` | `_duel_record(chat_id, sender_id, sender_name)` / `_duel_board(chat_id, group_name)` | 「切磋战绩」段位与生涯数据 / 「战神榜」生涯胜场排行 | 见签名 | `str` |
 | `handler.py` | `_enhance(msg, chat_id, sender_id, sender_name, raw)` | 「强化/精炼 装备名」：查拥有、算费用、扣余额、+1 强化等级 | 见签名 | `str` |
-| `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：满级校验、扣余额、境界 +1 | 见签名 | `str` |
+| `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：累计积分门槛校验（不扣积分）、境界 +1 | 见签名 | `str` |
 | `handler.py` | `_boss_attack/_boss_status/_boss_board` | 「Boss / 挑战Boss」「Boss状态」「Boss榜」文案 | 见签名 | `str` |
 | `handler.py` | `_achievements_command/_titles_command/_equip_title` | 「成就」「称号」「佩戴称号 名称」 | 见签名 | `str` |
 | `store.py` | `PointStore(conn, lock=None)` | 积分流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
@@ -887,8 +889,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `duel_record(chat_id, sender_id)` | 某人生涯切磋：总场次/胜场/累计抢分（不含免战拦截） | 见签名 | `dict` |
 | `store.py` | `duel_leaderboard(chat_id, limit=10)` | 战神榜：按生涯胜场、抢分排序 | 见签名 | `list[dict]` |
 | `store.py` | `enhance_item(...)` / `item_enhance_level(...)` / `max_enhance_level(...)` | 条件扣款强化装备（幂等）/ 查询单件与最高强化等级 | 见签名 | 见签名 |
-| `store.py` | `realm_of(...)` / `realm_leaderboard(...)` / `breakthrough(...)` | 境界查询、境界榜、条件扣款突破（幂等） | 见签名 | 见签名 |
-| `store.py` | `boss_state/ensure_boss_state/boss_attempts/boss_last_attack_at/boss_attack_recorded/boss_attack` | 周 Boss 状态、今日次数统计、最后攻击时间（冷却）、攻击幂等与原子扣血 | 见签名 | 见签名 |
+| `store.py` | `realm_of(...)` / `realm_leaderboard(...)` / `advance_realm(...)` | 境界查询、境界榜、境界 +1（不扣积分，零分流水保证幂等） | 见签名 | 见签名 |
+| `store.py` | `boss_state/ensure_boss_state/boss_attempts/boss_energy_of/save_boss_energy/boss_attack_recorded/boss_attack` | 周 Boss 状态、今日次数统计、挑战次数池（恢复时间）、攻击幂等与原子扣血 | 见签名 | 见签名 |
 | `store.py` | `boss_damage_board/boss_totals/boss_member_damage/boss_total_damage` | 伤害榜、总伤害/参与人数、个人本周与生涯伤害 | 见签名 | 见签名 |
 | `store.py` | `boss_kill/boss_distribute_rewards` | 标记击杀一次、按伤害占比写入 `category='boss'` 余额奖励 | 见签名 | 见签名 |
 | `store.py` | `achievements_of/unlock_achievement/equipped_title/set_equipped_title` | 成就解锁（幂等 + 一次性余额奖励）、佩戴称号 | 见签名 | 见签名 |
@@ -1995,7 +1997,7 @@ MessageRouter.handle(msg)
 | `points/boss.py` | `src/points/boss.py` | 周 Boss 血量/伤害/奖励结算 |
 | `points/achievements.py` | `src/points/achievements.py` | 成就定义、判定与称号 |
 | `points/handler.py` | `src/points/handler.py` | 群内指令解析与文案 |
-| `schema.py` | `src/db/schema.py` | `point_events`/`equipment_owned`/`boss_state`/`boss_attacks`/`achievements`/`member_profiles`/`member_realms` 等 |
+| `schema.py` | `src/db/schema.py` | `point_events`/`equipment_owned`/`boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms` 等 |
 | `router.py` | `src/router.py` | 入库后计分 + 裸指令分流 |
 | `server.py` | `src/web/server.py` | `/api/points*`、`/api/equipment*`、`/api/duels` |
 
@@ -2010,6 +2012,7 @@ MessageRouter.handle(msg)
 | `duels` | 切磋审计日志；`UNIQUE(chat_id, message_id)` |
 | `boss_state` | 每群每周 Boss：名称、总血量、剩余血量、击杀时间 |
 | `boss_attacks` | Boss 伤害记录；`UNIQUE(chat_id, message_id)` 幂等 |
+| `boss_energy` | 每群每周每人的挑战次数池：`attempts` 与下次恢复时间 `regen_at` |
 | `achievements` | 已解锁成就；每行一次性发放余额奖励 |
 | `member_profiles` | 每人佩戴的显示称号 |
 | `member_realms` | 每人境界等级（0 凡人 ~ 9 渡劫） |
@@ -2032,8 +2035,8 @@ MessageRouter.handle(msg)
 | `切磋战绩` | 生涯胜/负/胜率/抢分 + 段位（青铜~战神）与升级差 |
 | `战神榜` | 本群生涯胜场排行 |
 | `强化 装备名` / `精炼 装备名` | 花费余额强化已拥有装备，最高 +15（每级 +2 武力） |
-| `境界` / `突破` | 查看境界进度 / 花余额突破（无等级限制，每重 +10 武力） |
-| `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟 1 次，按战力造成伤害） |
+| `境界` / `突破` | 查看境界进度 / 累计积分达到门槛即可突破（不扣积分，每重 +10 武力） |
+| `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟恢复 1 次，最多存 3 次，按战力造成伤害） |
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
 | `成就` / `称号` / `佩戴称号 名称` | 查看成就进度、已解锁称号、切换显示称号 |
 | `积分调整 名字 ±N [理由]` / `积分重算` | 管理员专用 |
@@ -2048,7 +2051,7 @@ MessageRouter.handle(msg)
 武力值    = 10 + 等级×5 + Σ(装备基础武力 + 强化等级×2) + 境界×10
 Boss 伤害 = round(战力 × (0.8 + 0.4·roll))，10% 概率 ×2 暴击
 Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
-突破费用  = 300 × (当前境界 + 1)，无等级门槛
+突破门槛  = 300 × (当前境界 + 1) 累计积分，不扣积分、无等级限制
 ```
 
 #### 关键约定
@@ -2214,14 +2217,15 @@ Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠
 | `duel.py` | `src/points/duel.py` | 武力值叠加强化与境界 |
 | `store.py` | `src/points/store.py` | 强化/突破/Boss/成就/称号持久化 |
 | `handler.py` | `src/points/handler.py` | 指令解析与文案 |
-| `schema.py` | `src/db/schema.py` | `boss_state`/`boss_attacks`/`achievements`/`member_profiles`/`member_realms`；`equipment_owned.enhance_level` 迁移 |
+| `schema.py` | `src/db/schema.py` | `boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms`；`equipment_owned.enhance_level` 迁移 |
 
 #### 经济语义
 
 - **强化**：`INSERT OR IGNORE point_events(category='spend', reason='enhance')`，
   条件扣款；`equipment_owned.enhance_level` +1，最高 15。
-- **境界**：`category='spend', reason='breakthrough'`；`member_realms.realm` +1，
-  最高 9（渡劫）。无等级门槛，余额足够即可突破。
+- **境界**：`member_realms.realm` +1，最高 9（渡劫）。累计积分达到
+  `300 × (当前境界 + 1)` 即可突破；不扣积分、不扣余额，只写一条
+  `points=0, category='spend', reason='breakthrough'` 的幂等流水。
 - **Boss 奖励**：`category='boss', reason='boss_reward'`，只加余额，
   不计入 `earned_of()` / 等级 / 榜单；按本周伤害占比分配。
 - **成就奖励**：`category='achievement', reason='achievement'`，一次性余额奖励；
@@ -2240,10 +2244,10 @@ PointHandler.handle("强化 木剑")
 
 PointHandler.handle("突破")
   └── _breakthrough()
-        ├── 校验 levels.load()[-1].min_points（满级）
+        ├── 校验累计积分 earned_of() ≥ realm_cost(realm)（不扣积分）
         ├── realm_cost(realm)
-        └── PointStore.breakthrough()
-              ├── INSERT OR IGNORE point_events(category='spend')
+        └── PointStore.advance_realm()
+              ├── INSERT OR IGNORE point_events(points=0, reason='breakthrough')
               └── UPSERT member_realms.realm
 
 PointHandler.handle("Boss")
@@ -2265,6 +2269,7 @@ PointHandler.handle("成就")
 |---|---|
 | `boss_state` | 主键 `(chat_id, season)`；`season` 为 ISO 周 `YYYY-Www` |
 | `boss_attacks` | 每次 Boss 攻击；`UNIQUE(chat_id, message_id)` |
+| `boss_energy` | 主键 `(chat_id, season, sender_id)`；`attempts` + `regen_at` |
 | `achievements` | 主键 `(chat_id, sender_id, achievement_id)` |
 | `member_profiles` | 每人当前佩戴称号 |
 | `member_realms` | 每人境界等级 |
@@ -2273,8 +2278,9 @@ PointHandler.handle("成就")
 
 - Boss 每周刷新，HP 在首次查询/攻击时按当时群成员数确定并写入
   `boss_state`，之后固定；未击杀则下周一自动换新 Boss。
-- 每个成员挑战后进入冷却，`BOSS_COOLDOWN_SEC`（默认 1800 秒 = 30 分钟）
-  后可再次挑战；跨周自动重置。状态里显示剩余冷却时间。
+- 每个成员持有 `BOSS_MAX_ATTEMPTS`（默认 3）次挑战额度，每
+  `BOSS_COOLDOWN_SEC`（默认 1800 秒 = 30 分钟）恢复 1 次，可累计但不超过上限；
+  跨周自动重置。状态里显示剩余次数与下次恢复时间。
 - Boss 名称通过 `sum(ord(ch))` 稳定选曲，不依赖 Python 字符串 hash。
 - 成就判定在「成就」「积分」「我的信息」「突破」「Boss」等指令触发；
   称号只影响展示，不额外加属性。
@@ -2402,6 +2408,7 @@ FISHING_MISS_CHANCE=0.15
 BOSS_ENABLED=true
 BOSS_GROUPS=*
 BOSS_COOLDOWN_SEC=1800
+BOSS_MAX_ATTEMPTS=3
 BOSS_HP_PER_MEMBER=600
 BOSS_MIN_HP=3000
 BOSS_MAX_HP=30000

@@ -69,6 +69,30 @@ def format_cooldown(seconds: int) -> str:
     return f"{hours} 小时 {rem} 分钟" if rem else f"{hours} 小时"
 
 
+def regen_attempts(attempts: int, regen_at: int, cap: int,
+                   cooldown: int, now: int) -> tuple[int, int]:
+    """Apply elapsed regeneration to a charge pool.
+
+    Returns ``(attempts, regen_at)`` where ``regen_at`` is the timestamp
+    of the next charge.  Charges stop accumulating at *cap*.
+    """
+    cap = max(1, int(cap))
+    attempts = max(0, min(cap, int(attempts)))
+    if cooldown <= 0:
+        return cap, 0
+    regen_at = int(regen_at)
+    if attempts >= cap:
+        return cap, now + cooldown
+    if regen_at <= 0:
+        regen_at = now + cooldown
+    while now >= regen_at and attempts < cap:
+        attempts += 1
+        regen_at += cooldown
+    if attempts >= cap:
+        regen_at = now + cooldown
+    return attempts, regen_at
+
+
 class BossService:
     """Resolves 「挑战Boss」 against the store."""
 
@@ -101,6 +125,22 @@ class BossService:
     def _cooldown_sec(self) -> int:
         return max(0, int(getattr(self._config, "boss_cooldown_sec", 1800)))
 
+    def _max_attempts(self) -> int:
+        return max(1, int(getattr(self._config, "boss_max_attempts", 3)))
+
+    def _energy(self, chat_id: str, season: str, sender_id: str,
+                now: int) -> tuple[int, int]:
+        """Current ``(attempts, regen_at)`` with elapsed regen applied."""
+        cap = self._max_attempts()
+        stored = self._store.boss_energy_of(chat_id, season, sender_id)
+        if stored is None:
+            attempts, regen_at = cap, now + self._cooldown_sec()
+        else:
+            attempts, regen_at = stored
+        return regen_attempts(
+            attempts, regen_at, cap, self._cooldown_sec(), now,
+        )
+
     # ── Public API ────────────────────────────────────────────────
 
     def status(self, chat_id: str, group_name: str, sender_id: str = "",
@@ -113,10 +153,11 @@ class BossService:
         season = state["season"]
         board = self._store.boss_damage_board(chat_id, season, 10)
         totals = self._store.boss_totals(chat_id, season)
-        cooldown = self._cooldown_sec()
-        last = self._store.boss_last_attack_at(chat_id, season, sender_id)
-        cooldown_left = (
-            max(0, cooldown - (now - last)) if last else 0
+        cap = self._max_attempts()
+        attempts, regen_at = self._energy(
+            chat_id, season, sender_id, now)
+        next_regen_sec = (
+            0 if attempts >= cap else max(0, regen_at - now)
         )
         return {
             "ok": True,
@@ -129,8 +170,9 @@ class BossService:
             "days_left": days_until_week_end(now),
             "attempts_used": self._store.boss_attempts(
                 chat_id, season, sender_id, local_day(now)),
-            "cooldown_sec": cooldown,
-            "cooldown_left": cooldown_left,
+            "attempts_left": attempts,
+            "attempts_max": cap,
+            "next_regen_sec": next_regen_sec,
             "my_damage": self._store.boss_member_damage(
                 chat_id, season, sender_id),
             "participants": int(totals.get("participants", 0)),
@@ -168,16 +210,17 @@ class BossService:
             return {"ok": False, "code": "duplicate",
                     "reply": "这次攻击已经记录过了，请稍后再试。"}
 
-        cooldown = self._cooldown_sec()
-        last = self._store.boss_last_attack_at(chat_id, season, sender_id)
-        if cooldown > 0 and last and now - last < cooldown:
-            left = cooldown - (now - last)
+        cap = self._max_attempts()
+        attempts, regen_at = self._energy(chat_id, season, sender_id, now)
+        if attempts <= 0:
+            wait = max(0, regen_at - now)
             return {
-                "ok": False, "code": "cooldown",
-                "reply": f"挑战冷却中，还需 {format_cooldown(left)}"
-                         "才能再次挑战。",
-                "cooldown_left": left,
-                "cooldown_sec": cooldown,
+                "ok": False, "code": "no_attempts",
+                "reply": f"挑战次数已用完，{format_cooldown(wait)}"
+                         "后恢复 1 次。",
+                "attempts_left": 0,
+                "attempts_max": cap,
+                "next_regen_sec": wait,
             }
 
         day = local_day(now)
@@ -194,6 +237,14 @@ class BossService:
         if not inserted:
             return {"ok": False, "code": "duplicate",
                     "reply": "这次攻击已经记录过了，请稍后再试。"}
+
+        # Consume one charge; regen_at already points at the next charge
+        # (or now+cooldown when the pool was full before this hit).
+        attempts -= 1
+        self._store.save_boss_energy(
+            chat_id, season, sender_id, attempts, regen_at,
+        )
+        next_regen_sec = max(0, regen_at - now)
 
         killed = hp_left <= 0
         rewards: list[dict] = []
@@ -214,8 +265,9 @@ class BossService:
             "killed": killed,
             "power": power.total,
             "attempts_used": used + 1,
-            "cooldown_sec": cooldown,
-            "cooldown_left": cooldown,
+            "attempts_left": attempts,
+            "attempts_max": cap,
+            "next_regen_sec": next_regen_sec,
             "my_damage": self._store.boss_member_damage(
                 chat_id, season, sender_id),
             "participants": int(totals.get("participants", 0)),

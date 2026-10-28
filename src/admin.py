@@ -108,8 +108,14 @@ class AdminCommandHandler:
         fish_hourly = self._cfg_int(config, "fishing_hourly_attempts", 30)
         fish_batch = self._cfg_int(config, "fishing_max_batch", 10)
         fish_daily = self._cfg_int(config, "fishing_daily_cap", 120)
+        lottery_cost = self._cfg_int(config, "lottery_cost", 100)
+        lottery_attempts = self._cfg_int(
+            config, "lottery_daily_attempts", 3)
         boss_cooldown_min = max(
             1, self._cfg_int(config, "boss_cooldown_sec", 1800) // 60,
+        )
+        boss_max_attempts = max(
+            1, self._cfg_int(config, "boss_max_attempts", 3),
         )
 
         points_on = self._flag(config, "points_enabled")
@@ -123,6 +129,11 @@ class AdminCommandHandler:
             daily.append("  签到                       领取每日签到积分")
         if self._flag(config, "fun_enabled"):
             daily.append("  抽签 / 解签                每日一签，AI 帮你解签")
+        if points_on and self._flag(config, "lottery_enabled"):
+            daily.append(
+                f"  抽奖 / 奖池                {lottery_cost} 余额一次，"
+                f"每日 {lottery_attempts} 次"
+            )
         if daily:
             lines.append("【每日】")
             lines.extend(daily)
@@ -182,12 +193,13 @@ class AdminCommandHandler:
         if self._flag(config, "boss_enabled"):
             advanced.extend([
                 f"  Boss / 挑战Boss / 打Boss    挑战本周群 Boss"
-                f"（每 {boss_cooldown_min} 分钟 1 次）",
+                f"（每 {boss_cooldown_min} 分钟恢复 1 次，"
+                f"最多存 {boss_max_attempts} 次）",
                 "  Boss状态                   血量、伤害与剩余时间",
                 "  Boss榜                     本周伤害排行",
             ])
         advanced.extend([
-            "  境界 / 突破                 境界进度 / 花余额突破",
+            "  境界 / 突破                 境界进度 / 积分达标突破",
             "  成就 / 称号                 成就进度 / 已解锁称号",
             "  佩戴称号 名称               切换显示称号",
         ])

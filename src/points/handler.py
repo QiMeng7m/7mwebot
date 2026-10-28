@@ -32,8 +32,9 @@ from .equipment import (
     enhance_cost,
 )
 from .fishing import FishingService, fishing_level, format_weight
-from .fishing_catalog import RARITIES, RARITY_LABELS
+from .fishing_catalog import FishingCatalog, RARITIES, RARITY_LABELS
 from .levels import LevelTable
+from .lottery import LotteryService
 from .models import Command, DelayedReply
 from .realm import (
     REALM_MAX,
@@ -94,6 +95,11 @@ EXACT_COMMANDS = {
     "图鉴": ("fish_book", ""),
     "钓鱼榜": ("fish_board", "total"),
     "钓鱼记录": ("fish_log", ""),
+    # ── Daily lottery ──
+    "抽奖": ("lottery_draw", ""),
+    "每日抽奖": ("lottery_draw", ""),
+    "奖池": ("lottery_pool", ""),
+    "抽奖记录": ("lottery_log", ""),
     # ── Endgame ──
     "Boss": ("boss_attack", ""),
     "boss": ("boss_attack", ""),
@@ -178,6 +184,14 @@ class PointHandler:
         self._boss = BossService(store, config, duels)
         self._achievements = AchievementService(
             store, config, levels, duels, fishing,
+        )
+        fishing_catalog = (
+            fishing.catalog if fishing is not None else FishingCatalog(
+                getattr(config, "fishing_catalog_path",
+                        "data/fishing.json"))
+        )
+        self._lottery = LotteryService(
+            store, config, catalog, fishing_catalog,
         )
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
@@ -317,6 +331,14 @@ class PointHandler:
                 chat_id, msg.get("group_name", ""), arg or "value")
         if kind == "fish_log":
             return self._fish_log(chat_id, sender_id)
+        if kind == "lottery_draw":
+            return self._lottery_draw(
+                msg, chat_id, sender_id, sender_name)
+        if kind == "lottery_pool":
+            return self._lottery_pool(
+                chat_id, msg.get("group_name", ""), sender_id)
+        if kind == "lottery_log":
+            return self._lottery_log(chat_id, sender_id)
         if kind == "boss_attack":
             return self._boss_attack(msg, chat_id, sender_id, sender_name)
         if kind == "boss_status":
@@ -1462,6 +1484,72 @@ class PointHandler:
             )
         return "\n".join(lines)
 
+    # ── Daily lottery ─────────────────────────────────────────────
+
+    def _lottery_draw(self, msg: dict, chat_id: str, sender_id: str,
+                      sender_name: str) -> str:
+        result = self._lottery.draw(msg)
+        if not result.get("ok"):
+            return result.get("reply") or "抽奖失败，请稍后再试。"
+
+        reward = result["reward"]
+        lines = [
+            f"🎲 {sender_name} 抽奖：{reward.get('emoji', '🎁')} "
+            f"{reward.get('name', '奖励')}",
+        ]
+        if reward.get("kind") == "equipment":
+            lines[0] += f"（武力 +{reward.get('power', 0)}）"
+        detail = result.get("detail") or ""
+        if detail:
+            lines.append(detail)
+        if reward.get("kind") == "points":
+            self._achievements.evaluate(chat_id, sender_id)
+        lines.append(
+            f"花费 {result['cost']} 余额 · "
+            f"今日 {result['used']}/{result['limit']} 次 · "
+            f"余额 {result['balance']}"
+        )
+        return "\n".join(lines)
+
+    def _lottery_pool(self, chat_id: str, group_name: str,
+                      sender_id: str) -> str:
+        status = self._lottery.status(
+            chat_id, group_name, sender_id)
+        if not status.get("ok"):
+            return status.get("reply") or "每日抽奖未开启。"
+
+        chances = status["chances"]
+        balance_tiers = status["balance_tiers"]
+        points_tiers = status["points_tiers"]
+        lines = [
+            f"每日抽奖 · {status['cost']} 余额/次 · "
+            f"今日 {status['used']}/{status['limit']} 次",
+            f"我的余额 {status['balance']}",
+            "【奖池分类概率】",
+            f"  余额 {chances['balance']}%"
+            f"（{min(balance_tiers)}~{max(balance_tiers)}，越高越难）",
+            f"  积分 {chances['points']}%"
+            f"（{min(points_tiers)}~{max(points_tiers)}，越高越难）",
+            f"  装备 {chances['equipment']}%（商店全部装备）",
+            f"  鱼竿 {chances['rod']}%（全部非默认鱼竿）",
+            f"  鱼饵 {chances['bait']}%（全部鱼饵 ×5~50）",
+            f"  免战 {chances['shield']}%（2~24 小时）",
+            "同一分类内奖励价值越高，抽中的概率越低。",
+            "发送「抽奖」抽一次；「抽奖记录」看最近结果。",
+        ]
+        return "\n".join(lines)
+
+    def _lottery_log(self, chat_id: str, sender_id: str) -> str:
+        rows = self._lottery.history(chat_id, sender_id, 10)
+        if not rows:
+            return "你还没有抽奖记录，发「抽奖」试试。"
+        lines = ["最近的抽奖记录"]
+        for row in rows:
+            when = time.strftime(
+                "%m-%d %H:%M", time.localtime(int(row["created_at"])))
+            lines.append(f"{when} {row['reward_name']}")
+        return "\n".join(lines)
+
     # ── Endgame: enhance / realm / boss / achievements ────────────
 
     def _enhance(self, msg: dict, chat_id: str, sender_id: str,
@@ -1520,11 +1608,15 @@ class PointHandler:
             f" · 当前战力 {power.total}",
         ]
         if info["next"] is not None:
+            points = self._store.earned_of(chat_id, sender_id)
             lines.append(
                 f"下一境界：{info['next_title']}"
                 f"（武力 +{realm_info(info['next'])['power_bonus']}）"
             )
-            lines.append(f"突破消耗 {info['next_cost']} 余额")
+            lines.append(
+                f"突破需要累计积分 {info['next_cost']}"
+                f"（当前 {points}）· 不消耗积分"
+            )
             lines.append("发送「突破」即可尝试。")
         else:
             lines.append("已达最高境界：渡劫。")
@@ -1535,21 +1627,21 @@ class PointHandler:
         realm = self._store.realm_of(chat_id, sender_id)
         if realm >= REALM_MAX:
             return "你已经达到最高境界：渡劫。"
-        cost = realm_cost(realm)
-        balance = self._store.balance_of(chat_id, sender_id)
-        if balance < cost:
+        required = realm_cost(realm)
+        points = self._store.earned_of(chat_id, sender_id)
+        if points < required:
             return (
-                f"余额不足：突破到 {realm_info(realm + 1)['title']} "
-                f"需要 {cost} 余额，你只有 {balance}。"
+                f"境界突破需要累计积分 {required}（当前 {points}）。"
+                "突破不消耗积分，达到门槛即可。"
             )
-        ok, code, new_realm, balance = self._store.breakthrough(
-            chat_id, sender_id, sender_name, cost, REALM_MAX,
+        ok, code, new_realm = self._store.advance_realm(
+            chat_id, sender_id, sender_name, REALM_MAX,
             f"realm:{msg.get('message_id') or ''}",
         )
         if code == "max":
             return "你已经达到最高境界：渡劫。"
-        if code == "insufficient":
-            return f"余额不足：需要 {cost} 余额，你只有 {balance}。"
+        if code == "duplicate":
+            return "这次突破已经记录过了，请稍后再试。"
         if not ok:
             return "突破失败，请稍后再试。"
 
@@ -1558,8 +1650,8 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         return (
             f"突破成功！境界 → {info['title']}，"
-            f"武力 +{info['power_bonus']}，花费 {cost} 余额，"
-            f"余额 {balance}，当前战力 {power.total}。"
+            f"武力 +{info['power_bonus']}，累计积分 {points}（不扣积分），"
+            f"当前战力 {power.total}。"
         )
 
     def _boss_attack(self, msg: dict, chat_id: str, sender_id: str,
@@ -1569,17 +1661,17 @@ class PointHandler:
             return result.get("reply") or "挑战失败，请稍后再试。"
 
         self._achievements.evaluate(chat_id, sender_id)
-        ready = (
-            f"{self._format_duration(result['cooldown_left'])}后可再次挑战"
-            if result.get("cooldown_left") else "可再次挑战"
+        regen = (
+            f" · {self._format_duration(result['next_regen_sec'])}后 +1"
+            if result.get("next_regen_sec") else ""
         )
         lines = [
             f"{sender_name} 对 {result['boss_name']} 造成 "
             f"{result['damage']} 伤害"
             + ("（暴击！）" if result.get("crit") else ""),
             f"Boss 剩余 {result['hp_left']}/{result['hp_total']}",
-            f"今日第 {result['attempts_used']} 次 · {ready}"
-            f" · 我的累计伤害 {result['my_damage']}",
+            f"剩余 {result['attempts_left']}/{result['attempts_max']} 次"
+            f"{regen} · 我的累计伤害 {result['my_damage']}",
         ]
         if result.get("killed"):
             lines.append(
@@ -1606,17 +1698,17 @@ class PointHandler:
             f" · 参与 {state['participants']} 人"
             f" · 总伤害 {state['total_damage']}",
             f"我的伤害 {state['my_damage']}"
-            f" · 今日 {state['attempts_used']} 次"
+            f" · 挑战次数 {state['attempts_left']}/{state['attempts_max']}"
             f" · 剩余 {state['days_left']} 天",
             f"击杀奖励池 {state['reward_pool']} 余额（按伤害分配）",
         ]
-        if state.get("cooldown_left"):
+        if state.get("next_regen_sec"):
             lines.append(
-                f"挑战冷却：{self._format_duration(state['cooldown_left'])}"
-                "后可再次挑战"
+                f"下次恢复："
+                f"{self._format_duration(state['next_regen_sec'])}后 +1"
             )
         else:
-            lines.append("现在可以挑战")
+            lines.append("挑战次数已满")
         if state.get("killed"):
             lines.append("本周 Boss 已击杀，下周刷新新目标。")
         else:
@@ -1782,7 +1874,8 @@ class PointHandler:
             "· 钓鱼只增加余额，不影响累计积分、等级和榜单\n"
             "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成\n"
             "· 装备可用「强化 名称」提升，最高 +15（每级 +2 武力）\n"
-            "· 可花余额「突破」境界（无等级限制），每重境界永久 +10 武力\n"
+            "· 累计积分达到门槛可「突破」境界（不扣积分），"
+            "每重境界永久 +10 武力\n"
             "· 群 Boss 每周刷新，伤害按战力结算，击杀奖励按伤害分配"
         )
 

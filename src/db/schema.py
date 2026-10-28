@@ -252,6 +252,17 @@ CREATE INDEX IF NOT EXISTS idx_boss_attacks_member
 CREATE INDEX IF NOT EXISTS idx_boss_attacks_day
     ON boss_attacks(chat_id, season, day, sender_id);
 
+-- Regenerating challenge attempts: one every BOSS_COOLDOWN_SEC seconds,
+-- accumulating up to BOSS_MAX_ATTEMPTS.  Reset per boss week.
+CREATE TABLE IF NOT EXISTS boss_energy (
+    chat_id    TEXT    NOT NULL,
+    season     TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    attempts   INTEGER NOT NULL,
+    regen_at   INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, season, sender_id)
+);
+
 -- Unlocked achievements (definitions live in src/points/achievements.py).
 CREATE TABLE IF NOT EXISTS achievements (
     chat_id        TEXT    NOT NULL,
@@ -278,6 +289,25 @@ CREATE TABLE IF NOT EXISTS member_realms (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (chat_id, sender_id)
 );
+
+-- Daily lottery: one row per paid draw.  UNIQUE(chat_id, message_id)
+-- makes command replay safe; the day column enforces the daily limit.
+CREATE TABLE IF NOT EXISTS lottery_draws (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    message_id  TEXT    NOT NULL,
+    reward_kind TEXT    NOT NULL,
+    reward_name TEXT    NOT NULL DEFAULT '',
+    amount      INTEGER NOT NULL DEFAULT 0,
+    day         TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL,
+    UNIQUE(chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lottery_member_day
+    ON lottery_draws(chat_id, sender_id, day);
 """
 
 

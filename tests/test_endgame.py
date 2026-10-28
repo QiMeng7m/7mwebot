@@ -16,6 +16,7 @@ from src.points.boss import (
     BossService,
     boss_hp_for,
     boss_name_for,
+    regen_attempts,
     roll_damage,
 )
 from src.points.duel import DuelService
@@ -175,33 +176,64 @@ class EndgameTestBase(unittest.TestCase):
 
 
 class RealmStoreTests(EndgameTestBase):
-    def test_breakthrough_spends_and_levels_power(self):
-        self.add_member(earned=120_000)
-        before = self.store.balance_of(self.chat, "wxid_a")
-        ok, code, realm, balance = self.store.breakthrough(
-            self.chat, "wxid_a", "张三", 3000, REALM_MAX, "realm-1",
+    def test_advance_realm_does_not_spend_points(self):
+        self.add_member(earned=1000)
+        before_balance = self.store.balance_of(self.chat, "wxid_a")
+        before_earned = self.store.earned_of(self.chat, "wxid_a")
+        ok, code, realm = self.store.advance_realm(
+            self.chat, "wxid_a", "张三", REALM_MAX, "realm-1",
             now_ts=NOW,
         )
         self.assertTrue(ok)
         self.assertEqual(code, "ok")
         self.assertEqual(realm, 1)
-        self.assertEqual(balance, before - 3000)
+        self.assertEqual(
+            self.store.balance_of(self.chat, "wxid_a"), before_balance)
+        self.assertEqual(
+            self.store.earned_of(self.chat, "wxid_a"), before_earned)
         self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
         power = self.duels.power(self.chat, "wxid_a")
         self.assertEqual(power.realm_bonus, 10)
 
     def test_duplicate_breakthrough_is_idempotent(self):
-        self.add_member(earned=120_000)
-        self.assertTrue(self.store.breakthrough(
-            self.chat, "wxid_a", "张三", 3000, REALM_MAX, "same",
+        self.add_member(earned=1000)
+        self.assertTrue(self.store.advance_realm(
+            self.chat, "wxid_a", "张三", REALM_MAX, "same",
             now_ts=NOW)[0])
-        ok, code, realm, _ = self.store.breakthrough(
-            self.chat, "wxid_a", "张三", 3000, REALM_MAX, "same",
+        ok, code, realm = self.store.advance_realm(
+            self.chat, "wxid_a", "张三", REALM_MAX, "same",
             now_ts=NOW,
         )
         self.assertFalse(ok)
         self.assertEqual(code, "duplicate")
         self.assertEqual(realm, 1)
+
+    def test_breakthrough_requires_point_threshold(self):
+        self.add_member(earned=299)
+        reply = self.run_cmd("突破")
+        self.assertIn("需要累计积分 300", reply)
+        self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 0)
+
+    def test_second_breakthrough_requires_600(self):
+        self.add_member(earned=400)
+        first = self.run_cmd("突破")
+        self.assertIn("突破成功", first)
+        self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
+        second = self.run_cmd("突破")
+        self.assertIn("需要累计积分 600", second)
+        self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
+
+    def test_breakthrough_does_not_deduct_points(self):
+        self.add_member(earned=350)
+        before_balance = self.store.balance_of(self.chat, "wxid_a")
+        before_earned = self.store.earned_of(self.chat, "wxid_a")
+        reply = self.run_cmd("突破")
+        self.assertIn("不扣积分", reply)
+        # Balance may only grow (achievement reward); it is never charged.
+        self.assertGreaterEqual(
+            self.store.balance_of(self.chat, "wxid_a"), before_balance)
+        self.assertEqual(
+            self.store.earned_of(self.chat, "wxid_a"), before_earned)
 
     def test_breakthrough_has_no_level_requirement(self):
         # 350 points is only Lv2 常客 — far from the Lv12 cap.
@@ -274,6 +306,7 @@ class BossServiceTests(EndgameTestBase):
         self.config.boss_max_hp = 100
         self.config.boss_hp_per_member = 1
         self.config.boss_cooldown_sec = 1800
+        self.config.boss_max_attempts = 3
 
     def test_status_creates_weekly_boss(self):
         state = self.boss.status(
@@ -281,9 +314,20 @@ class BossServiceTests(EndgameTestBase):
         self.assertTrue(state["ok"])
         self.assertEqual(state["hp_total"], 100)
         self.assertEqual(state["hp_left"], 100)
-        self.assertEqual(state["cooldown_sec"], 1800)
-        self.assertEqual(state["cooldown_left"], 0)
+        self.assertEqual(state["attempts_left"], 3)
+        self.assertEqual(state["attempts_max"], 3)
+        self.assertEqual(state["next_regen_sec"], 0)
         self.assertIn(state["boss_name"], BOSS_NAMES)
+
+    def test_regen_formula(self):
+        # 0 charges at t=1000; two hours later 3 charges are available.
+        self.assertEqual(
+            regen_attempts(0, 1000, 3, 1800, 1000 + 3600),
+            (3, 1000 + 3600 + 1800),
+        )
+        self.assertEqual(
+            regen_attempts(1, 2800, 3, 1800, 2700), (1, 2800),
+        )
 
     def test_attack_damages_and_is_idempotent(self):
         msg = self.msg("Boss")
@@ -295,19 +339,33 @@ class BossServiceTests(EndgameTestBase):
         self.assertFalse(replay["ok"])
         self.assertEqual(replay["code"], "duplicate")
 
-    def test_attack_cooldown(self):
-        first = self.boss.attack(
-            self.msg("Boss"), now_ts=NOW, rng=_Rng(0.0, 0.99))
-        self.assertTrue(first["ok"])
+    def test_attempts_accumulate_and_regen(self):
+        # Three charges are available immediately.
+        for _ in range(3):
+            hit = self.boss.attack(
+                self.msg("Boss"), now_ts=NOW, rng=_Rng(0.0, 0.99))
+            self.assertTrue(hit["ok"])
+        self.assertEqual(hit["attempts_left"], 0)
+        self.assertEqual(hit["next_regen_sec"], 1800)
+
         blocked = self.boss.attack(
             self.msg("Boss"), now_ts=NOW + 1, rng=_Rng(0.0, 0.99))
         self.assertFalse(blocked["ok"])
-        self.assertEqual(blocked["code"], "cooldown")
-        self.assertEqual(blocked["cooldown_left"], 1799)
-        # Half an hour later the member may hit again.
+        self.assertEqual(blocked["code"], "no_attempts")
+        self.assertEqual(blocked["next_regen_sec"], 1799)
+
+        # One charge returns after the cooldown.
         again = self.boss.attack(
             self.msg("Boss"), now_ts=NOW + 1800, rng=_Rng(0.0, 0.99))
         self.assertTrue(again["ok"])
+        self.assertEqual(again["attempts_left"], 0)
+
+        # Skipping several intervals accumulates charges up to the cap.
+        state = self.boss.status(
+            self.chat, "测试群", "wxid_a", now_ts=NOW + 1800 * 6)
+        self.assertEqual(state["attempts_left"], 3)
+        self.assertEqual(state["attempts_max"], 3)
+        self.assertEqual(state["next_regen_sec"], 0)
 
     def test_kill_distributes_rewards(self):
         self.config.boss_min_hp = 10
