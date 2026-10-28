@@ -58,6 +58,7 @@ class BasicAwardTests(EngineTestBase):
         self.assertEqual(self.earned(), 2)
 
     def test_checkin_message_gets_daily_bonus(self):
+        self.config.points_dedup_window = 3
         self.assertEqual(
             self.engine.award_for_message(
                 self.factory.make(content="签到")), 11,
@@ -114,10 +115,30 @@ class AntiSpamTests(EngineTestBase):
             self.factory.make(content="第三条")), 0)
 
     def test_duplicate_text_not_scored(self):
+        self.config.points_dedup_window = 3
         self.assertGreater(self.engine.award_for_message(
             self.factory.make(content="哈哈")), 0)
         self.assertEqual(self.engine.award_for_message(
             self.factory.make(content="哈哈")), 0)
+
+    def test_duplicate_text_scored_when_dedup_disabled(self):
+        self.config.points_dedup_window = 0
+        self.assertGreater(self.engine.award_for_message(
+            self.factory.make(content="哈哈")), 0)
+        self.assertGreater(self.engine.award_for_message(
+            self.factory.make(content="哈哈")), 0)
+
+    def test_rate_limit_zero_is_unlimited(self):
+        self.config.points_rate_limit_per_min = 0
+        for index in range(20):
+            self.assertGreater(self.engine.award_for_message(
+                self.factory.make(content=f"第{index}条不同的话")), 0)
+
+    def test_daily_cap_zero_is_unlimited(self):
+        self.config.points_daily_cap = 0
+        for index in range(30):
+            self.assertGreater(self.engine.award_for_message(
+                self.factory.make(content=f"第{index}条不同的话")), 0)
 
     def test_daily_cap(self):
         self.config.points_daily_cap = 12

@@ -295,8 +295,11 @@ class BotConfig:
     points_reply_bonus: int = 2
     points_daily_first_bonus: int = 10
     points_per_message_cap: int = 5
-    points_rate_limit_per_min: int = 8
-    points_daily_cap: int = 80
+    # 0 = unlimited: count every message and never stop for the day.
+    points_rate_limit_per_min: int = 0
+    points_daily_cap: int = 0
+    # Suppress the last N identical messages per member (0 = off).
+    points_dedup_window: int = 0
     points_max_age_sec: int = 300
     points_board_size: int = 10
     points_levels_path: str = "data/point_levels.json"
@@ -533,18 +536,28 @@ def _validate_config(kwargs: dict) -> None:
             f"got {points_per_message_cap}"
         )
 
-    points_rate_limit_per_min = kwargs.get("points_rate_limit_per_min", 8)
-    if not (1 <= points_rate_limit_per_min <= 120):
+    points_rate_limit_per_min = kwargs.get("points_rate_limit_per_min", 0)
+    if not (0 <= points_rate_limit_per_min <= 120):
         errors.append(
-            "POINTS_RATE_LIMIT_PER_MIN must be between 1 and 120, "
+            "POINTS_RATE_LIMIT_PER_MIN must be between 0 and 120 "
+            "(0 = unlimited), "
             f"got {points_rate_limit_per_min}"
         )
 
-    points_daily_cap = kwargs.get("points_daily_cap", 80)
-    if not (1 <= points_daily_cap <= 10000):
+    points_daily_cap = kwargs.get("points_daily_cap", 0)
+    if not (0 <= points_daily_cap <= 10000):
         errors.append(
-            "POINTS_DAILY_CAP must be between 1 and 10000, "
+            "POINTS_DAILY_CAP must be between 0 and 10000 "
+            "(0 = unlimited), "
             f"got {points_daily_cap}"
+        )
+
+    points_dedup_window = kwargs.get("points_dedup_window", 0)
+    if not (0 <= points_dedup_window <= 10):
+        errors.append(
+            "POINTS_DEDUP_WINDOW must be between 0 and 10 "
+            "(0 = off), "
+            f"got {points_dedup_window}"
         )
 
     duel_min_prob = kwargs.get("duel_min_prob", 0.08)
@@ -713,8 +726,9 @@ def load_config() -> BotConfig:
         "points_reply_bonus": _safe_int(os.getenv("POINTS_REPLY_BONUS", "2"), 2, "POINTS_REPLY_BONUS"),
         "points_daily_first_bonus": _safe_int(os.getenv("POINTS_DAILY_FIRST_BONUS", "10"), 10, "POINTS_DAILY_FIRST_BONUS"),
         "points_per_message_cap": _safe_int(os.getenv("POINTS_PER_MESSAGE_CAP", "5"), 5, "POINTS_PER_MESSAGE_CAP"),
-        "points_rate_limit_per_min": _safe_int(os.getenv("POINTS_RATE_LIMIT_PER_MIN", "8"), 8, "POINTS_RATE_LIMIT_PER_MIN"),
-        "points_daily_cap": _safe_int(os.getenv("POINTS_DAILY_CAP", "80"), 80, "POINTS_DAILY_CAP"),
+        "points_rate_limit_per_min": _safe_int(os.getenv("POINTS_RATE_LIMIT_PER_MIN", "0"), 0, "POINTS_RATE_LIMIT_PER_MIN"),
+        "points_daily_cap": _safe_int(os.getenv("POINTS_DAILY_CAP", "0"), 0, "POINTS_DAILY_CAP"),
+        "points_dedup_window": _safe_int(os.getenv("POINTS_DEDUP_WINDOW", "0"), 0, "POINTS_DEDUP_WINDOW"),
         "points_max_age_sec": _safe_int(os.getenv("POINTS_MAX_AGE_SEC", "300"), 300, "POINTS_MAX_AGE_SEC"),
         "points_board_size": _safe_int(os.getenv("POINTS_BOARD_SIZE", "10"), 10, "POINTS_BOARD_SIZE"),
         "points_levels_path": os.getenv("POINTS_LEVELS_PATH", "data/point_levels.json").strip(),

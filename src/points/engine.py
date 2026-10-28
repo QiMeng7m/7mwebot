@@ -130,13 +130,15 @@ class PointEngine:
         if not components:
             return 0
 
-        # Daily cap: drop lowest-priority components until it fits.
-        daily_cap = int(getattr(self._config, "points_daily_cap", 80))
-        earned_today = self._cached_day_points(chat_id, sender_id, day)
-        remaining = max(0, daily_cap - earned_today)
-        components = self._trim_to(components, remaining)
-        if not components:
-            return 0
+        # Daily cap: 0 means unlimited.  Otherwise drop lowest-priority
+        # components until the message fits in the remaining allowance.
+        daily_cap = int(getattr(self._config, "points_daily_cap", 0))
+        if daily_cap > 0:
+            earned_today = self._cached_day_points(chat_id, sender_id, day)
+            remaining = max(0, daily_cap - earned_today)
+            components = self._trim_to(components, remaining)
+            if not components:
+                return 0
 
         awards = [
             PointAward(sender_id, sender_name, reason, points, "earn")
@@ -156,8 +158,9 @@ class PointEngine:
             bonus = int(getattr(self._config, "points_reply_bonus", 2))
             target_earned = self._cached_day_points(chat_id, reply_to, day)
             target_remaining = max(0, daily_cap - target_earned)
-            if bonus > 0 and target_remaining > 0:
-                bonus = min(bonus, target_remaining)
+            if bonus > 0 and (daily_cap <= 0 or target_remaining > 0):
+                if daily_cap > 0:
+                    bonus = min(bonus, target_remaining)
                 target_name = self._store.member_name(chat_id, reply_to)
                 awards.append(PointAward(
                     reply_to, target_name, "reply", bonus, "earn",
@@ -198,11 +201,12 @@ class PointEngine:
         bonus = int(getattr(self._config, "points_daily_first_bonus", 10))
         if bonus <= 0:
             return 0
-        daily_cap = int(getattr(self._config, "points_daily_cap", 80))
-        earned = self._store.day_earned(chat_id, sender_id, day)
-        bonus = min(bonus, max(0, daily_cap - earned))
-        if bonus <= 0:
-            return 0
+        daily_cap = int(getattr(self._config, "points_daily_cap", 0))
+        if daily_cap > 0:
+            earned = self._store.day_earned(chat_id, sender_id, day)
+            bonus = min(bonus, max(0, daily_cap - earned))
+            if bonus <= 0:
+                return 0
         inserted = self._store.record_events(
             chat_id, message_id,
             [PointAward(sender_id, sender_name, "daily_first", bonus, "earn")],
@@ -244,7 +248,9 @@ class PointEngine:
     # ── Internals ─────────────────────────────────────────────────
 
     def _rate_ok(self, key: tuple[str, str], now: int) -> bool:
-        limit = int(getattr(self._config, "points_rate_limit_per_min", 8))
+        limit = int(getattr(self._config, "points_rate_limit_per_min", 0))
+        if limit <= 0:          # 0 = unlimited
+            return True
         bucket = self._recent.setdefault(key, deque())
         while bucket and now - bucket[0] > WINDOW_SEC:
             bucket.popleft()
@@ -253,15 +259,20 @@ class PointEngine:
         bucket.append(now)
         return True
 
+    def _dedup_window(self) -> int:
+        return max(0, int(getattr(
+            self._config, "points_dedup_window", 0)))
+
     def _is_repeated(self, key: tuple[str, str], normalized: str) -> bool:
-        if not normalized:
+        if not normalized or self._dedup_window() <= 0:
             return False
         return normalized in self._texts.get(key, ())
 
     def _remember_text(self, key: tuple[str, str], normalized: str) -> None:
-        if not normalized:
+        window = self._dedup_window()
+        if not normalized or window <= 0:
             return
-        bucket = self._texts.setdefault(key, deque(maxlen=DEDUP_HISTORY))
+        bucket = self._texts.setdefault(key, deque(maxlen=window))
         bucket.append(normalized)
 
     def _cached_day_points(self, chat_id: str, sender_id: str,

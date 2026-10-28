@@ -156,6 +156,12 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `ONBOARDING_DONE` | `bool` | `False` | `.env` 写入 | `src/config.py:is_onboarding_done()`, `src/web/server.py`, `desktop.py` |
 | `WCDB_KEY` | `str` | `""` | `.env` / 引导流程写入 | `src/wechat/wcdb_client.py` |
 | `WCDB_PATCH_EXPIRY` | `bool` | `True` | `.env` / 环境变量 | `src/wechat/wcdb_client.py:_apply_expiry_patch()` (运行时放宽 DLL 到期检查) |
+| `POINTS_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/engine.py:PointEngine.is_enabled()` |
+| `POINTS_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/engine.py:PointEngine.is_enabled()` |
+| `POINTS_RATE_LIMIT_PER_MIN` | `int` | `0` | `src/config.py:load_config()` | `src/points/engine.py:_rate_ok()`（0 = 不限） |
+| `POINTS_DAILY_CAP` | `int` | `0` | `src/config.py:load_config()` | `src/points/engine.py:award_for_message()` / `check_in()`（0 = 不限） |
+| `POINTS_DEDUP_WINDOW` | `int` | `0` | `src/config.py:load_config()` | `src/points/engine.py:_is_repeated()`（0 = 关闭重复去重） |
+| `POINTS_PER_MESSAGE_CAP` | `int` | `5` | `src/config.py:load_config()` | `src/points/engine.py:award_for_message()`（单条消息加成封顶） |
 | `FISHING_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
 | `FISHING_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
 | `FISHING_CATALOG_PATH` | `str` | `"data/fishing.json"` | `src/config.py:load_config()` | `src/points/fishing_catalog.py:FishingCatalog` |
@@ -2078,7 +2084,10 @@ Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
 - 回复中的成员名回退链：手动昵称 → 群昵称 → 消息表昵称 → wxid；新成员在通讯录缓存里查不到名字时会显示群昵称，而不是 wxid
 - 切磋只转移灵石，不计入累计获得，避免打架刷榜
 - 购买装备使用「灵石充足才写入」的条件 INSERT，避免并发扣成负数
-- 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
+- 防刷/限制均可配置且默认关闭：`POINTS_RATE_LIMIT_PER_MIN=0`（每分钟不限）、
+  `POINTS_DAILY_CAP=0`（每日不限）、`POINTS_DEDUP_WINDOW=0`（重复内容也计分）；
+  另保留单条加成封顶、长度分要求至少 6 个不同字符、300 秒消息年龄保护
+  （启动回放不计分）
 - 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`，
   或命令行工具 `tools/points_backfill.py --all --days 90 [--rebuild]`
 - 所有群内回复为纯文本直接返回，不经过 Markdown 清洗
@@ -2435,8 +2444,12 @@ POINTS_MEDIA_BONUS=1
 POINTS_REPLY_BONUS=2
 POINTS_DAILY_FIRST_BONUS=10
 POINTS_PER_MESSAGE_CAP=5
-POINTS_RATE_LIMIT_PER_MIN=8
-POINTS_DAILY_CAP=80
+# 0 = 不限
+POINTS_RATE_LIMIT_PER_MIN=0
+# 0 = 不限
+POINTS_DAILY_CAP=0
+# 最近 N 条重复内容不计分，0 = 关闭
+POINTS_DEDUP_WINDOW=0
 POINTS_MAX_AGE_SEC=300
 POINTS_BOARD_SIZE=10
 POINTS_LEVELS_PATH=data/point_levels.json

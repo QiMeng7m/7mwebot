@@ -1922,6 +1922,15 @@ class PointHandler:
 
     def _rules(self) -> str:
         cfg = self._config
+        cap_bits = [f"单条封顶 {cfg.points_per_message_cap} 修炼值"]
+        if int(getattr(cfg, "points_rate_limit_per_min", 0)) > 0:
+            cap_bits.append(
+                f"每分钟最多 {cfg.points_rate_limit_per_min} 条计分")
+        if int(getattr(cfg, "points_daily_cap", 0)) > 0:
+            cap_bits.append(f"每日封顶 {cfg.points_daily_cap} 修炼值")
+        else:
+            cap_bits.append("每日不限")
+        cap_text = "· " + "，".join(cap_bits)
         return (
             "修炼规则\n"
             f"· 每条消息 +{cfg.points_base_score} 修炼值\n"
@@ -1932,8 +1941,7 @@ class PointHandler:
             f"· 图片/语音/视频 +{cfg.points_media_bonus}\n"
             f"· 当天首条 +{cfg.points_daily_first_bonus}\n"
             f"· 被引用回复 +{cfg.points_reply_bonus}\n"
-            f"· 单条封顶 {cfg.points_per_message_cap} 修炼值，"
-            f"每日封顶 {cfg.points_daily_cap} 修炼值\n"
+            f"{cap_text}\n"
             "· 修炼值决定等级与总榜（提升修为），"
             "灵石用于购买装备、免战券和强化\n"
             f"· 切磋每日 {cfg.duel_daily_attempts} 次，"

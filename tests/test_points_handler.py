@@ -154,7 +154,7 @@ class QueryTests(HandlerTestBase):
 
     def test_rules(self):
         reply = self.run_cmd("修炼规则")
-        self.assertIn("每日封顶", reply)
+        self.assertIn("每日不限", reply)
 
 
 class CheckinTests(HandlerTestBase):
