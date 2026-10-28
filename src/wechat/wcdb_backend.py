@@ -1235,7 +1235,7 @@ class WcdbBackend(AbstractWeChatBackend):
                 sender_name = group_nick
 
         # Resolve @mentions in content.  Keep the underlying wxids so
-        # commands (切磋/积分调整…) can target the exact member even when
+        # commands (切磋/修炼值调整…) can target the exact member even when
         # the display name differs from the message table's nickname
         # (e.g. a group alias with a city prefix).
         resolved_content = content

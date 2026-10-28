@@ -101,20 +101,20 @@ class RouterPointsTests(unittest.TestCase):
         )
 
     def test_bare_points_command(self):
-        reply = self.router.handle(self._message("积分"))
+        reply = self.router.handle(self._message("修炼值"))
         self.assertIsNotNone(reply)
-        self.assertIn("积分", reply)
+        self.assertIn("修炼值", reply)
 
     def test_my_info_command(self):
         reply = self.router.handle(self._message("我的信息"))
-        self.assertIn("余额", reply)
+        self.assertIn("灵石", reply)
         self.assertIn("武力值", reply)
 
     def test_query_known_member(self):
         self.router.handle(self._message("大家好", "wxid_b", "李四"))
         reply = self.router.handle(self._message("查询 李四"))
         self.assertIn("李四", reply)
-        self.assertIn("积分：", reply)
+        self.assertIn("修炼值：", reply)
 
     def test_query_unknown_stays_silent(self):
         self.router.handle(self._message("大家好", "wxid_b", "李四"))
@@ -219,13 +219,13 @@ class RouterPointsTests(unittest.TestCase):
         """Aliases are only for @ detection — a member may share the name."""
         self.router._config.bot_aliases = ["小柒"]
         reply = self.router.handle(self._message(
-            "积分", sender_id="wxid_human", name="小柒",
+            "修炼值", sender_id="wxid_human", name="小柒",
         ))
-        self.assertIn("积分", reply)
+        self.assertIn("修炼值", reply)
 
     def test_stale_points_command_ignored(self):
         reply = self.router.handle(self._message(
-            "积分", ts=int(time.time()) - 3600))
+            "修炼值", ts=int(time.time()) - 3600))
         self.assertIsNone(reply)
 
     def test_duel_command(self):
@@ -241,7 +241,7 @@ class RouterPointsTests(unittest.TestCase):
     def test_fishing_reply_is_a_string_with_delay(self):
         reply = self.router.handle(self._message("钓鱼"))
         self.assertIsNotNone(reply)
-        self.assertIn("余额", reply)
+        self.assertIn("灵石", reply)
         self.assertGreaterEqual(getattr(reply, "delay_sec", 0), 5)
         self.assertIn("钓鱼中", getattr(reply, "ack_text", ""))
 
@@ -269,7 +269,7 @@ class RouterPointsTests(unittest.TestCase):
         self.assertIn("钓鱼中", reply)
         self.assertTrue(done.wait(2.0))
         self.assertEqual(captured[0][0], "123@chatroom")
-        self.assertIn("余额", captured[0][1])
+        self.assertIn("灵石", captured[0][1])
 
 
 if __name__ == "__main__":

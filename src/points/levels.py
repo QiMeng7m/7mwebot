@@ -81,7 +81,7 @@ def validate_levels(levels: list[dict]) -> list[dict]:
         last_points = item["min_points"]
 
     if cleaned[0]["min_points"] != 0:
-        raise ValueError("最低等级的积分门槛必须为 0")
+        raise ValueError("最低等级的修炼值门槛必须为 0")
 
     return cleaned
 

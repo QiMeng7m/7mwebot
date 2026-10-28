@@ -60,7 +60,7 @@ class ReplyPrefixTests(unittest.TestCase):
             clean_command_text("zy-519:\n@柒梦 签到", "柒梦"), "签到",
         )
         self.assertEqual(
-            clean_command_text("canglan1992:\n积分"), "积分",
+            clean_command_text("canglan1992:\n修炼值"), "修炼值",
         )
 
     def test_clean_command_text_strips_bot_alias(self):

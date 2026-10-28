@@ -160,7 +160,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `FISHING_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.is_enabled()` |
 | `FISHING_CATALOG_PATH` | `str` | `"data/fishing.json"` | `src/config.py:load_config()` | `src/points/fishing_catalog.py:FishingCatalog` |
 | `FISHING_HOURLY_ATTEMPTS` | `int` | `30` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
-| `FISHING_DAILY_CAP` | `int` | `120` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()` |
+| `FISHING_DAILY_CAP` | `int` | `0` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` / `stats()`（0 = 不限） |
 | `FISHING_COOLDOWN_SEC` | `int` | `5` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
 | `FISHING_MAX_BATCH` | `int` | `10` | `src/config.py:load_config()` | `src/points/fishing.py:FishingService.cast()` |
 | `FISHING_MISS_CHANCE` | `float` | `0.15` | `src/config.py:load_config()` | `src/points/fishing.py:effective_miss_chance()` |
@@ -172,6 +172,10 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `BOSS_MIN_HP` | `int` | `3000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_MAX_HP` | `int` | `30000` | `src/config.py:load_config()` | `src/points/boss.py:boss_hp_for()` |
 | `BOSS_REWARD_RATIO` | `float` | `0.15` | `src/config.py:load_config()` | `src/points/boss.py:BossService._reward_pool()` |
+| `LOTTERY_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/points/lottery.py:LotteryService.is_enabled()` |
+| `LOTTERY_GROUPS` | `list[str]` | `["*"]` | `src/config.py:load_config()` | `src/points/lottery.py:LotteryService.is_enabled()` |
+| `LOTTERY_COST` | `int` | `100` | `src/config.py:load_config()` | `src/points/lottery.py:LotteryService.cost()` |
+| `LOTTERY_DAILY_ATTEMPTS` | `int` | `3` | `src/config.py:load_config()` | `src/points/lottery.py:LotteryService.daily_limit()` |
 | `MAC_WECHAT_SEND_SHORTCUT` | `str` | `"enter"` | `desktop_mac.py` | `src/wechat/mac_ui_backend.py` |
 | `MAC_CHAT_TITLE_CACHE_FILE` | `str` | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
 | `MAC_CHAT_TITLE_MAP` | `str` (JSON) | `""` | 环境变量 | `src/wechat/mac_hybrid_backend.py` |
@@ -771,11 +775,11 @@ todo_delete_keywords: list[str] = [
 | `_feishu_updates_from_config(config)` | 飞书配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 | `_todo_updates_from_config(config)` | 待办配置 → .env 更新（缺省字段跳过） | `config: dict` | `dict[str, str \| None]` |
 | `_sandbox_env_overrides(data)` | 沙箱请求 → 临时环境变量覆盖（跳过含 `***` 的脱敏密钥） | `data: dict` | `dict` |
-| `_points_db_path()` | 读取 .env 中的 DB_PATH 供积分 API 使用 | 无 | `str` |
+| `_points_db_path()` | 读取 .env 中的 DB_PATH 供修炼值 API 使用 | 无 | `str` |
 | `_points_config()` | 加载 BotConfig（失败时回退默认值） | 无 | `BotConfig` |
-| `_points_stack(conn, config)` | 构建单次请求的积分/装备/切磋/钓鱼对象 | `conn, config` | `(PointStore, LevelTable, EquipmentCatalog, DuelService, FishingCatalog, FishingService)` |
+| `_points_stack(conn, config)` | 构建单次请求的修炼值/装备/切磋/钓鱼对象 | `conn, config` | `(PointStore, LevelTable, EquipmentCatalog, DuelService, FishingCatalog, FishingService)` |
 
-积分 API 路由（`/api/points*`、`/api/equipment*`、`/api/duels`、`/api/fishing*`）：
+修炼值 API 路由（`/api/points*`、`/api/equipment*`、`/api/duels`、`/api/fishing*`）：
 `GET /api/fishing?chat_id=&sender_id=`、`POST /api/fishing/cast|buy_rod|buy_bait|equip_rod`、
 `GET/POST /api/fishing/catalog`。新增 POST 路径必须加入 `do_POST` 白名单。
 
@@ -789,7 +793,7 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `LiveIndicator` | 实时状态指示灯(脉冲动画) |
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
-| `PointsPanel.jsx` | `PointsPanel` | 群活跃积分面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整) |
+| `PointsPanel.jsx` | `PointsPanel` | 修炼值面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整) |
 
 ### 2.35 `src/activity.py`
 
@@ -821,7 +825,7 @@ todo_delete_keywords: list[str] = [
 状态持久化到 `data/pending_kicks.json`（原子写入）。启动时丢弃 deadline
 已过期的条目，避免机器人离线很久后补踢。
 
-### 2.37 `src/points/` (活跃积分 / 装备 / 切磋 / 钓鱼)
+### 2.37 `src/points/` (活跃修炼值 / 装备 / 切磋 / 钓鱼)
 
 | 文件 | 符号 | 描述 | 参数 | 返回值 |
 |---|---|---|---|---|
@@ -855,16 +859,19 @@ todo_delete_keywords: list[str] = [
 | `fishing.py` | `catch_amount(species, weight_g, rod_value_bonus=0, bait_value_bonus=0)` | 渔获价值 = 基础价值 × 尺寸系数 × 装备加成 | 见签名 | `int` |
 | `fishing.py` | `effective_miss_chance(base_chance, miss_reduction=0)` | 空竿率夹取到 2%~50% | 见签名 | `float` |
 | `fishing.py` | `FishingService.cast(msg, count=1, rng=None, now_ts=None)` | 结算 1~N 竿：次数/冷却/每日上限、扣饵、记录、入账；返回 `delay_sec=max(本次稀有度延迟)` | 见签名 | `FishingResult` |
-| `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 本小时次数/重置倒计时、今日收益、余额、鱼竿、鱼饵、累计渔获、图鉴、钓鱼等级 | 见签名 | `dict` |
+| `fishing.py` | `FishingService.stats(chat_id, sender_id, now_ts=None)` | 本小时次数/重置倒计时、今日收益、灵石、鱼竿、鱼饵、累计渔获、图鉴、钓鱼等级 | 见签名 | `dict` |
 | `boss.py` | `roll_damage(power, roll, crit_roll)` | 单次 Boss 伤害：80%~120% 战力，10% 概率暴击 ×2 | 见签名 | `(int, bool)` |
 | `boss.py` | `boss_name_for(chat_id, season)` / `boss_hp_for(members, config)` | 按群/周稳定选 Boss 名 / 按成员数缩放并夹取 HP | 见签名 | `str/int` |
 | `boss.py` | `format_cooldown(seconds)` | 冷却秒数转「30 分钟 / 1 小时」文案 | `seconds: int` | `str` |
 | `boss.py` | `regen_attempts(attempts, regen_at, cap, cooldown, now)` | 按时间恢复挑战次数（每 `cooldown` 秒 +1，封顶 `cap`） | 见签名 | `(attempts, regen_at)` |
 | `boss.py` | `BossService.status(chat_id, group_name, sender_id="", now_ts=None)` | 本周 Boss 血量、参与人数、个人伤害、剩余天数、伤害榜、剩余次数与下次恢复 | 见签名 | `dict` |
 | `boss.py` | `BossService.attack(msg, now_ts=None, rng=None)` | 消耗 1 次挑战（每 30 分钟恢复、最多存 3 次）、按战力结算伤害、扣血、击杀后分奖励 | 见签名 | `dict` |
-| `achievements.py` | `AchievementService.snapshot(chat_id, sender_id, now_ts=None)` | 汇总成就判定所需数据（积分/装备/强化/切磋/钓鱼/连签/Boss/境界） | 见签名 | `dict` |
+| `achievements.py` | `AchievementService.snapshot(chat_id, sender_id, now_ts=None)` | 汇总成就判定所需数据（修炼值/装备/强化/切磋/钓鱼/连签/Boss/境界） | 见签名 | `dict` |
 | `achievements.py` | `AchievementService.qualifies(definition, snapshot)` | 判断单个成就是否达标（`species_complete` 比较图鉴总数） | 见签名 | `bool` |
-| `achievements.py` | `AchievementService.evaluate(chat_id, sender_id, now_ts=None)` | 解锁新成就并发放一次性余额奖励 | 见签名 | `dict` |
+| `achievements.py` | `AchievementService.evaluate(chat_id, sender_id, now_ts=None)` | 解锁新成就并发放一次性灵石奖励 | 见签名 | `dict` |
+| `lottery.py` | `build_pool(catalog, fishing_catalog, config)` | 从商店/钓鱼目录构建加权奖池（灵石/修炼值/装备/鱼竿/鱼饵/免战券，共 100 权重） | 见签名 | `list[dict]` |
+| `lottery.py` | `pick_reward(pool, roll)` | 按权重抽取一个奖励 | 见签名 | `dict \| None` |
+| `lottery.py` | `LotteryService.status(...)` / `draw(msg, now_ts=None, rng=None)` / `history(...)` | 抽奖状态、抽一次（扣费+发奖+记录）与历史 | 见签名 | `dict/list` |
 | `models.py` | `DelayedReply(text, delay_sec=0, ack_text="")` | `str` 子类，携带延迟秒数与即时 ack；路由器先返回 ack，再异步发送最终文本 | 见签名 | `DelayedReply` |
 | `store.py` | `fishing_attempts_since/fishing_last_cast_at/fishing_earned_on_day/fishing_totals` | 指定时间起的抛竿次数（每小时限制）、冷却、今日入账、累计渔获查询 | 见签名 | `int/dict` |
 | `store.py` | `fishing_inventory/fishing_equipped_rod/owns_fishing_item` | 鱼竿/鱼饵库存查询 | 见签名 | `list[dict]/str/bool` |
@@ -873,31 +880,33 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `fishing_recent/fishing_board/fishing_collection` | 最近渔获、总榜/今日/条数/大鱼榜、图鉴 | 见签名 | `list` |
 | `handler.py` | `_fish/_fish_rods/_buy_rod/_equip_rod/_fish_baits/_buy_bait/_fish_bag/_fish_book/_fish_board/_fish_log` | 钓鱼指令解析与文案（鱼篓/图鉴附带钓鱼等级与熟练加成）；`_fish` 返回 `DelayedReply` | 见签名 | `str` |
 | `handler.py` | `_duel_record(chat_id, sender_id, sender_name)` / `_duel_board(chat_id, group_name)` | 「切磋战绩」段位与生涯数据 / 「战神榜」生涯胜场排行 | 见签名 | `str` |
-| `handler.py` | `_enhance(msg, chat_id, sender_id, sender_name, raw)` | 「强化/精炼 装备名」：查拥有、算费用、扣余额、+1 强化等级 | 见签名 | `str` |
-| `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：累计积分门槛校验（不扣积分）、境界 +1 | 见签名 | `str` |
+| `handler.py` | `_enhance(msg, chat_id, sender_id, sender_name, raw)` | 「强化/精炼 装备名」：查拥有、算费用、扣灵石、+1 强化等级 | 见签名 | `str` |
+| `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：累计修炼值门槛校验（不扣修炼值）、境界 +1 | 见签名 | `str` |
 | `handler.py` | `_boss_attack/_boss_status/_boss_board` | 「Boss / 挑战Boss」「Boss状态」「Boss榜」文案 | 见签名 | `str` |
 | `handler.py` | `_achievements_command/_titles_command/_equip_title` | 「成就」「称号」「佩戴称号 名称」 | 见签名 | `str` |
-| `store.py` | `PointStore(conn, lock=None)` | 积分流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
+| `handler.py` | `_lottery_draw/_lottery_pool/_lottery_log` | 「抽奖」「奖池」「抽奖记录」文案与抽奖结果展示 | 见签名 | `str` |
+| `store.py` | `PointStore(conn, lock=None)` | 修炼值流水、装备、护盾、切磋的持久化 | `conn: sqlite3.Connection, lock` | `None` |
 | `store.py` | `record_events(chat_id, message_id, awards, now_ts=None)` | 幂等写入流水（`UNIQUE(message_id, reason)`） | 见签名 | `int` |
-| `store.py` | `board(chat_id, scope='total', limit=10, now_ts=None)` | 榜单（total/season/day，含余额与并列名次） | 见签名 | `list[dict]` |
-| `store.py` | `member_stats(chat_id, sender_id, sender_name='', now_ts=None)` | 个人累计/余额/赛季/今日/名次/连续天数 | 见签名 | `MemberStats` |
-| `store.py` | `earned_of(chat_id, sender_id)` / `balance_of(...)` | 累计获得 / 可用余额 | 见签名 | `int` |
-| `store.py` | `buy_item(...)` | 条件扣款购买装备（余额不足不写入） | 见签名 | `(bool, code, balance, equipped)` |
+| `store.py` | `board(chat_id, scope='total', limit=10, now_ts=None)` | 榜单（total/season/day，含灵石与并列名次） | 见签名 | `list[dict]` |
+| `store.py` | `member_stats(chat_id, sender_id, sender_name='', now_ts=None)` | 个人累计/灵石/赛季/今日/名次/连续天数 | 见签名 | `MemberStats` |
+| `store.py` | `earned_of(chat_id, sender_id)` / `balance_of(...)` | 累计获得 / 可用灵石 | 见签名 | `int` |
+| `store.py` | `buy_item(...)` | 条件扣款购买装备（灵石不足不写入） | 见签名 | `(bool, code, balance, equipped)` |
 | `store.py` | `equip_item(...)` / `owned_items(...)` | 装备切换 / 已购清单 | 见签名 | 见签名 |
 | `store.py` | `buy_shield(...)` / `shield_expires_at(...)` | 购买/查询限时免战 | 见签名 | 见签名 |
 | `store.py` | `duel_attempts/duel_stolen/defender_received/pair_duels/last_pair_at/last_loss_at` | 切磋次数与冷却查询（`pair_duels` 按攻击方→防守方统计当天次数） | 见签名 | `int` |
 | `store.py` | `duel_record(chat_id, sender_id)` | 某人生涯切磋：总场次/胜场/累计抢分（不含免战拦截） | 见签名 | `dict` |
 | `store.py` | `duel_leaderboard(chat_id, limit=10)` | 战神榜：按生涯胜场、抢分排序 | 见签名 | `list[dict]` |
 | `store.py` | `enhance_item(...)` / `item_enhance_level(...)` / `max_enhance_level(...)` | 条件扣款强化装备（幂等）/ 查询单件与最高强化等级 | 见签名 | 见签名 |
-| `store.py` | `realm_of(...)` / `realm_leaderboard(...)` / `advance_realm(...)` | 境界查询、境界榜、境界 +1（不扣积分，零分流水保证幂等） | 见签名 | 见签名 |
+| `store.py` | `realm_of(...)` / `realm_leaderboard(...)` / `advance_realm(...)` | 境界查询、境界榜、境界 +1（不扣修炼值，零分流水保证幂等） | 见签名 | 见签名 |
 | `store.py` | `boss_state/ensure_boss_state/boss_attempts/boss_energy_of/save_boss_energy/boss_attack_recorded/boss_attack` | 周 Boss 状态、今日次数统计、挑战次数池（恢复时间）、攻击幂等与原子扣血 | 见签名 | 见签名 |
 | `store.py` | `boss_damage_board/boss_totals/boss_member_damage/boss_total_damage` | 伤害榜、总伤害/参与人数、个人本周与生涯伤害 | 见签名 | 见签名 |
-| `store.py` | `boss_kill/boss_distribute_rewards` | 标记击杀一次、按伤害占比写入 `category='boss'` 余额奖励 | 见签名 | 见签名 |
-| `store.py` | `achievements_of/unlock_achievement/equipped_title/set_equipped_title` | 成就解锁（幂等 + 一次性余额奖励）、佩戴称号 | 见签名 | 见签名 |
+| `store.py` | `boss_kill/boss_distribute_rewards` | 标记击杀一次、按伤害占比写入 `category='boss'` 灵石奖励 | 见签名 | 见签名 |
+| `store.py` | `achievements_of/unlock_achievement/equipped_title/set_equipped_title` | 成就解锁（幂等 + 一次性灵石奖励）、佩戴称号 | 见签名 | 见签名 |
 | `store.py` | `equipment_count/has_rarity_catch/streak_days` | 成就判定辅助统计 | 见签名 | `int/bool` |
-| `store.py` | `record_duel(...)` | 原子写入切磋记录与积分转移 | 见签名 | `bool` |
+| `store.py` | `commit_lottery_draw(...)` / `lottery_draws_today(...)` / `lottery_history(...)` | 单事务完成扣费+发奖+抽奖记录；每日次数与历史查询 | 见签名 | 见签名 |
+| `store.py` | `record_duel(...)` | 原子写入切磋记录与修炼值转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
-| `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日积分（含 0） | 见签名 | `list[dict]` |
+| `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日修炼值（含 0） | 见签名 | `list[dict]` |
 | `store.py` | `has_earned_on_day(chat_id, sender_id, day)` | 当天是否已有计分 | 见签名 | `bool` |
 | `store.py` | `event_points(chat_id, message_id, reason)` | 查某条消息某个加分项的分数 | 见签名 | `int` |
 | `store.py` | `has_reason_on_day(chat_id, sender_id, reason, day)` | 当天是否已获得某项加分（如 `daily_first`） | 见签名 | `bool` |
@@ -913,11 +922,11 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.leaderboard(chat_id, limit=10)` | 战神榜行，附带段位 | 见签名 | `list[dict]` |
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None, defender_name="")` | 执行切磋（护盾/冷却/次数/新手保护/结算）；`defender_name` 为调用方解析好的群昵称 | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
-| `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有积分指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有修炼值指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
 | `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称 + 原始 wxid（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
 | `handler.py` | `PointHandler._load_group_nicknames(chat_id)` | 读取某群的 `{wxid: 群昵称}`（按路径+mtime 缓存） | `chat_id: str` | `dict[str, str]` |
 | `handler.py` | `PointHandler._display_name(chat_id, sender_id, fallback="")` | 显示名回退链：手动昵称 → fallback → 群昵称 → 消息表昵称 → wxid | `chat_id: str, sender_id: str, fallback: str` | `str` |
-| `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，积分+N` | 见签名 | `str` |
+| `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，修炼值+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（13 级，Lv0 潜水员 ~ Lv12 永恒）、
 `DEFAULT_SLOTS`（4 槽位：武器/护甲/饰品/坐骑）、`DEFAULT_ITEMS`（25 件装备）、
@@ -1107,7 +1116,7 @@ AbstractSummarizer (base.py)
          │
 6. MessageRouter.handle(msg)
          │
-         ├─→ [积分结算 — 每条新消息，入库后立即执行]
+         ├─→ [修炼值结算 — 每条新消息，入库后立即执行]
          │      └─ PointEngine.award_for_message()
          │            ├─ rules.score_components()   (base/长度/媒体/签到)
          │            ├─ rules.reply_target()       (被回复者 +2)
@@ -1120,11 +1129,11 @@ AbstractSummarizer (base.py)
          │            └─ MessageStore.get_activity_report_data()
          │                  (每人总数 / 未发言)
          │
-         ├─→ [积分/装备/切磋/钓鱼指令 — 裸文本]
+         ├─→ [修炼值/装备/切磋/钓鱼指令 — 裸文本]
          │      └─ PointHandler.handle()
          │            ├─ 签到（确认/补发 daily_first，回复 @成员）
-         │            ├─ 积分 / 我的信息 / 查询 名字
-         │            ├─ 积分榜 / 月榜 / 今日榜 / 积分规则
+         │            ├─ 修炼值 / 我的信息 / 查询 名字
+         │            ├─ 修炼榜 / 月榜 / 今日榜 / 修炼规则
          │            ├─ 商店 / 购买 / 装备 / 卸下 / 武力值 / 战力榜
          │            ├─ 切磋 @某人 / 引用后切磋 / 买免战券
          │            ├─ 钓鱼 / 钓鱼 N / 鱼竿 / 买鱼竿 / 换鱼竿
@@ -1978,7 +1987,7 @@ MessageRouter.handle(msg)
 
 ---
 
-### 功能M: 群活跃积分 / 装备 / 切磋
+### 功能M: 修炼值 / 装备 / 切磋
 
 #### 涉及文件
 
@@ -1996,6 +2005,7 @@ MessageRouter.handle(msg)
 | `points/realm.py` | `src/points/realm.py` | 境界称号、突破费用与武力加成 |
 | `points/boss.py` | `src/points/boss.py` | 周 Boss 血量/伤害/奖励结算 |
 | `points/achievements.py` | `src/points/achievements.py` | 成就定义、判定与称号 |
+| `points/lottery.py` | `src/points/lottery.py` | 每日抽奖奖池、权重抽取与结算 |
 | `points/handler.py` | `src/points/handler.py` | 群内指令解析与文案 |
 | `schema.py` | `src/db/schema.py` | `point_events`/`equipment_owned`/`boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms` 等 |
 | `router.py` | `src/router.py` | 入库后计分 + 裸指令分流 |
@@ -2013,20 +2023,21 @@ MessageRouter.handle(msg)
 | `boss_state` | 每群每周 Boss：名称、总血量、剩余血量、击杀时间 |
 | `boss_attacks` | Boss 伤害记录；`UNIQUE(chat_id, message_id)` 幂等 |
 | `boss_energy` | 每群每周每人的挑战次数池：`attempts` 与下次恢复时间 `regen_at` |
-| `achievements` | 已解锁成就；每行一次性发放余额奖励 |
+| `achievements` | 已解锁成就；每行一次性发放灵石奖励 |
 | `member_profiles` | 每人佩戴的显示称号 |
 | `member_realms` | 每人境界等级（0 凡人 ~ 9 渡劫） |
+| `lottery_draws` | 每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等，`day` 用于每日次数限制 |
 
 #### 指令
 
 | 输入 | 行为 |
 |---|---|
-| `签到` | 当天首次发「签到」发 `daily_first` +10（不受单条封顶）；回复 `@成员 签到成功，积分+10`，重复签到提示明天再来（无需 @ 机器人） |
-| `积分` / `我的积分` / `积分卡` | 个人详细卡片（等级/名次/连续天数/武力值） |
-| `我的信息` | 一行快照：积分、余额、武力值 |
-| `查询 名字` / `查询 我` | 一行查询他人：积分 / 余额 / 武力值（无需 @；匹配不到成员时保持沉默） |
-| `积分榜` / `月榜` / `积分榜 今日` | 总榜 / 赛季榜 / 今日榜 |
-| `积分规则` | 规则摘要 |
+| `签到` | 当天首次发「签到」发 `daily_first` +10（不受单条封顶）；回复 `@成员 签到成功，修炼值+10`，重复签到提示明天再来（无需 @ 机器人） |
+| `修炼值` / `我的修炼值` / `修炼卡` | 个人详细卡片（等级/名次/连续天数/武力值） |
+| `我的信息` | 一行快照：修炼值、灵石、武力值 |
+| `查询 名字` / `查询 我` | 一行查询他人：修炼值 / 灵石 / 武力值（无需 @；匹配不到成员时保持沉默） |
+| `修炼榜` / `月榜` / `修炼榜 今日` | 总榜 / 赛季榜 / 今日榜 |
+| `修炼规则` | 规则摘要 |
 | `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位，含 Lv7+ 进阶装备） |
 | `武力值` / `战力榜` | 武力值拆解 + 切磋段位 / 战力排行 |
 | `切磋 @某人` / 引用后 `切磋` | 发起切磋 |
@@ -2034,35 +2045,36 @@ MessageRouter.handle(msg)
 | `切磋记录` | 自己最近 10 场 |
 | `切磋战绩` | 生涯胜/负/胜率/抢分 + 段位（青铜~战神）与升级差 |
 | `战神榜` | 本群生涯胜场排行 |
-| `强化 装备名` / `精炼 装备名` | 花费余额强化已拥有装备，最高 +15（每级 +2 武力） |
-| `境界` / `突破` | 查看境界进度 / 累计积分达到门槛即可突破（不扣积分，每重 +10 武力） |
+| `强化 装备名` / `精炼 装备名` | 花费灵石强化已拥有装备，最高 +15（每级 +2 武力） |
+| `境界` / `突破` | 查看境界进度 / 累计修炼值达到门槛即可突破（不扣修炼值，每重 +10 武力） |
 | `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟恢复 1 次，最多存 3 次，按战力造成伤害） |
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
 | `成就` / `称号` / `佩戴称号 名称` | 查看成就进度、已解锁称号、切换显示称号 |
-| `积分调整 名字 ±N [理由]` / `积分重算` | 管理员专用 |
+| `抽奖` / `每日抽奖` / `奖池` / `抽奖记录` | 100 灵石抽一次（每日 3 次）；奖池含修炼值/灵石/装备/鱼竿/鱼饵/免战券 |
+| `修炼值调整 名字 ±N [理由]` / `修炼值重算` | 管理员专用 |
 
 #### 计分与切磋公式
 
 ```
 胜率 p   = clamp(0.5 + 0.5·tanh(1.15·ln(A/D)), 0.08, 0.92)
-基础抢分  = clamp(round(对方余额 × 0.08), 2, 20)
+基础抢分  = clamp(round(对方灵石 × 0.08), 2, 20)
 差距衰减  = clamp(1/(1+1.2·max(0, ln(A/D))), 0.2, 1.0)
-实际抢分  = clamp(round(基础抢分 × 衰减), 1, min(对方余额, 20))
+实际抢分  = clamp(round(基础抢分 × 衰减), 1, min(对方灵石, 20))
 武力值    = 10 + 等级×5 + Σ(装备基础武力 + 强化等级×2) + 境界×10
 Boss 伤害 = round(战力 × (0.8 + 0.4·roll))，10% 概率 ×2 暴击
 Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
-突破门槛  = 300 × (当前境界 + 1) 累计积分，不扣积分、无等级限制
+突破门槛  = 300 × (当前境界 + 1) 累计修炼值，不扣修炼值、无等级限制
 ```
 
 #### 关键约定
 
-- **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**余额**（全部 category）用于消费与被抢
+- **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**灵石**（全部 category）用于消费与被抢
 - `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
 - 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
 - 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时 + 每 60 秒 + 入群事件时由 `wcdb_get_group_nicknames` 刷新，新入群成员无需重启即可解析）
 - 回复中的成员名回退链：手动昵称 → 群昵称 → 消息表昵称 → wxid；新成员在通讯录缓存里查不到名字时会显示群昵称，而不是 wxid
-- 切磋只转移余额，不计入累计获得，避免打架刷榜
-- 购买装备使用「余额充足才写入」的条件 INSERT，避免并发扣成负数
+- 切磋只转移灵石，不计入累计获得，避免打架刷榜
+- 购买装备使用「灵石充足才写入」的条件 INSERT，避免并发扣成负数
 - 防刷：每分钟计分条数上限、最近 3 条重复内容不计分、去重字符数 ≥6 才给长度分、每日封顶、300 秒消息年龄保护
 - 启动回放与历史消息不计分；需要补历史用 `PointEngine.rebuild()`，
   或命令行工具 `tools/points_backfill.py --all --days 90 [--rebuild]`
@@ -2157,9 +2169,9 @@ MessageRouter.handle(msg)
 #### 经济语义
 
 - 钓鱼入账写 `point_events(category='fish', reason='fish_catch')`
-- `balance_of()` 汇总全部类别 → 余额增加
-- `earned_of()` / `board()` / `member_stats()` 只统计 `earn`/`adjust` → 积分、等级、总榜/月榜不变
-- 每日收益上限 `FISHING_DAILY_CAP`（默认 120，0=不限）；每小时次数 `FISHING_HOURLY_ATTEMPTS`（默认 30，每个整点重置）
+- `balance_of()` 汇总全部类别 → 灵石增加
+- `earned_of()` / `board()` / `member_stats()` 只统计 `earn`/`adjust` → 修炼值、等级、总榜/月榜不变
+- 每日收益上限 `FISHING_DAILY_CAP`（默认 0 = 不限）；每小时次数 `FISHING_HOURLY_ATTEMPTS`（默认 30，每个整点重置）
 
 #### 调用链
 
@@ -2190,7 +2202,7 @@ PointHandler.handle("钓鱼 5")
 | `鱼饵` / `买鱼饵 [名称] [数量]` | 鱼饵商店（5 档）、购买（默认 10 个） |
 | `鱼篓` / `我的鱼` | 今日次数/收益、鱼竿、鱼饵、钓鱼等级与熟练加成、累计渔获、图鉴进度 |
 | `图鉴` / `钓鱼图鉴` | 按稀有度展示鱼种（含神话）与已钓标记、当前钓鱼等级 |
-| `钓鱼榜` / `钓鱼榜 今日` / `钓鱼榜 大鱼` / `钓鱼榜 数量` | 余额/今日/大鱼/条数榜 |
+| `钓鱼榜` / `钓鱼榜 今日` / `钓鱼榜 大鱼` / `钓鱼榜 数量` | 灵石/今日/大鱼/条数榜 |
 | `钓鱼记录` | 自己最近 10 条渔获 |
 
 #### 反馈延迟
@@ -2200,7 +2212,7 @@ PointHandler.handle("钓鱼 5")
 
 钓鱼熟练度由累计钓到的鱼条数决定（0/25/80/200/500/1000/2000 条 →
 Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠加；空竿不计入
-条数，熟练度不改变累计积分、等级和榜单。
+条数，熟练度不改变累计修炼值、等级和榜单。
 
 ---
 
@@ -2223,14 +2235,14 @@ Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠
 
 - **强化**：`INSERT OR IGNORE point_events(category='spend', reason='enhance')`，
   条件扣款；`equipment_owned.enhance_level` +1，最高 15。
-- **境界**：`member_realms.realm` +1，最高 9（渡劫）。累计积分达到
-  `300 × (当前境界 + 1)` 即可突破；不扣积分、不扣余额，只写一条
+- **境界**：`member_realms.realm` +1，最高 9（渡劫）。累计修炼值达到
+  `300 × (当前境界 + 1)` 即可突破；不扣修炼值、不扣灵石，只写一条
   `points=0, category='spend', reason='breakthrough'` 的幂等流水。
-- **Boss 奖励**：`category='boss', reason='boss_reward'`，只加余额，
+- **Boss 奖励**：`category='boss', reason='boss_reward'`，只加灵石，
   不计入 `earned_of()` / 等级 / 榜单；按本周伤害占比分配。
-- **成就奖励**：`category='achievement', reason='achievement'`，一次性余额奖励；
+- **成就奖励**：`category='achievement', reason='achievement'`，一次性灵石奖励；
   `achievements` 表唯一键保证只发一次。
-- 所有扣款都用「余额充足才写入」的条件 INSERT，并以 `(message_id, reason)`
+- 所有扣款都用「灵石充足才写入」的条件 INSERT，并以 `(message_id, reason)`
   唯一约束保证指令重放幂等。
 
 #### 调用链
@@ -2244,7 +2256,7 @@ PointHandler.handle("强化 木剑")
 
 PointHandler.handle("突破")
   └── _breakthrough()
-        ├── 校验累计积分 earned_of() ≥ realm_cost(realm)（不扣积分）
+        ├── 校验累计修炼值 earned_of() ≥ realm_cost(realm)（不扣修炼值）
         ├── realm_cost(realm)
         └── PointStore.advance_realm()
               ├── INSERT OR IGNORE point_events(points=0, reason='breakthrough')
@@ -2259,7 +2271,7 @@ PointHandler.handle("Boss")
 
 PointHandler.handle("成就")
   └── AchievementService.evaluate()
-        ├── snapshot()：积分/装备/强化/胜场/渔获/图鉴/神话/连签/Boss/境界
+        ├── snapshot()：修炼值/装备/强化/胜场/渔获/图鉴/神话/连签/Boss/境界
         └── PointStore.unlock_achievement()（幂等 + 一次性奖励）
 ```
 
@@ -2273,6 +2285,7 @@ PointHandler.handle("成就")
 | `achievements` | 主键 `(chat_id, sender_id, achievement_id)` |
 | `member_profiles` | 每人当前佩戴称号 |
 | `member_realms` | 每人境界等级 |
+| `lottery_draws` | 每人每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等 |
 
 #### 关键约定
 
@@ -2282,8 +2295,61 @@ PointHandler.handle("成就")
   `BOSS_COOLDOWN_SEC`（默认 1800 秒 = 30 分钟）恢复 1 次，可累计但不超过上限；
   跨周自动重置。状态里显示剩余次数与下次恢复时间。
 - Boss 名称通过 `sum(ord(ch))` 稳定选曲，不依赖 Python 字符串 hash。
-- 成就判定在「成就」「积分」「我的信息」「突破」「Boss」等指令触发；
+- 成就判定在「成就」「修炼值」「我的信息」「突破」「Boss」等指令触发；
   称号只影响展示，不额外加属性。
+
+---
+
+### 功能Q: 每日抽奖
+
+#### 涉及文件
+
+| 文件 | 路径 | 角色 |
+|---|---|---|
+| `lottery.py` | `src/points/lottery.py` | 奖池构建、权重抽取、每日次数与抽奖服务 |
+| `store.py` | `src/points/store.py` | `commit_lottery_draw()` 单事务扣费+发奖+记录 |
+| `schema.py` | `src/db/schema.py` | `lottery_draws` 表定义 |
+| `handler.py` | `src/points/handler.py` | 「抽奖」「奖池」「抽奖记录」文案 |
+| `admin.py` | `src/admin.py` | 帮助清单展示抽奖费用与次数 |
+
+#### 奖池结构
+
+分类权重固定为（合计 100）：
+
+| 分类 | 权重 | 内容 |
+|---|---|---|
+| 灵石 | 35 | 20 / 50 / 100 / 200 / 500 / 1000 / 5000；越大概率越低 |
+| 修炼值 | 20 | 10 / 20 / 50 / 100 / 200 / 500；越大概率越低 |
+| 装备 | 20 | 商店全部武器/护甲/饰品/坐骑；价格越高权重越低（`1/price`） |
+| 鱼竿 | 8 | 全部非默认鱼竿；价格越高权重越低 |
+| 鱼饵 | 12 | 全部鱼饵 × 5/10/20/50；数量越大、单价越高权重越低 |
+| 免战 | 5 | 2 / 4 / 8 / 24 小时；时长越长权重越低 |
+
+分类内部先按相对权重归一化，再乘以分类预算，因此单条奖励的绝对概率 =
+`分类权重 × 分类内相对权重 / 分类内权重和`。
+
+#### 结算语义
+
+- 每次抽奖先写 `point_events(category='spend', reason='lottery_ticket', -100)`，
+  灵石不足则不写；`message_id` 唯一保证重放幂等。
+- 灵石奖励：`category='lottery', reason='lottery_reward'`，只加灵石。
+- 修炼值奖励：`category='adjust', reason='lottery_points'`，计入累计修炼值/等级/榜单，
+  但不占用每日聊天修炼值上限（`day_earned` 只统计 `earn`）。
+- 装备奖励：直接写 `equipment_owned`（槽位空闲时自动装备）；已拥有则折算
+  `price // 2` 灵石。
+- 鱼竿奖励：写 `fishing_inventory(kind='rod', equipped=0)`，不强行替换当前鱼竿；
+  已拥有同样折算灵石。
+- 鱼饵奖励：累加 `fishing_inventory` 数量。
+- 免战奖励：延长 `duel_shields.expires_at`，上限 `SHIELD_MAX_SEC`。
+- 每日次数：`lottery_draws` 按 `(chat_id, sender_id, day)` 计数，默认 3 次。
+
+#### 指令
+
+| 输入 | 行为 |
+|---|---|
+| `抽奖` / `每日抽奖` | 扣 100 灵石抽一次（每日 3 次），展示奖励、花费、今日次数与灵石 |
+| `奖池` | 展示分类概率、灵石/修炼值档位与规则 |
+| `抽奖记录` | 自己最近 10 次抽奖结果 |
 
 ---
 
@@ -2352,7 +2418,7 @@ TODO_MAX_PER_GROUP=50
 TODO_COMPLETED_RETENTION_DAYS=30
 TODO_DELETED_RETENTION_DAYS=30
 
-# === 活跃积分 ===
+# === 活跃修炼值 ===
 POINTS_ENABLED=true
 POINTS_GROUPS=*
 POINTS_BASE_SCORE=1
@@ -2394,12 +2460,12 @@ SHIELD_DURATION_SEC=14400
 SHIELD_MAX_SEC=86400
 
 # === 钓鱼 ===
-# 钓鱼只增加余额，不增加累计积分/等级/榜单。
+# 钓鱼只增加灵石，不增加累计修炼值/等级/榜单。
 FISHING_ENABLED=true
 FISHING_GROUPS=*
 FISHING_CATALOG_PATH=data/fishing.json
 FISHING_HOURLY_ATTEMPTS=30
-FISHING_DAILY_CAP=120
+FISHING_DAILY_CAP=0
 FISHING_COOLDOWN_SEC=5
 FISHING_MAX_BATCH=10
 FISHING_MISS_CHANCE=0.15
@@ -2413,6 +2479,12 @@ BOSS_HP_PER_MEMBER=600
 BOSS_MIN_HP=3000
 BOSS_MAX_HP=30000
 BOSS_REWARD_RATIO=0.15
+
+# === Daily Lottery / 每日抽奖 ===
+LOTTERY_ENABLED=true
+LOTTERY_GROUPS=*
+LOTTERY_COST=100
+LOTTERY_DAILY_ATTEMPTS=3
 
 # === 调优 ===
 POLL_INTERVAL_SEC=1.0

@@ -1667,7 +1667,7 @@ class PointStore:
                 f"{message_id}:balance", "lottery_reward", "lottery",
                 amount, now,
             )
-            return f"余额 +{amount}"
+            return f"灵石 +{amount}"
 
         if kind == "points":
             amount = max(1, int(reward.get("amount", 0) or 0))
@@ -1678,7 +1678,7 @@ class PointStore:
                 f"{message_id}:points", "lottery_points", "adjust",
                 amount, now,
             )
-            return f"积分 +{amount}"
+            return f"修炼值 +{amount}"
 
         if kind == "equipment":
             item_id = str(reward.get("item_id") or "")
@@ -1695,7 +1695,7 @@ class PointStore:
                     f"{message_id}:refund", "lottery_refund", "lottery",
                     refund, now,
                 )
-                return f"已拥有，折算 {refund} 余额"
+                return f"已拥有，折算 {refund} 灵石"
 
             same_slot_ids = [
                 str(i) for i in (reward.get("same_slot_ids") or []) if i
@@ -1710,14 +1710,22 @@ class PointStore:
                     [str(chat_id), str(sender_id), *same_slot_ids],
                 ).fetchone()
                 equipped = 0 if row else 1
-            self.conn.execute(
-                """INSERT INTO equipment_owned
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO equipment_owned
                    (chat_id, sender_id, item_id, purchased_at, equipped,
                     enhance_level)
                    VALUES (?, ?, ?, ?, ?, 0)""",
                 (str(chat_id), str(sender_id), item_id, int(now),
                  equipped),
             )
+            if cur.rowcount == 0:
+                refund = max(1, price // 2)
+                self._lottery_event_locked(
+                    chat_id, sender_id, sender_name,
+                    f"{message_id}:refund", "lottery_refund", "lottery",
+                    refund, now,
+                )
+                return f"已拥有，折算 {refund} 灵石"
             return "已自动装备" if equipped else "已放入背包"
 
         if kind == "rod":
@@ -1736,14 +1744,22 @@ class PointStore:
                     f"{message_id}:refund", "lottery_refund", "lottery",
                     refund, now,
                 )
-                return f"已拥有，折算 {refund} 余额"
-            self.conn.execute(
-                """INSERT INTO fishing_inventory
+                return f"已拥有，折算 {refund} 灵石"
+            cur = self.conn.execute(
+                """INSERT OR IGNORE INTO fishing_inventory
                    (chat_id, sender_id, kind, item_id, quantity, equipped,
                     purchased_at)
                    VALUES (?, ?, 'rod', ?, 1, 0, ?)""",
                 (str(chat_id), str(sender_id), rod_id, int(now)),
             )
+            if cur.rowcount == 0:
+                refund = max(1, price // 2)
+                self._lottery_event_locked(
+                    chat_id, sender_id, sender_name,
+                    f"{message_id}:refund", "lottery_refund", "lottery",
+                    refund, now,
+                )
+                return f"已拥有，折算 {refund} 灵石"
             return "已放入鱼竿背包，发「换鱼竿」切换"
 
         if kind == "bait":
@@ -1772,7 +1788,10 @@ class PointStore:
             ).fetchone()
             current = int(row[0]) if row else 0
             base = max(int(now), current)
-            expires = min(base + duration, int(now) + maximum)
+            expires = max(
+                current,
+                min(base + duration, int(now) + maximum),
+            )
             self.conn.execute(
                 """INSERT INTO duel_shields (chat_id, sender_id, expires_at)
                    VALUES (?, ?, ?)

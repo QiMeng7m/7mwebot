@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS fun_draws (
     PRIMARY KEY (chat_id, sender_id)
 );
 
--- ── Activity points (“活跃积分”) ───────────────────────────────────
+-- ── Activity points (“活跃修炼值”) ───────────────────────────────────
 -- Append-only ledger.  One row per scoring component, plus transfers
 -- (duels), spending (shop / shield) and manual admin adjustments.
 -- UNIQUE(message_id, reason) makes replaying a message idempotent.

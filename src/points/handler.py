@@ -65,15 +65,15 @@ _GROUP_NICKNAMES_PATH = Path(PROJECT_ROOT) / "data" / "group_nicknames.json"
 
 EXACT_COMMANDS = {
     "签到": ("checkin", ""),
-    "积分": ("member_card", ""),
-    "我的积分": ("member_card", ""),
-    "积分卡": ("member_card", ""),
+    "修炼值": ("member_card", ""),
+    "我的修炼值": ("member_card", ""),
+    "修炼卡": ("member_card", ""),
     "我的信息": ("my_info", ""),
-    "积分榜": ("board", "total"),
+    "修炼榜": ("board", "total"),
     "排行榜": ("board", "total"),
     "月榜": ("board", "season"),
     "今日榜": ("board", "day"),
-    "积分规则": ("rules", ""),
+    "修炼规则": ("rules", ""),
     "商店": ("shop", ""),
     "我的装备": ("bag", ""),
     "背包": ("bag", ""),
@@ -111,10 +111,17 @@ EXACT_COMMANDS = {
     "称号": ("titles", ""),
     "境界": ("realm", ""),
     "突破": ("breakthrough", ""),
+    # ── Legacy aliases (old 积分/余额 wording) ──
+    "积分": ("member_card", ""),
+    "我的积分": ("member_card", ""),
+    "积分卡": ("member_card", ""),
+    "积分榜": ("board", "total"),
+    "积分规则": ("rules", ""),
 }
 
 PREFIX_COMMANDS = (
-    "购买", "装备", "卸下", "查询", "切磋", "积分调整", "积分重算",
+    "购买", "装备", "卸下", "查询", "切磋", "修炼值调整", "修炼值重算",
+    "积分调整", "积分重算",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
 )
@@ -138,7 +145,8 @@ _CN_NUMBERS = {
 }
 
 _ADMIN_ADJUST_RE = re.compile(
-    rf"^积分调整{_WS}+(.+?){_WS}+([+-]?\d+)(?:{_WS}+(.+))?{_WS}*$"
+    rf"^(?:修炼值调整|积分调整){_WS}+(.+?){_WS}+([+-]?\d+)"
+    rf"(?:{_WS}+(.+))?{_WS}*$"
 )
 
 
@@ -149,7 +157,7 @@ def looks_like_command(text: str) -> bool:
         return False
     if text in EXACT_COMMANDS:
         return True
-    if re.match(rf"^积分榜{_WS}+", text):
+    if re.match(rf"^(?:修炼榜|积分榜){_WS}+", text):
         return True
     if re.match(rf"^钓鱼榜{_WS}+", text):
         return True
@@ -229,8 +237,8 @@ class PointHandler:
             return self._dispatch(kind, arg, text, msg, chat_id,
                                   sender_id, sender_name, is_admin)
 
-        # ── Scoped board: 积分榜 月 / 今日 ────────────────────────
-        m = re.match(rf"^积分榜{_WS}+(\S+){_WS}*$", text)
+        # ── Scoped board: 修炼榜 月 / 今日 ────────────────────────
+        m = re.match(rf"^(?:修炼榜|积分榜){_WS}+(\S+){_WS}*$", text)
         if m:
             scope = _BOARD_SCOPES.get(m.group(1))
             if scope:
@@ -273,9 +281,9 @@ class PointHandler:
         if head in ("佩戴称号", "戴上称号"):
             return self._equip_title(
                 chat_id, sender_id, sender_name, rest)
-        if head == "积分重算":
+        if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
-        if head == "积分调整":
+        if head in ("修炼值调整", "积分调整"):
             return self._admin_adjust(chat_id, text, is_admin)
 
         # 引用回复 + 切磋 / @某人 切磋（关键字可能在末尾）
@@ -561,7 +569,7 @@ class PointHandler:
                 "Check-in: %s (%s) +%d in %s",
                 sender_name, sender_id, points, chat_id[:20],
             )
-            return f"@{sender_name} 签到成功，积分+{points}"
+            return f"@{sender_name} 签到成功，修炼值+{points}"
         if self._store.has_reason_on_day(
             chat_id, sender_id, "daily_first", day,
         ):
@@ -586,8 +594,8 @@ class PointHandler:
         prefix = f"【{title}】" if title else ""
         realm = realm_info(self._store.realm_of(chat_id, sender_id))
         return (
-            f"{prefix}{stats.sender_name} 积分：{stats.earned} "
-            f"余额：{stats.balance} 武力值：{power.total}"
+            f"{prefix}{stats.sender_name} 修炼值：{stats.earned} "
+            f"灵石：{stats.balance} 武力值：{power.total}"
             f" 境界：{realm['title']}"
         )
 
@@ -602,10 +610,10 @@ class PointHandler:
         ach = self._achievements.evaluate(chat_id, sender_id)
 
         lines = [
-            f"{stats.sender_name} 积分：{stats.earned} "
+            f"{stats.sender_name} 修炼值：{stats.earned} "
             f"· Lv{level['level']} {level['title']}"
             + (f" · 称号「{title}」" if title else ""),
-            f"余额 {stats.balance} · 本月 {stats.season_points}"
+            f"灵石 {stats.balance} · 本月 {stats.season_points}"
             + (f"（第{stats.season_rank}名）" if stats.season_rank else "")
             + f" · 今日 {stats.day_points}",
             f"武力值 {power.total}（基础 {power.base} + 装备 {power.equipment}"
@@ -614,7 +622,7 @@ class PointHandler:
         if nxt is not None:
             lines.append(
                 f"距 Lv{nxt['level']} {nxt['title']} 还差 "
-                f"{max(0, int(nxt['min_points']) - stats.earned)} 分"
+                f"{max(0, int(nxt['min_points']) - stats.earned)} 修炼值"
             )
         if stats.streak_days:
             lines.append(f"连续活跃 {stats.streak_days} 天")
@@ -632,7 +640,7 @@ class PointHandler:
                 lines.append(
                     f"钓鱼 Lv{level.get('level', 1)} {level.get('title', '')}"
                     f" · {fish['catches']} 条 · 入账 "
-                    f"{fish['total_value']}（只加余额，不计积分）"
+                    f"{fish['total_value']}（只加灵石，不计修炼值）"
                 )
         return "\n".join(lines)
 
@@ -659,8 +667,8 @@ class PointHandler:
         stats = self._store.member_stats(chat_id, sid, display)
         power = self._duels.power(chat_id, sid)
         return (
-            f"{stats.sender_name} 积分：{stats.earned} "
-            f"余额：{stats.balance} "
+            f"{stats.sender_name} 修炼值：{stats.earned} "
+            f"灵石：{stats.balance} "
             f"武力值：{power.total}"
         )
 
@@ -675,24 +683,24 @@ class PointHandler:
             now = int(time.time())
             season = time.strftime("%Y-%m", time.localtime(now))
             header = (
-                f"群积分榜 · {group}（{season} 赛季"
+                f"群修炼榜 · {group}（{season} 赛季"
                 f"，{season_end_day(season)[5:]} 截止）"
             )
         elif scope == "day":
-            header = f"群积分榜 · {group}（今日）"
+            header = f"群修炼榜 · {group}（今日）"
         else:
-            header = f"群积分榜 · {group}（总榜）"
+            header = f"群修炼榜 · {group}（总榜）"
 
         lines = [header]
         if not rows:
-            lines.append("本群还没有积分记录，先聊几句吧。")
+            lines.append("本群还没有修炼记录，先聊几句吧。")
             return "\n".join(lines)
 
         for row in rows:
             level = self._levels.for_points(row["points"])
             lines.append(
-                f"{row['rank']}. {row['sender_name']} {row['points']}分 "
-                f"Lv{level['level']}{level['title']} · 余额{row['balance']}"
+                f"{row['rank']}. {row['sender_name']} {row['points']}修炼值 "
+                f"Lv{level['level']}{level['title']} · 灵石{row['balance']}"
             )
 
         if scope == "season":
@@ -702,13 +710,13 @@ class PointHandler:
             if winner:
                 lines.append(
                     f"上月冠军：{winner['winner_name']} "
-                    f"{winner['winner_points']}分"
+                    f"{winner['winner_points']}修炼值"
                 )
         else:
             participants = self._store.participants(chat_id)
             today_total = self._store.day_total(chat_id, local_day())
             lines.append(
-                f"本群共 {participants} 人参与 · 今日产生 {today_total} 分"
+                f"本群共 {participants} 人参与 · 今日产生 {today_total} 修炼值"
             )
         return "\n".join(lines)
 
@@ -722,7 +730,7 @@ class PointHandler:
                  self._store.owned_items(chat_id, sender_id)}
         balance = self._store.balance_of(chat_id, sender_id)
 
-        lines = [f"装备商店 · 余额 {balance}"]
+        lines = [f"装备商店 · 灵石 {balance}"]
         for slot in catalog["slots"]:
             items = [i for i in catalog["items"] if i["slot"] == slot["id"]]
             if not items:
@@ -731,7 +739,7 @@ class PointHandler:
             for item in items:
                 mark = " ✓" if item["id"] in owned else ""
                 rendered.append(
-                    f"{item['name']} {item['price']}分(+{item['power']}){mark}"
+                    f"{item['name']} {item['price']}灵石(+{item['power']}){mark}"
                 )
             lines.append(f"【{slot['name']}】" + " · ".join(rendered))
         lines.append("发送「购买 名称」即可；「我的装备」查看背包。")
@@ -753,8 +761,8 @@ class PointHandler:
         )
         if code == "insufficient":
             return (
-                f"余额不足：{item['name']} 需要 {item['price']} 分，"
-                f"你只有 {balance} 分。"
+                f"灵石不足：{item['name']} 需要 {item['price']} 灵石，"
+                f"你只有 {balance} 灵石。"
             )
         if code == "owned":
             return f"你已经拥有 {item['name']} 了。"
@@ -766,7 +774,7 @@ class PointHandler:
         )
         return (
             f"购买成功：{item['name']}（武力 +{item['power']}），"
-            f"花费 {item['price']} 积分，余额 {balance}{suffix}。\n"
+            f"花费 {item['price']} 灵石，剩余 {balance} 灵石{suffix}。\n"
             f"当前武力值 {power.total}。"
         )
 
@@ -856,7 +864,7 @@ class PointHandler:
             if items:
                 lines.append(f"【{slot['name']}】" + " · ".join(items))
         balance = self._store.balance_of(chat_id, sender_id)
-        lines.append(f"余额 {balance}")
+        lines.append(f"灵石 {balance}")
         return "\n".join(lines)
 
     def _power(self, chat_id: str, sender_id: str,
@@ -885,7 +893,7 @@ class PointHandler:
         attempts = self._store.duel_attempts(chat_id, sender_id, day)
         limit = int(getattr(self._config, "duel_daily_attempts", 10))
         balance = self._store.balance_of(chat_id, sender_id)
-        lines.append(f"今日切磋 {attempts}/{limit} · 余额 {balance}")
+        lines.append(f"今日切磋 {attempts}/{limit} · 灵石 {balance}")
 
         shield = self._store.shield_expires_at(chat_id, sender_id, now)
         if shield:
@@ -970,7 +978,7 @@ class PointHandler:
             if result.points_moved > 0:
                 lines.append(
                     f"结果：切磋成功！从 {defender_name} 处抢到 "
-                    f"{result.points_moved} 积分"
+                    f"{result.points_moved} 灵石"
                 )
             else:
                 lines.append(
@@ -978,13 +986,13 @@ class PointHandler:
                 )
         else:
             lines.append(
-                "结果：惜败。失败不扣分，"
+                "结果：惜败。失败不扣灵石，"
                 f"{self._format_duration(safe_int(
                     getattr(self._config, 'duel_loss_cooldown_sec', 120)))}"
                 "后可再次发起。"
             )
         lines.append(
-            f"余额 {result.balance_after} · "
+            f"灵石 {result.balance_after} · "
             f"今日 {result.attempts_used}/{result.attempts_limit} 次 · "
             f"已抢 {result.stolen_today}/{result.steal_cap}"
         )
@@ -1004,7 +1012,7 @@ class PointHandler:
             if row["shield_blocked"]:
                 outcome = "被免战挡下"
             elif row["attacker_win"]:
-                outcome = f"抢到 {row['points_moved']} 分"
+                outcome = f"抢到 {row['points_moved']} 灵石"
             else:
                 outcome = "落败"
             lines.append(
@@ -1028,7 +1036,7 @@ class PointHandler:
             f"{sender_name} 切磋战绩 · {rank['title']}段（战力 {power.total}）",
             f"生涯 {record['total']} 战 · 胜 {record['wins']} · "
             f"负 {record['losses']} · 胜率 {win_rate} · "
-            f"累计抢 {record['stolen']} 分",
+            f"累计抢 {record['stolen']} 灵石",
         ]
         nxt = rank.get("next")
         if nxt:
@@ -1056,7 +1064,7 @@ class PointHandler:
             rank = row["rank"]
             lines.append(
                 f"{index}. {row['sender_name']} {rank['title']}段 · "
-                f"{wins}胜{losses}负 · 抢 {row['stolen']} 分"
+                f"{wins}胜{losses}负 · 抢 {row['stolen']} 灵石"
             )
         return "\n".join(lines)
 
@@ -1071,11 +1079,11 @@ class PointHandler:
             chat_id, sender_id, sender_name, price, duration, maximum,
         )
         if not ok:
-            return f"余额不足：免战券需要 {price} 分，你只有 {balance} 分。"
+            return f"灵石不足：免战券需要 {price} 灵石，你只有 {balance} 灵石。"
         remaining = max(0, expires - int(time.time()))
         return (
             f"免战券生效：{self._format_duration(remaining)}内不会被切磋，"
-            f"花费 {price} 积分，余额 {balance}。"
+            f"花费 {price} 灵石，剩余 {balance} 灵石。"
         )
 
     # ── Fishing ───────────────────────────────────────────────────
@@ -1124,7 +1132,7 @@ class PointHandler:
                 lines = [
                     f"{sender_name} 钓到 {catch.species_name}"
                     f"（{format_weight(catch.weight_g)}，{rarity}），"
-                    f"余额 +{catch.amount}。",
+                    f"灵石 +{catch.amount}。",
                 ]
         else:
             lines = [f"{sender_name} 抛了 {len(result.casts)} 竿："]
@@ -1132,7 +1140,7 @@ class PointHandler:
                 lines.append(f"{index}. {self._format_catch_text(catch)}")
 
         footer = (
-            f"本次入账 +{result.total_value} · 余额 {result.balance_after}"
+            f"本次入账 +{result.total_value} · 灵石 {result.balance_after}"
             f" · 本小时 {result.attempts_used}/{result.attempts_limit} 次"
         )
         if result.daily_cap:
@@ -1177,9 +1185,9 @@ class PointHandler:
         equipped = self._fishing.rod_of(chat_id, sender_id)["id"]
         balance = self._store.balance_of(chat_id, sender_id)
 
-        lines = [f"鱼竿商店 · 余额 {balance}"]
+        lines = [f"鱼竿商店 · 灵石 {balance}"]
         for rod in catalog.rods():
-            price = "默认" if int(rod["price"]) <= 0 else f"{rod['price']}分"
+            price = "默认" if int(rod["price"]) <= 0 else f"{rod['price']}灵石"
             if rod["id"] == equipped:
                 mark = " · 已装备"
             elif rod["id"] in inventory:
@@ -1216,7 +1224,7 @@ class PointHandler:
         )
         if code == "insufficient":
             return (
-                f"余额不足：{rod['name']} 需要 {rod['price']}，"
+                f"灵石不足：{rod['name']} 需要 {rod['price']}，"
                 f"你只有 {balance}。"
             )
         if code == "owned":
@@ -1224,7 +1232,7 @@ class PointHandler:
         return (
             f"购买成功：{rod['name']}（稀有+{self._pct(rod['rare_bonus'])} "
             f"价值+{self._pct(rod['value_bonus'])}），"
-            f"花费 {rod['price']} 余额，余额 {balance}，已自动装备。"
+            f"花费 {rod['price']} 灵石，剩余 {balance} 灵石，已自动装备。"
         )
 
     def _equip_rod(self, chat_id: str, sender_id: str,
@@ -1258,10 +1266,10 @@ class PointHandler:
         }
         balance = self._store.balance_of(chat_id, sender_id)
 
-        lines = [f"鱼饵商店 · 余额 {balance}"]
+        lines = [f"鱼饵商店 · 灵石 {balance}"]
         for bait in catalog.baits():
             lines.append(
-                f"{bait['name']} {bait['price']}余额/个 · "
+                f"{bait['name']} {bait['price']}灵石/个 · "
                 f"稀有+{self._pct(bait['rare_bonus'])} "
                 f"价值+{self._pct(bait['value_bonus'])} · "
                 f"持有 {quantities.get(bait['id'], 0)}"
@@ -1322,7 +1330,7 @@ class PointHandler:
         total = int(bait["price"]) * quantity
         if code == "insufficient":
             return (
-                f"余额不足：{bait['name']}×{quantity} 需要 {total}，"
+                f"灵石不足：{bait['name']}×{quantity} 需要 {total}，"
                 f"你只有 {balance}。"
             )
         stock = sum(
@@ -1331,8 +1339,8 @@ class PointHandler:
             if row["kind"] == "bait" and row["item_id"] == bait["id"]
         )
         return (
-            f"购买成功：{bait['name']}×{quantity}，花费 {total} 余额，"
-            f"余额 {balance}，当前持有 {stock} 个。"
+            f"购买成功：{bait['name']}×{quantity}，花费 {total} 灵石，"
+            f"剩余 {balance} 灵石，当前持有 {stock} 个。"
         )
 
     def _fish_bag(self, chat_id: str, sender_id: str,
@@ -1345,7 +1353,7 @@ class PointHandler:
         lines = [f"{sender_name} 的鱼篓"]
         summary = (
             f"本小时 {stats['attempts']}/{stats['attempts_limit']} 次"
-            f" · 余额 {stats['balance']}"
+            f" · 灵石 {stats['balance']}"
         )
         reset_in = int(stats.get("attempts_reset_in", 0))
         if reset_in:
@@ -1460,7 +1468,7 @@ class PointHandler:
             return "\n".join(lines)
         for rank, row in enumerate(rows, 1):
             lines.append(
-                f"{rank}. {row['sender_name']} {row['value']}余额"
+                f"{rank}. {row['sender_name']} {row['value']}灵石"
                 f" · {row['catches']}条"
                 f" · 最大 {format_weight(row['biggest'])}"
             )
@@ -1502,12 +1510,18 @@ class PointHandler:
         detail = result.get("detail") or ""
         if detail:
             lines.append(detail)
-        if reward.get("kind") == "points":
-            self._achievements.evaluate(chat_id, sender_id)
+        ach = self._achievements.evaluate(chat_id, sender_id)
+        if ach["new"]:
+            lines.append(
+                "新成就：" + "、".join(
+                    f"{item['name']}（{item['title']}）"
+                    for item in ach["new"]
+                )
+            )
         lines.append(
-            f"花费 {result['cost']} 余额 · "
+            f"花费 {result['cost']} 灵石 · "
             f"今日 {result['used']}/{result['limit']} 次 · "
-            f"余额 {result['balance']}"
+            f"剩余 {result['balance']} 灵石"
         )
         return "\n".join(lines)
 
@@ -1522,13 +1536,13 @@ class PointHandler:
         balance_tiers = status["balance_tiers"]
         points_tiers = status["points_tiers"]
         lines = [
-            f"每日抽奖 · {status['cost']} 余额/次 · "
+            f"每日抽奖 · {status['cost']} 灵石/次 · "
             f"今日 {status['used']}/{status['limit']} 次",
-            f"我的余额 {status['balance']}",
+            f"我的灵石 {status['balance']}",
             "【奖池分类概率】",
-            f"  余额 {chances['balance']}%"
+            f"  灵石 {chances['balance']}%"
             f"（{min(balance_tiers)}~{max(balance_tiers)}，越高越难）",
-            f"  积分 {chances['points']}%"
+            f"  修炼值 {chances['points']}%"
             f"（{min(points_tiers)}~{max(points_tiers)}，越高越难）",
             f"  装备 {chances['equipment']}%（商店全部装备）",
             f"  鱼竿 {chances['rod']}%（全部非默认鱼竿）",
@@ -1573,8 +1587,8 @@ class PointHandler:
         balance = self._store.balance_of(chat_id, sender_id)
         if balance < cost:
             return (
-                f"余额不足：把 {item['name']} 强化到 "
-                f"+{level + 1} 需要 {cost} 余额，你只有 {balance}。"
+                f"灵石不足：把 {item['name']} 强化到 "
+                f"+{level + 1} 需要 {cost} 灵石，你只有 {balance}。"
             )
 
         ok, code, new_level, balance = self._store.enhance_item(
@@ -1585,7 +1599,7 @@ class PointHandler:
             return f"{item['name']} 已经强化到 +{ENHANCE_MAX} 了。"
         if code == "insufficient":
             return (
-                f"余额不足：需要 {cost} 余额，你只有 {balance}。"
+                f"灵石不足：需要 {cost} 灵石，你只有 {balance}。"
             )
         if not ok:
             return "强化失败，请稍后再试。"
@@ -1594,8 +1608,8 @@ class PointHandler:
         return (
             f"强化成功：{item['name']} +{new_level}"
             f"（武力 +{effective_power(item, new_level)}，"
-            f"强化加成 +{new_level * 2}），花费 {cost} 余额，"
-            f"余额 {balance}，当前战力 {power.total}。"
+            f"强化加成 +{new_level * 2}），花费 {cost} 灵石，"
+            f"剩余 {balance} 灵石，当前战力 {power.total}。"
         )
 
     def _realm_command(self, chat_id: str, sender_id: str,
@@ -1614,8 +1628,8 @@ class PointHandler:
                 f"（武力 +{realm_info(info['next'])['power_bonus']}）"
             )
             lines.append(
-                f"突破需要累计积分 {info['next_cost']}"
-                f"（当前 {points}）· 不消耗积分"
+                f"突破需要累计修炼值 {info['next_cost']}"
+                f"（当前 {points}）· 不消耗修炼值"
             )
             lines.append("发送「突破」即可尝试。")
         else:
@@ -1631,8 +1645,8 @@ class PointHandler:
         points = self._store.earned_of(chat_id, sender_id)
         if points < required:
             return (
-                f"境界突破需要累计积分 {required}（当前 {points}）。"
-                "突破不消耗积分，达到门槛即可。"
+                f"境界突破需要累计修炼值 {required}（当前 {points}）。"
+                "突破不消耗修炼值，达到门槛即可。"
             )
         ok, code, new_realm = self._store.advance_realm(
             chat_id, sender_id, sender_name, REALM_MAX,
@@ -1650,7 +1664,7 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         return (
             f"突破成功！境界 → {info['title']}，"
-            f"武力 +{info['power_bonus']}，累计积分 {points}（不扣积分），"
+            f"武力 +{info['power_bonus']}，累计修炼值 {points}（不扣修炼值），"
             f"当前战力 {power.total}。"
         )
 
@@ -1675,7 +1689,7 @@ class PointHandler:
         ]
         if result.get("killed"):
             lines.append(
-                f"Boss 已被击败！{result['reward_pool']} 余额奖励"
+                f"Boss 已被击败！{result['reward_pool']} 灵石奖励"
                 "已按伤害占比发放。"
             )
             mine = next(
@@ -1684,7 +1698,7 @@ class PointHandler:
                 None,
             )
             if mine:
-                lines.append(f"你获得 {mine['amount']} 余额。")
+                lines.append(f"你获得 {mine['amount']} 灵石。")
         return "\n".join(lines)
 
     def _boss_status(self, chat_id: str, group_name: str,
@@ -1700,7 +1714,7 @@ class PointHandler:
             f"我的伤害 {state['my_damage']}"
             f" · 挑战次数 {state['attempts_left']}/{state['attempts_max']}"
             f" · 剩余 {state['days_left']} 天",
-            f"击杀奖励池 {state['reward_pool']} 余额（按伤害分配）",
+            f"击杀奖励池 {state['reward_pool']} 灵石（按伤害分配）",
         ]
         if state.get("next_regen_sec"):
             lines.append(
@@ -1756,7 +1770,7 @@ class PointHandler:
             lines.append(
                 "新解锁：" + "、".join(
                     f"{item['name']}（称号「{item['title']}」，"
-                    f"余额 +{item['reward']}）"
+                    f"灵石 +{item['reward']}）"
                     for item in result["new"]
                 )
             )
@@ -1813,10 +1827,10 @@ class PointHandler:
     def _admin_adjust(self, chat_id: str, text: str,
                       is_admin: bool) -> str | None:
         if not is_admin:
-            return "仅管理员可以调整积分。"
+            return "仅管理员可以调整修炼值。"
         m = _ADMIN_ADJUST_RE.match(text)
         if not m:
-            return "用法：积分调整 名字 +20 [理由]"
+            return "用法：修炼值调整 名字 +20 [理由]"
         name, delta_raw, note = m.group(1), m.group(2), m.group(3) or ""
         delta = int(delta_raw)
         if delta == 0:
@@ -1835,20 +1849,20 @@ class PointHandler:
         sign = "+" if delta > 0 else ""
         suffix = f"（{note.strip()}）" if note.strip() else ""
         return (
-            f"已调整 {display} 的积分 {sign}{delta}{suffix}，"
-            f"当前余额 {balance}。"
+            f"已调整 {display} 的修炼值 {sign}{delta}{suffix}，"
+            f"当前灵石 {balance}。"
         )
 
     def _rebuild(self, chat_id: str, is_admin: bool) -> str | None:
         if not is_admin:
-            return "仅管理员可以重算积分。"
+            return "仅管理员可以重算修炼值。"
         if self._engine is None:
-            return "积分引擎未初始化，无法重算。"
+            return "修炼值引擎未初始化，无法重算。"
         result = self._engine.rebuild(chat_id, days=90)
         return (
-            f"积分重算完成：扫描 {result['messages']} 条消息，"
+            f"修炼值重算完成：扫描 {result['messages']} 条消息，"
             f"清理 {result['removed']} 条旧记录，"
-            f"重新计入 {result['restored']} 分。"
+            f"重新计入 {result['restored']} 修炼值。"
         )
 
     # ── Rules text ────────────────────────────────────────────────
@@ -1856,8 +1870,8 @@ class PointHandler:
     def _rules(self) -> str:
         cfg = self._config
         return (
-            "积分规则\n"
-            f"· 每条消息 +{cfg.points_base_score}\n"
+            "修炼规则\n"
+            f"· 每条消息 +{cfg.points_base_score} 修炼值\n"
             f"· 长度 ≥{cfg.points_length_min_chars} 字 "
             f"+{cfg.points_length_bonus}，"
             f"≥{cfg.points_long_length_min_chars} 字 "
@@ -1865,16 +1879,16 @@ class PointHandler:
             f"· 图片/语音/视频 +{cfg.points_media_bonus}\n"
             f"· 当天首条 +{cfg.points_daily_first_bonus}\n"
             f"· 被引用回复 +{cfg.points_reply_bonus}\n"
-            f"· 单条封顶 {cfg.points_per_message_cap} 分，"
-            f"每日封顶 {cfg.points_daily_cap} 分\n"
-            "· 积分分两类：累计获得决定等级与总榜，"
-            "余额用于购买装备和免战券\n"
+            f"· 单条封顶 {cfg.points_per_message_cap} 修炼值，"
+            f"每日封顶 {cfg.points_daily_cap} 修炼值\n"
+            "· 修炼值决定等级与总榜（提升修为），"
+            "灵石用于购买装备、免战券和强化\n"
             f"· 切磋每日 {cfg.duel_daily_attempts} 次，"
-            f"单次最多抢 {cfg.duel_per_fight_cap} 分；生涯胜场决定段位\n"
-            "· 钓鱼只增加余额，不影响累计积分、等级和榜单\n"
+            f"单次最多抢 {cfg.duel_per_fight_cap} 灵石；生涯胜场决定段位\n"
+            "· 钓鱼只增加灵石，不影响修炼值、等级和榜单\n"
             "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成\n"
             "· 装备可用「强化 名称」提升，最高 +15（每级 +2 武力）\n"
-            "· 累计积分达到门槛可「突破」境界（不扣积分），"
+            "· 累计修炼值达到门槛可「突破」境界（不扣修炼值），"
             "每重境界永久 +10 武力\n"
             "· 群 Boss 每周刷新，伤害按战力结算，击杀奖励按伤害分配"
         )

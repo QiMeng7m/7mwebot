@@ -291,7 +291,7 @@ class DuelService:
         if stolen >= steal_cap:
             return DuelResult(
                 False, "steal_cap",
-                f"今天已经抢够 {steal_cap} 分了，明天再战。",
+                f"今天已经抢够 {steal_cap} 灵石了，明天再战。",
                 attempts_used=attempts, attempts_limit=attempts_limit,
                 stolen_today=stolen, steal_cap=steal_cap,
             )

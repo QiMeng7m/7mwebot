@@ -211,7 +211,7 @@ class RealmStoreTests(EndgameTestBase):
     def test_breakthrough_requires_point_threshold(self):
         self.add_member(earned=299)
         reply = self.run_cmd("突破")
-        self.assertIn("需要累计积分 300", reply)
+        self.assertIn("需要累计修炼值 300", reply)
         self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 0)
 
     def test_second_breakthrough_requires_600(self):
@@ -220,7 +220,7 @@ class RealmStoreTests(EndgameTestBase):
         self.assertIn("突破成功", first)
         self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
         second = self.run_cmd("突破")
-        self.assertIn("需要累计积分 600", second)
+        self.assertIn("需要累计修炼值 600", second)
         self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
 
     def test_breakthrough_does_not_deduct_points(self):
@@ -228,7 +228,7 @@ class RealmStoreTests(EndgameTestBase):
         before_balance = self.store.balance_of(self.chat, "wxid_a")
         before_earned = self.store.earned_of(self.chat, "wxid_a")
         reply = self.run_cmd("突破")
-        self.assertIn("不扣积分", reply)
+        self.assertIn("不扣修炼值", reply)
         # Balance may only grow (achievement reward); it is never charged.
         self.assertGreaterEqual(
             self.store.balance_of(self.chat, "wxid_a"), before_balance)

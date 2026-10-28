@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import random
+import uuid
 
 from .util import is_group_enabled, local_day
 
@@ -73,13 +74,13 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
 
     pool += _spread(CATEGORY_WEIGHTS["balance"], [
         ({"kind": "balance", "emoji": "💰",
-          "name": f"余额 +{amount}", "amount": amount}, weight)
+          "name": f"灵石 +{amount}", "amount": amount}, weight)
         for amount, weight in BALANCE_TIERS
     ])
 
     pool += _spread(CATEGORY_WEIGHTS["points"], [
         ({"kind": "points", "emoji": "⭐",
-          "name": f"积分 +{amount}", "amount": amount}, weight)
+          "name": f"修炼值 +{amount}", "amount": amount}, weight)
         for amount, weight in POINTS_TIERS
     ])
 
@@ -238,7 +239,8 @@ class LotteryService:
         result = self._store.commit_lottery_draw(
             chat_id=chat_id, sender_id=sender_id,
             sender_name=sender_name,
-            message_id=message_id or f"lottery:{chat_id}:{now}",
+            message_id=message_id or
+            f"lottery:{chat_id}:{uuid.uuid4().hex}",
             day=day, now_ts=now, cost=self.cost(),
             limit=self.daily_limit(), reward=reward,
         )
@@ -255,7 +257,7 @@ class LotteryService:
             if code == "insufficient":
                 return {
                     "ok": False, "code": "insufficient",
-                    "reply": f"余额不足：抽奖需要 {self.cost()} 余额，"
+                    "reply": f"灵石不足：抽奖需要 {self.cost()} 灵石，"
                              f"你只有 {result.get('balance', 0)}。",
                     "balance": result.get("balance", 0),
                 }

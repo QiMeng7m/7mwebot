@@ -40,7 +40,7 @@ class AdminHelpTests(unittest.TestCase):
 
         self.assertTrue(reply.startswith("@张三 游玩清单"))
         for section in (
-            "【每日】", "【积分与排行】", "【装备与切磋】",
+            "【每日】", "【修炼值与排行】", "【装备与切磋】",
             "【钓鱼】", "【待办】", "【AI 助手】",
         ):
             self.assertIn(section, reply)
@@ -51,7 +51,7 @@ class AdminHelpTests(unittest.TestCase):
         self.assertIn("记一下 周五聚餐", reply)
         # Admin commands are hidden from regular members.
         self.assertNotIn("管理（仅管理员）", reply)
-        self.assertNotIn("积分调整", reply)
+        self.assertNotIn("修炼值调整", reply)
 
     def test_help_uses_configured_limits(self):
         config = make_config(
@@ -69,8 +69,8 @@ class AdminHelpTests(unittest.TestCase):
         )
 
         self.assertIn("每日 7 次", reply)
-        self.assertIn("单次最多抢 15 分", reply)
-        self.assertIn("免战券（25 分 / 2 小时，最多叠到 12 小时）", reply)
+        self.assertIn("单次最多抢 15 灵石", reply)
+        self.assertIn("免战券（25 灵石 / 2 小时，最多叠到 12 小时）", reply)
         self.assertIn("每小时 12 竿", reply)
         self.assertIn("一次最多 4 竿", reply)
         self.assertIn("收益上限 80/天", reply)
@@ -90,7 +90,7 @@ class AdminHelpTests(unittest.TestCase):
         )
 
         for hidden in (
-            "【每日】", "签到", "抽签", "【积分与排行】",
+            "【每日】", "签到", "抽签", "【修炼值与排行】",
             "【装备与切磋】", "商店", "切磋", "【钓鱼】",
             "【待办】", "@我 总结一下",
         ):
@@ -119,8 +119,8 @@ class AdminHelpTests(unittest.TestCase):
 
         self.assertIn("【管理（仅管理员）】", reply)
         self.assertIn("改名 wxid_xxx = 昵称", reply)
-        self.assertIn("积分调整", reply)
-        self.assertIn("积分重算", reply)
+        self.assertIn("修炼值调整", reply)
+        self.assertIn("修炼值重算", reply)
 
     def test_help_aliases(self):
         for alias in ("帮助", "help", "命令"):
@@ -134,7 +134,7 @@ class AdminHelpTests(unittest.TestCase):
     def test_help_without_config_shows_all_sections(self):
         reply = self.handler.handle("帮助", "张三")
 
-        self.assertIn("【积分与排行】", reply)
+        self.assertIn("【修炼值与排行】", reply)
         self.assertIn("【钓鱼】", reply)
         self.assertIn("【待办】", reply)
         self.assertIn("每日 10 次", reply)

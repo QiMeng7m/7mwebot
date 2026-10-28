@@ -282,7 +282,7 @@ class BotConfig:
     ])
 
     # === Activity Points ===
-    # Master switch — award points for group messages, enable 积分 commands.
+    # Master switch — award points for group messages, enable 修炼值 commands.
     points_enabled: bool = True
     # Comma-separated group names where points are active. "*" = all groups.
     points_groups: list[str] = field(default_factory=lambda: ["*"])
@@ -333,7 +333,7 @@ class BotConfig:
     # Max casts per member per local clock hour (resets every hour).
     fishing_hourly_attempts: int = 30
     # Max balance from fishing per member per day (0 = unlimited).
-    fishing_daily_cap: int = 120
+    fishing_daily_cap: int = 0
     fishing_cooldown_sec: int = 5
     fishing_max_batch: int = 10
     fishing_miss_chance: float = 0.15
@@ -570,7 +570,7 @@ def _validate_config(kwargs: dict) -> None:
             f"got {fishing_hourly_attempts}"
         )
 
-    fishing_daily_cap = kwargs.get("fishing_daily_cap", 120)
+    fishing_daily_cap = kwargs.get("fishing_daily_cap", 0)
     if not (0 <= fishing_daily_cap <= 10000):
         errors.append(
             "FISHING_DAILY_CAP must be between 0 and 10000, "
@@ -744,7 +744,7 @@ def load_config() -> BotConfig:
         "fishing_groups": [g.strip() for g in os.getenv("FISHING_GROUPS", "*").split(",") if g.strip()],
         "fishing_catalog_path": os.getenv("FISHING_CATALOG_PATH", "data/fishing.json").strip(),
         "fishing_hourly_attempts": _safe_int(os.getenv("FISHING_HOURLY_ATTEMPTS", "30"), 30, "FISHING_HOURLY_ATTEMPTS"),
-        "fishing_daily_cap": _safe_int(os.getenv("FISHING_DAILY_CAP", "120"), 120, "FISHING_DAILY_CAP"),
+        "fishing_daily_cap": _safe_int(os.getenv("FISHING_DAILY_CAP", "0"), 0, "FISHING_DAILY_CAP"),
         "fishing_cooldown_sec": _safe_int(os.getenv("FISHING_COOLDOWN_SEC", "5"), 5, "FISHING_COOLDOWN_SEC"),
         "fishing_max_batch": _safe_int(os.getenv("FISHING_MAX_BATCH", "10"), 10, "FISHING_MAX_BATCH"),
         "fishing_miss_chance": _safe_float(os.getenv("FISHING_MISS_CHANCE", "0.15"), 0.15, "FISHING_MISS_CHANCE"),

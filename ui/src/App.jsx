@@ -40,7 +40,7 @@ const TABS = [
   },
   { id: 'nicknames', label: '群友昵称', icon: Users },
   { id: 'todo-manager', label: '群聊待办', icon: CheckSquare },
-  { id: 'points', label: '群活跃积分', icon: Trophy },
+  { id: 'points', label: '修炼值', icon: Trophy },
   { id: 'logs', label: '运行日志', icon: Scroll },
 ]
 

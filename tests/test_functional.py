@@ -398,12 +398,12 @@ class TestPointsPanel:
     def test_sidebar_has_points_tab(self, page):
         page.goto(BASE_URL, timeout=10000)
         page.wait_for_timeout(1000)
-        assert "群活跃积分" in page.inner_text("body")
+        assert "修炼值" in page.inner_text("body")
 
     def test_points_panel_renders(self, page):
         page.goto(BASE_URL, timeout=10000)
         page.wait_for_timeout(1000)
-        tab = page.locator("button:has-text('群活跃积分')")
+        tab = page.locator("button:has-text('修炼值')")
         assert tab.count() > 0
         tab.first.click()
         page.wait_for_timeout(800)
@@ -417,7 +417,7 @@ class TestPointsPanel:
     def test_points_panel_switches_views(self, page):
         page.goto(BASE_URL, timeout=10000)
         page.wait_for_timeout(1000)
-        page.locator("button:has-text('群活跃积分')").first.click()
+        page.locator("button:has-text('修炼值')").first.click()
         page.wait_for_timeout(500)
         page.locator("button:has-text('装备商店')").first.click()
         page.wait_for_timeout(500)

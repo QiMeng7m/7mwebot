@@ -126,12 +126,12 @@ class AdminCommandHandler:
 
         daily: list[str] = []
         if points_on:
-            daily.append("  签到                       领取每日签到积分")
+            daily.append("  签到                       领取每日签到修炼值")
         if self._flag(config, "fun_enabled"):
             daily.append("  抽签 / 解签                每日一签，AI 帮你解签")
         if points_on and self._flag(config, "lottery_enabled"):
             daily.append(
-                f"  抽奖 / 奖池                {lottery_cost} 余额一次，"
+                f"  抽奖 / 奖池                {lottery_cost} 灵石一次，"
                 f"每日 {lottery_attempts} 次"
             )
         if daily:
@@ -141,12 +141,12 @@ class AdminCommandHandler:
 
         if points_on:
             lines.extend([
-                "【积分与排行】",
-                "  积分                       我的积分卡",
-                "  我的信息                   等级、累计积分、余额",
-                "  积分规则                   积分怎么算",
-                "  积分榜 / 月榜 / 今日榜      总榜 / 本赛季 / 今日榜",
-                "  查询 昵称                  查看某人的积分卡",
+                "【修炼值与排行】",
+                "  修炼值                       我的修炼值卡",
+                "  我的信息                   等级、累计修炼值、灵石",
+                "  修炼规则                   修炼值怎么算",
+                "  修炼榜 / 月榜 / 今日榜      总榜 / 本赛季 / 今日榜",
+                "  查询 昵称                  查看某人的修炼卡",
                 "",
             ])
 
@@ -162,10 +162,10 @@ class AdminCommandHandler:
         if self._flag(config, "duel_enabled"):
             gear.extend([
                 f"  @某人 切磋                  发起切磋（每日 {duel_attempts} 次，"
-                f"单次最多抢 {duel_cap} 分）",
+                f"单次最多抢 {duel_cap} 灵石）",
                 "  切磋记录 / 切磋战绩          最近记录 / 段位与生涯战绩",
                 "  战神榜                     生涯胜场排行",
-                f"  免战                       买免战券（{shield_price} 分 / "
+                f"  免战                       买免战券（{shield_price} 灵石 / "
                 f"{shield_hours} 小时，最多叠到 {shield_max_hours} 小时）",
             ])
         if points_on and gear:
@@ -174,10 +174,13 @@ class AdminCommandHandler:
             lines.append("")
 
         if points_on and self._flag(config, "fishing_enabled"):
+            fish_cap_note = (
+                f"，收益上限 {fish_daily}/天" if fish_daily else ""
+            )
             lines.extend([
                 "【钓鱼】",
                 f"  钓鱼 / 钓鱼 5              抛竿（每小时 {fish_hourly} 竿，"
-                f"一次最多 {fish_batch} 竿，收益上限 {fish_daily}/天）",
+                f"一次最多 {fish_batch} 竿{fish_cap_note}）",
                 "  鱼竿 / 买鱼竿 碳素竿        鱼竿商店 / 购买",
                 "  换鱼竿 碳素竿              切换鱼竿",
                 "  鱼饵 / 买鱼饵 神秘饵        鱼饵商店 / 购买",
@@ -199,7 +202,7 @@ class AdminCommandHandler:
                 "  Boss榜                     本周伤害排行",
             ])
         advanced.extend([
-            "  境界 / 突破                 境界进度 / 积分达标突破",
+            "  境界 / 突破                 境界进度 / 修炼值达标突破",
             "  成就 / 称号                 成就进度 / 已解锁称号",
             "  佩戴称号 名称               切换显示称号",
         ])
@@ -230,8 +233,8 @@ class AdminCommandHandler:
                 "  改名 wxid_xxx = 昵称       添加 / 修改昵称映射",
                 "  删除昵称 wxid_xxx          删除昵称映射",
                 "  刷新昵称                   重新加载昵称缓存",
-                "  积分调整 昵称 +10 原因      手动调整积分",
-                "  积分重算                   重算本群积分",
+                "  修炼值调整 昵称 +10 原因      手动调整修炼值",
+                "  修炼值重算                   重算本群修炼值",
             ])
 
         lines.append("━━━━━━━━━━━━━━")

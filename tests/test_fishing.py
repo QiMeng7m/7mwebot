@@ -496,7 +496,7 @@ class HandlerTests(unittest.TestCase):
 
     def test_fish_command_adds_balance_not_points(self):
         reply = self.handle("钓鱼")
-        self.assertIn("余额", reply)
+        self.assertIn("灵石", reply)
         self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 100)
         self.assertGreaterEqual(
             self.store.balance_of(self.chat, "wxid_a"), 100)
@@ -568,7 +568,7 @@ class HandlerTests(unittest.TestCase):
 
     def test_buy_rod_insufficient(self):
         reply = self.handle("买鱼竿 好竿")
-        self.assertIn("余额不足", reply)
+        self.assertIn("灵石不足", reply)
 
     def test_disabled_fishing_replies(self):
         self.config.fishing_enabled = False

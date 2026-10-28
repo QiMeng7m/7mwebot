@@ -208,7 +208,7 @@ export default function PointsPanel() {
         }),
       })
       if (data.ok) {
-        setMessage(`已调整，当前余额 ${data.balance}`)
+        setMessage(`已调整，当前灵石 ${data.balance}`)
         setDelta('')
         setReason('')
         await refreshAll()
@@ -236,9 +236,9 @@ export default function PointsPanel() {
         }),
       })
       if (data.ok) {
-        setMessage(`已购买 ${item.name}，余额 ${data.balance}`)
+        setMessage(`已购买 ${item.name}，灵石 ${data.balance}`)
       } else if (data.code === 'insufficient') {
-        setMessage(`余额不足：${item.name} 需要 ${item.price} 分`)
+        setMessage(`灵石不足：${item.name} 需要 ${item.price} 灵石`)
       } else if (data.code === 'owned') {
         setMessage(`已经拥有 ${item.name}`)
       } else {
@@ -287,9 +287,9 @@ export default function PointsPanel() {
           rod_id: rod.id,
         }),
       })
-      if (data.ok) setMessage(`已购买 ${rod.name}，余额 ${data.balance}`)
+      if (data.ok) setMessage(`已购买 ${rod.name}，灵石 ${data.balance}`)
       else if (data.code === 'insufficient') {
-        setMessage(`余额不足：${rod.name} 需要 ${rod.price} 余额`)
+        setMessage(`灵石不足：${rod.name} 需要 ${rod.price} 灵石`)
       } else if (data.code === 'owned') {
         setMessage(`已经拥有 ${rod.name}`)
       } else {
@@ -336,9 +336,9 @@ export default function PointsPanel() {
           quantity,
         }),
       })
-      if (data.ok) setMessage(`已购买 ${bait.name}×${quantity}，余额 ${data.balance}`)
+      if (data.ok) setMessage(`已购买 ${bait.name}×${quantity}，灵石 ${data.balance}`)
       else if (data.code === 'insufficient') {
-        setMessage(`余额不足：${bait.name} 需要 ${bait.price * quantity} 余额`)
+        setMessage(`灵石不足：${bait.name} 需要 ${bait.price * quantity} 灵石`)
       } else {
         setMessage(data.error || '购买失败')
       }
@@ -354,7 +354,7 @@ export default function PointsPanel() {
   }))
   const memberOptions = rows.map(r => ({
     value: r.sender_id,
-    label: `${r.sender_name}（${r.points}分）`,
+    label: `${r.sender_name}（${r.points}修炼值）`,
   }))
   const ownedMap = Object.fromEntries(owned.map(o => [o.item_id, o]))
   const fishInventory = fishing?.inventory || []
@@ -366,9 +366,9 @@ export default function PointsPanel() {
     <div className="space-y-6 max-w-6xl">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-text-main tracking-tight">群活跃积分</h2>
+          <h2 className="text-lg font-semibold text-text-main tracking-tight">修炼值</h2>
           <p className="text-xs text-text-muted mt-1">
-            发言赚积分、买装备、切磋抢分。累计积分决定排名，余额用于消费。
+            发言赚修炼值、买装备、切磋抢灵石。累计修炼值决定排名，灵石用于消费。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -426,7 +426,7 @@ export default function PointsPanel() {
                   {loading ? (
                     <p className="text-sm text-text-muted">加载中…</p>
                   ) : rows.length === 0 ? (
-                    <p className="text-sm text-text-muted">这个群还没有积分记录。</p>
+                    <p className="text-sm text-text-muted">这个群还没有修炼记录。</p>
                   ) : (
                     <div className="space-y-2">
                       {rows.map(row => (
@@ -447,8 +447,8 @@ export default function PointsPanel() {
                             </span>
                           </span>
                           <span className="text-right">
-                            <span className="block text-[14px] font-semibold text-text-main font-mono">{row.points}分</span>
-                            <span className="block text-[11px] text-text-muted font-mono">余额 {row.balance}</span>
+                            <span className="block text-[14px] font-semibold text-text-main font-mono">{row.points}修炼值</span>
+                            <span className="block text-[11px] text-text-muted font-mono">灵石 {row.balance}</span>
                           </span>
                         </button>
                       ))}
@@ -469,8 +469,8 @@ export default function PointsPanel() {
                       </button>
                     </div>
                     <div className="grid grid-cols-2 gap-3 mb-4">
-                      <Stat label="累计积分" value={detail.earned} />
-                      <Stat label="余额" value={detail.balance} />
+                      <Stat label="累计修炼值" value={detail.earned} />
+                      <Stat label="灵石" value={detail.balance} />
                       <Stat label="本月" value={detail.season_points} />
                       <Stat label="今日" value={detail.day_points} />
                       <Stat label="武力值" value={detail.power?.total ?? 0} />
@@ -479,7 +479,7 @@ export default function PointsPanel() {
                     {detail.next_level && (
                       <p className="text-xs text-text-muted mb-4">
                         距 Lv{detail.next_level.level} {detail.next_level.title} 还差{' '}
-                        {Math.max(0, detail.next_level.min_points - detail.earned)} 分
+                        {Math.max(0, detail.next_level.min_points - detail.earned)} 修炼值
                       </p>
                     )}
                     <div className="border-t border-border-main pt-4">
@@ -545,7 +545,7 @@ export default function PointsPanel() {
                     <p className="text-sm text-text-muted">还没有成员数据</p>
                   )}
                 </div>
-                <span className="text-xs font-mono text-text-muted">余额 {balance}</span>
+                <span className="text-xs font-mono text-text-muted">灵石 {balance}</span>
                 {power && (
                   <span className="text-xs font-mono text-text-muted">武力值 {power.total}</span>
                 )}
@@ -565,7 +565,7 @@ export default function PointsPanel() {
                             <div className="flex-1 min-w-0">
                               <p className="text-[14px] text-text-main truncate">{item.name}</p>
                               <p className="text-[11px] text-text-muted font-mono">
-                                武力 +{item.power} · {item.price} 分
+                                武力 +{item.power} · {item.price} 灵石
                                 {mine?.equipped ? ' · 已装备' : ''}
                               </p>
                             </div>
@@ -610,7 +610,7 @@ export default function PointsPanel() {
                     const outcome = d.shield_blocked
                       ? '被免战挡下'
                       : d.attacker_win
-                        ? `抢到 ${d.points_moved} 分`
+                        ? `抢到 ${d.points_moved} 灵石`
                         : '落败'
                     return (
                       <div key={i} className="flex items-center gap-3 text-[12px] font-mono px-2 py-1.5 rounded-lg hover:bg-bg-raised">
@@ -642,7 +642,7 @@ export default function PointsPanel() {
                 </div>
                 {fishing?.member && (
                   <>
-                    <span className="text-xs font-mono text-text-muted">余额 {fishing.member.balance}</span>
+                    <span className="text-xs font-mono text-text-muted">灵石 {fishing.member.balance}</span>
                     <span className="text-xs font-mono text-text-muted">
                       本小时 {fishing.member.attempts}/{fishing.member.attempts_limit} 次
                     </span>
@@ -682,7 +682,7 @@ export default function PointsPanel() {
                                 </p>
                                 <p className="text-[11px] text-text-muted font-mono">
                                   稀有 +{Math.round(rod.rare_bonus * 100)}% · 价值 +{Math.round(rod.value_bonus * 100)}%
-                                  {rod.price > 0 ? ` · ${rod.price} 余额` : ''}
+                                  {rod.price > 0 ? ` · ${rod.price} 灵石` : ''}
                                 </p>
                               </div>
                               {equipped ? (
@@ -725,7 +725,7 @@ export default function PointsPanel() {
                                   {bait.name} <span className="text-[11px] text-text-muted font-mono">持有 {stock?.quantity || 0}</span>
                                 </p>
                                 <p className="text-[11px] text-text-muted font-mono">
-                                  稀有 +{Math.round(bait.rare_bonus * 100)}% · 价值 +{Math.round(bait.value_bonus * 100)}% · {bait.price} 余额/个
+                                  稀有 +{Math.round(bait.rare_bonus * 100)}% · 价值 +{Math.round(bait.value_bonus * 100)}% · {bait.price} 灵石/个
                                 </p>
                               </div>
                               <button
@@ -744,7 +744,7 @@ export default function PointsPanel() {
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                     <Card>
-                      <SectionTitle hint="按钓鱼入账余额排名">钓鱼榜</SectionTitle>
+                      <SectionTitle hint="按钓鱼入账灵石排名">钓鱼榜</SectionTitle>
                       {(fishing.board?.value || []).length === 0 ? (
                         <p className="text-sm text-text-muted">本群还没有钓鱼记录。</p>
                       ) : (
@@ -754,7 +754,7 @@ export default function PointsPanel() {
                               <span className="text-text-muted w-6">{index + 1}</span>
                               <span className="text-text-main flex-1 truncate">{row.sender_name}</span>
                               <span className="text-text-muted">{row.catches} 条</span>
-                              <span className="text-brand-green w-20 text-right">{row.value} 余额</span>
+                              <span className="text-brand-green w-20 text-right">{row.value} 灵石</span>
                             </div>
                           ))}
                         </div>
@@ -803,11 +803,11 @@ export default function PointsPanel() {
           {view === 'overview' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <Card>
-                <SectionTitle hint="近 14 天全群获得的积分">趋势</SectionTitle>
+                <SectionTitle hint="近 14 天全群获得的修炼值">趋势</SectionTitle>
                 {overview ? (
                   <div className="flex items-end gap-1.5 h-40">
                     {overview.daily.map(d => (
-                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1" title={`${d.day}：${d.points}分`}>
+                      <div key={d.day} className="flex-1 flex flex-col items-center gap-1" title={`${d.day}：${d.points}修炼值`}>
                         <div className="w-full bg-brand-green/70 rounded-t" style={{
                           height: `${maxDaily ? Math.max(3, (d.points / maxDaily) * 120) : 3}px`,
                         }} />
@@ -819,13 +819,13 @@ export default function PointsPanel() {
                 {overview && (
                   <div className="flex gap-6 mt-4 text-xs font-mono text-text-muted">
                     <span>参与人数 {overview.participants}</span>
-                    <span>今日产生 {overview.day_total} 分</span>
+                    <span>今日产生 {overview.day_total} 修炼值</span>
                   </div>
                 )}
               </Card>
 
               <Card>
-                <SectionTitle hint="按累计积分计算">等级分布</SectionTitle>
+                <SectionTitle hint="按累计修炼值计算">等级分布</SectionTitle>
                 {Object.keys(distribution).length === 0 ? (
                   <p className="text-sm text-text-muted">暂无数据。</p>
                 ) : (
@@ -850,7 +850,7 @@ export default function PointsPanel() {
       </AnimatePresence>
 
       <p className="text-[11px] text-text-muted font-mono">
-        群内指令：积分 · 我的信息 · 查询 名字 · 积分榜 · 月榜 · 商店 · 购买 · 武力值 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
+        群内指令：修炼值 · 我的信息 · 查询 名字 · 修炼榜 · 月榜 · 商店 · 购买 · 武力值 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
       </p>
     </div>
   )
