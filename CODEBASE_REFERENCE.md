@@ -2032,7 +2032,7 @@ MessageRouter.handle(msg)
 | `切磋战绩` | 生涯胜/负/胜率/抢分 + 段位（青铜~战神）与升级差 |
 | `战神榜` | 本群生涯胜场排行 |
 | `强化 装备名` / `精炼 装备名` | 花费余额强化已拥有装备，最高 +15（每级 +2 武力） |
-| `境界` / `突破` | 查看境界进度 / 满级后花余额突破（每重 +10 武力） |
+| `境界` / `突破` | 查看境界进度 / 花余额突破（无等级限制，每重 +10 武力） |
 | `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟 1 次，按战力造成伤害） |
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
 | `成就` / `称号` / `佩戴称号 名称` | 查看成就进度、已解锁称号、切换显示称号 |
@@ -2048,7 +2048,7 @@ MessageRouter.handle(msg)
 武力值    = 10 + 等级×5 + Σ(装备基础武力 + 强化等级×2) + 境界×10
 Boss 伤害 = round(战力 × (0.8 + 0.4·roll))，10% 概率 ×2 暴击
 Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
-突破费用  = 300 × (当前境界 + 1)，需达到最高等级
+突破费用  = 300 × (当前境界 + 1)，无等级门槛
 ```
 
 #### 关键约定
@@ -2221,7 +2221,7 @@ Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠
 - **强化**：`INSERT OR IGNORE point_events(category='spend', reason='enhance')`，
   条件扣款；`equipment_owned.enhance_level` +1，最高 15。
 - **境界**：`category='spend', reason='breakthrough'`；`member_realms.realm` +1，
-  最高 9（渡劫）。需要达到最高等级（默认 Lv12）。
+  最高 9（渡劫）。无等级门槛，余额足够即可突破。
 - **Boss 奖励**：`category='boss', reason='boss_reward'`，只加余额，
   不计入 `earned_of()` / 等级 / 榜单；按本周伤害占比分配。
 - **成就奖励**：`category='achievement', reason='achievement'`，一次性余额奖励；

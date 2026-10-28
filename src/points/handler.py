@@ -1520,17 +1520,11 @@ class PointHandler:
             f" · 当前战力 {power.total}",
         ]
         if info["next"] is not None:
-            max_level = self._levels.load()[-1]
-            earned = self._store.earned_of(chat_id, sender_id)
             lines.append(
                 f"下一境界：{info['next_title']}"
                 f"（武力 +{realm_info(info['next'])['power_bonus']}）"
             )
-            lines.append(
-                f"突破消耗 {info['next_cost']} 余额 · "
-                f"需要 Lv{max_level['level']} {max_level['title']}"
-                f"（当前累计 {earned}/{max_level['min_points']}）"
-            )
+            lines.append(f"突破消耗 {info['next_cost']} 余额")
             lines.append("发送「突破」即可尝试。")
         else:
             lines.append("已达最高境界：渡劫。")
@@ -1541,14 +1535,6 @@ class PointHandler:
         realm = self._store.realm_of(chat_id, sender_id)
         if realm >= REALM_MAX:
             return "你已经达到最高境界：渡劫。"
-        max_level = self._levels.load()[-1]
-        earned = self._store.earned_of(chat_id, sender_id)
-        if earned < int(max_level["min_points"]):
-            return (
-                f"境界突破需要先达到 Lv{max_level['level']} "
-                f"{max_level['title']}（累计 {max_level['min_points']} 分），"
-                f"你当前 {earned} 分。"
-            )
         cost = realm_cost(realm)
         balance = self._store.balance_of(chat_id, sender_id)
         if balance < cost:
@@ -1796,7 +1782,7 @@ class PointHandler:
             "· 钓鱼只增加余额，不影响累计积分、等级和榜单\n"
             "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成\n"
             "· 装备可用「强化 名称」提升，最高 +15（每级 +2 武力）\n"
-            "· 满级后可花余额「突破」境界，每重境界永久 +10 武力\n"
+            "· 可花余额「突破」境界（无等级限制），每重境界永久 +10 武力\n"
             "· 群 Boss 每周刷新，伤害按战力结算，击杀奖励按伤害分配"
         )
 

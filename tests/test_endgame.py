@@ -203,11 +203,13 @@ class RealmStoreTests(EndgameTestBase):
         self.assertEqual(code, "duplicate")
         self.assertEqual(realm, 1)
 
-    def test_breakthrough_command_requires_max_level(self):
-        self.add_member(earned=100)
+    def test_breakthrough_has_no_level_requirement(self):
+        # 350 points is only Lv2 常客 — far from the Lv12 cap.
+        self.add_member(earned=350)
         reply = self.run_cmd("突破")
-        self.assertIn("境界突破需要先达到", reply)
-        self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 0)
+        self.assertIn("突破成功", reply)
+        self.assertIn("炼气", reply)
+        self.assertEqual(self.store.realm_of(self.chat, "wxid_a"), 1)
 
     def test_breakthrough_command_succeeds_at_max_level(self):
         self.add_member(earned=120_000)
