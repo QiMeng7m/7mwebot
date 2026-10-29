@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Optional
 
+from .admin import is_help_command
 from .proactive.gate import ProactiveGate
 from .proactive.sticky import StickyMentionTracker
 from .memory.consolidator import MemoryConsolidator
@@ -422,7 +423,7 @@ class MessageRouter:
             if (
                 reply is None
                 and self._admin is not None
-                and clean_content.strip() in ("帮助", "help", "命令")
+                and is_help_command(clean_content)
             ):
                 reply = self._admin.handle(
                     clean_content, msg["sender_name"],
@@ -466,8 +467,8 @@ class MessageRouter:
             # Only fresh messages are accepted so replayed history does
             # not re-run commands on startup.
             if msg_age_sec <= AT_MENTION_MAX_AGE_SEC and clean_content.strip():
-                if self._admin is not None and clean_content.strip() in (
-                    "帮助", "help", "命令",
+                if self._admin is not None and is_help_command(
+                    clean_content,
                 ):
                     reply = self._admin.handle(
                         clean_content, msg["sender_name"],

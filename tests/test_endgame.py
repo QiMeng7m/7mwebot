@@ -463,9 +463,9 @@ class HelpUpgradeTests(unittest.TestCase):
             boss_cooldown_sec=1800,
         )
         reply = AdminCommandHandler(MagicMock()).handle(
-            "帮助", "张三", config=config, is_admin=False)
+            "帮助 挑战", "张三", config=config, is_admin=False)
         self.assertIn("【进阶挑战】", reply)
-        self.assertIn("强化 装备名", reply)
+        self.assertIn("强化", reply)
         self.assertIn("挑战Boss", reply)
         self.assertIn("境界 / 突破", reply)
         self.assertIn("成就 / 称号", reply)

@@ -92,6 +92,13 @@ class BareCommandRoutingTests(unittest.TestCase):
         reply = self.router.handle(self._message("help"))
         self.assertIn("游玩清单", reply)
 
+    def test_bare_help_section(self):
+        reply = self.router.handle(self._message("帮助 钓鱼"))
+
+        self.assertIsNotNone(reply)
+        self.assertIn("【钓鱼】用法", reply)
+        self.assertIn("每小时", reply)
+
     def test_bare_todo_add_and_view(self):
         added = self.router.handle(self._message("记一下 周五聚餐"))
         self.assertIsNotNone(added)

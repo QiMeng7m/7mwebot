@@ -667,14 +667,21 @@ todo_delete_keywords: list[str] = [
 | 函数 | 描述 | 参数 | 返回值 |
 |---|---|---|---|
 | `__init__(nickname_service)` | 初始化管理员命令处理器 | `nickname_service: NicknameService` | `None` |
-| `handle(content, requester_name, config=None, is_admin=False)` | 解析并执行管理命令；`帮助/help/命令` 返回游玩清单 | `content: str, requester_name: str, config=None, is_admin: bool = False` | `str \| None` |
+| `handle(content, requester_name, config=None, is_admin=False)` | 解析并执行管理命令；`帮助/help/命令` 返回游玩清单，`帮助 <分类>` 返回该分类详情 | `content: str, requester_name: str, config=None, is_admin: bool = False` | `str \| None` |
 | `_flag(config, name)` | 读取功能开关；`config=None` 视为启用 | `config, name: str` | `bool` |
 | `_cfg_int(config, name, default)` | 读取整数配置，非法值回退默认 | `config, name: str, default: int` | `int` |
 | `_hours(seconds)` | 秒转小时（去掉多余小数） | `seconds: int` | `str` |
-| `_help_text(requester_name, config, is_admin)` | 按功能开关和管理员身份拼装游玩清单 | `requester_name: str, config, is_admin: bool` | `str` |
+| `_help_text(requester_name, config, is_admin, section="")` | 生成游玩清单；`section` 非空时返回该分类详情 | `requester_name: str, config, is_admin: bool, section: str = ""` | `str` |
+| `_sections(config, is_admin)` | 按功能开关拼装启用的分类（标题、查找别名、菜单建议别名、条目） | `config, is_admin: bool` | `list[dict]` |
+| `_menu_text(requester_name, sections)` | 紧凑总览：每个分类一行命令 | `requester_name: str, sections: list[dict]` | `str` |
+| `_section_text(requester_name, entry)` | 单个分类的详细命令与说明 | `requester_name: str, entry: dict` | `str` |
 | `_cmd_rename(content, requester_name)` | 处理"改名"命令 | `content: str, requester_name: str` | `str \| None` |
 | `_cmd_delete_nickname(content, requester_name)` | 处理"删除昵称"命令 | `content: str, requester_name: str` | `str \| None` |
 
+> 模块级函数 `is_help_command(content) -> bool`：判断是否为 `帮助` / `help` /
+> `命令`，允许后跟一个分类名（如 `帮助 钓鱼`），最多两个词；router 用它
+> 决定是否把裸文本交给管理员处理器。
+>
 > `_help_text` 按 `points_enabled` / `fun_enabled` / `equipment_enabled` /
 > `duel_enabled` / `fishing_enabled` / `todo_enabled` / `summarize_enabled`
 > 隐藏对应分节；切磋、钓鱼、免战券的数值从 config 实时读取。
@@ -1183,7 +1190,9 @@ AbstractSummarizer (base.py)
          │      │     └─ AbstractSummarizer.chat()
          │      │
          │      ├─ 帮助/管理命令 → AdminCommandHandler.handle(config, is_admin)
-         │      │     └─ 帮助 → _help_text()（按功能开关/管理员身份生成游玩清单）
+         │      │     └─ is_help_command() → _help_text()
+         │      │           ├─ _menu_text()（每分类一行的紧凑总览）
+         │      │           └─ _section_text()（帮助 <分类> 的详情）
          │      ├─ todo command → _handle_todo_command() → TodoHandler.handle()
          │      ├─ feishu export → FeishuExportService.export_recent_chat()
          │      └─ fun (抽签/解签) → _handle_fun_command()
@@ -1193,7 +1202,7 @@ AbstractSummarizer (base.py)
          └─→ [Proactive 路径 / 裸关键词]
                 │
                 ├─ 帮助/管理命令/待办（裸文本，仅 5 分钟内新消息）
-                │     ├─ 帮助 → AdminCommandHandler.handle(config, is_admin)
+                │     ├─ is_help_command() → AdminCommandHandler.handle(config, is_admin)
                 │     ├─ 管理命令（仅管理员） → AdminCommandHandler.handle()
                 │     └─ TodoHandler.looks_like_command() → _handle_todo_command()
                 │

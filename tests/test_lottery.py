@@ -415,7 +415,7 @@ class HelpLotteryTests(unittest.TestCase):
             boss_cooldown_sec=1800, boss_max_attempts=3,
         )
         reply = AdminCommandHandler(MagicMock()).handle(
-            "帮助", "张三", config=config, is_admin=False)
+            "帮助 每日", "张三", config=config, is_admin=False)
         self.assertIn("抽奖 / 奖池", reply)
         self.assertIn("每日首抽免费", reply)
         self.assertIn("100 灵石/次", reply)
