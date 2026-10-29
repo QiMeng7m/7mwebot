@@ -468,40 +468,18 @@ class AdminTests(HandlerTestBase):
         self.add_member("wxid_a", "张三", earned=10)
         self.add_member("wxid_admin", "管理员", earned=0)
 
-    def test_admin_can_adjust(self):
-        reply = self.run_cmd(
-            "修炼值调整 张三 +20 奖励", sender_id="wxid_admin", name="管理员",
-        )
-        self.assertIn("已调整", reply)
-        self.assertIn("灵石不变", reply)
-        self.assertEqual(
-            self.store.earned_of(self.chat, "wxid_a"), 30,
-        )
-        self.assertEqual(
-            self.store.balance_of(self.chat, "wxid_a"), 10,
-        )
-
-    def test_admin_can_adjust_balance_only(self):
-        reply = self.run_cmd(
-            "灵石调整 张三 +100 补偿", sender_id="wxid_admin", name="管理员",
-        )
-        self.assertIn("已调整", reply)
-        self.assertIn("修炼值不变", reply)
+    def test_adjust_commands_are_removed(self):
+        """调整已移到后台控制台，群里不再响应这些指令。"""
+        for text in ("修炼值调整 张三 +20 奖励",
+                     "灵石调整 张三 +100 补偿",
+                     "积分调整 张三 +20"):
+            with self.subTest(text=text):
+                self.assertIsNone(self.run_cmd(
+                    text, sender_id="wxid_admin", name="管理员",
+                ))
         self.assertEqual(
             self.store.earned_of(self.chat, "wxid_a"), 10,
         )
-        self.assertEqual(
-            self.store.balance_of(self.chat, "wxid_a"), 110,
-        )
-
-    def test_non_admin_is_rejected(self):
-        reply = self.run_cmd("修炼值调整 张三 +20")
-        self.assertIn("仅管理员", reply)
-        self.assertEqual(
-            self.store.earned_of(self.chat, "wxid_a"), 10,
-        )
-        reply = self.run_cmd("灵石调整 张三 +20")
-        self.assertIn("仅管理员", reply)
         self.assertEqual(
             self.store.balance_of(self.chat, "wxid_a"), 10,
         )

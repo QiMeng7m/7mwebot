@@ -368,8 +368,8 @@ class BossServiceTests(EndgameTestBase):
         self.assertEqual(state["next_regen_sec"], 0)
 
     def test_kill_distributes_rewards(self):
-        self.config.boss_min_hp = 10
-        self.config.boss_max_hp = 10
+        self.config.boss_min_hp = 5
+        self.config.boss_max_hp = 5
         result = self.boss.attack(
             self.msg("Boss"), now_ts=NOW, rng=_Rng(0.0, 0.99))
         self.assertTrue(result["killed"])

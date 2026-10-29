@@ -16,6 +16,7 @@ import logging
 import random
 import uuid
 
+from .techniques import effects_for
 from .util import is_group_enabled, local_day
 
 logger = logging.getLogger(__name__)
@@ -68,24 +69,33 @@ def _spread(budget: float, rows: list[tuple[dict, float]]) -> list[dict]:
     return result
 
 
-def build_pool(catalog, fishing_catalog, config) -> list[dict]:
-    """Build the weighted reward pool from the live catalogs."""
+def build_pool(catalog, fishing_catalog, config,
+               luck: float = 0.0) -> list[dict]:
+    """Build the weighted reward pool from the live catalogs.
+
+    ``luck`` (0..1) slightly boosts the weight of high-value rewards,
+    used by the 气运诀 technique.
+    """
     pool: list[dict] = []
 
     pool += _spread(CATEGORY_WEIGHTS["balance"], [
         ({"kind": "balance", "emoji": "💰",
-          "name": f"灵石 +{amount}", "amount": amount}, weight)
+          "name": f"灵石 +{amount}", "amount": amount,
+          "tier": amount / 5000.0}, weight)
         for amount, weight in BALANCE_TIERS
     ])
 
     pool += _spread(CATEGORY_WEIGHTS["points"], [
         ({"kind": "points", "emoji": "⭐",
-          "name": f"修炼值 +{amount}", "amount": amount}, weight)
+          "name": f"修炼值 +{amount}", "amount": amount,
+          "tier": amount / 500.0}, weight)
         for amount, weight in POINTS_TIERS
     ])
 
     equipment_rows = []
     items = catalog.items() if catalog is not None else []
+    max_price = max(
+        (int(i.get("price", 0) or 0) for i in items), default=1) or 1
     for item in items:
         price = max(1, int(item.get("price", 0) or 0))
         equipment_rows.append((
@@ -94,6 +104,7 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
              "name": f"装备 {item['name']}",
              "item_id": item["id"], "slot": item.get("slot", ""),
              "power": int(item.get("power", 0) or 0), "price": price,
+             "tier": price / max_price,
              "same_slot_ids": [
                  i["id"] for i in items
                  if i.get("slot") == item.get("slot")
@@ -104,6 +115,8 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
 
     rod_rows = []
     rods = fishing_catalog.rods() if fishing_catalog is not None else []
+    max_rod = max(
+        (int(r.get("price", 0) or 0) for r in rods), default=1) or 1
     for rod in rods:
         if rod.get("default"):
             continue
@@ -111,13 +124,17 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
         rod_rows.append((
             {"kind": "rod", "emoji": "🎣",
              "name": f"鱼竿 {rod['name']}",
-             "rod_id": rod["id"], "price": price},
+             "rod_id": rod["id"], "price": price,
+             "tier": price / max_rod},
             1.0 / price,
         ))
     pool += _spread(CATEGORY_WEIGHTS["rod"], rod_rows)
 
     bait_rows = []
     baits = fishing_catalog.baits() if fishing_catalog is not None else []
+    max_bait = max(
+        (int(b.get("price", 0) or 0) * max(q for q, _ in BAIT_QUANTITIES)
+         for b in baits), default=1) or 1
     for bait in baits:
         price = max(1, int(bait.get("price", 0) or 0))
         for quantity, quantity_weight in BAIT_QUANTITIES:
@@ -125,7 +142,8 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
                 {"kind": "bait", "emoji": "🪱",
                  "name": f"鱼饵 {bait['name']}×{quantity}",
                  "bait_id": bait["id"], "quantity": quantity,
-                 "price": price},
+                 "price": price,
+                 "tier": price * quantity / max_bait},
                 quantity_weight / price,
             ))
     pool += _spread(CATEGORY_WEIGHTS["bait"], bait_rows)
@@ -137,10 +155,18 @@ def build_pool(catalog, fishing_catalog, config) -> list[dict]:
         shield_rows.append((
             {"kind": "shield", "emoji": "🔰",
              "name": f"免战券 {hours:g} 小时",
-             "duration_sec": duration, "max_sec": shield_max},
+             "duration_sec": duration, "max_sec": shield_max,
+             "tier": duration / 86400.0},
             weight,
         ))
     pool += _spread(CATEGORY_WEIGHTS["shield"], shield_rows)
+
+    luck = max(0.0, float(luck or 0))
+    if luck > 0:
+        for entry in pool:
+            tier = max(0.0, min(1.0, float(entry.get("tier", 0))))
+            entry["weight"] = float(entry.get("weight", 0)) * \
+                (1.0 + luck * tier)
     return pool
 
 
@@ -184,9 +210,9 @@ class LotteryService:
         return max(1, int(getattr(
             self._config, "lottery_daily_attempts", 3)))
 
-    def pool(self) -> list[dict]:
+    def pool(self, luck: float = 0.0) -> list[dict]:
         return build_pool(
-            self._catalog, self._fishing_catalog, self._config)
+            self._catalog, self._fishing_catalog, self._config, luck=luck)
 
     def category_chances(self) -> dict[str, float]:
         total = sum(CATEGORY_WEIGHTS.values())
@@ -229,7 +255,9 @@ class LotteryService:
             return {"ok": False, "code": "disabled",
                     "reply": "每日抽奖未开启。"}
 
-        pool = self.pool()
+        luck = float(effects_for(
+            self._store, chat_id, sender_id).get("lottery_luck", 0) or 0)
+        pool = self.pool(luck=luck)
         reward = pick_reward(pool, _roll(rng))
         if reward is None:
             return {"ok": False, "code": "empty",

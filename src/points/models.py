@@ -61,7 +61,11 @@ class Command:
 
 @dataclass
 class PowerBreakdown:
-    """Effective combat power and where it comes from."""
+    """Effective combat stats and where they come from.
+
+    ``total`` stays the sum of attack + defense so existing rankings and
+    displays keep working; duels and boss damage use the split stats.
+    """
 
     total: int
     base: int
@@ -70,6 +74,17 @@ class PowerBreakdown:
     equipment: int
     realm: int = 0
     realm_bonus: int = 0
+    attack: int = 0
+    defense: int = 0
+    base_attack: int = 0
+    base_defense: int = 0
+    equipment_attack: int = 0
+    equipment_defense: int = 0
+    realm_attack: int = 0
+    realm_defense: int = 0
+    technique_attack: int = 0
+    technique_defense: int = 0
+    technique_effects: dict = field(default_factory=dict)
     items: list[dict] = field(default_factory=list)
 
 

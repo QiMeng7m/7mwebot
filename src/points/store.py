@@ -1746,6 +1746,288 @@ class PointStore:
         now = int(time.time()) if now_ts is None else int(now_ts)
         return self._streak_days(chat_id, sender_id, now)
 
+    # ── 功法 / 打坐 ──────────────────────────────────────────────
+
+    def techniques_of(self, chat_id: str, sender_id: str) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT technique_id, layer, progress, failures,
+                          learned_at, updated_at
+                   FROM technique_progress
+                   WHERE chat_id = ? AND sender_id = ?
+                   ORDER BY learned_at ASC, technique_id ASC""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def technique_state(self, chat_id: str,
+                        sender_id: str) -> dict:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT current_technique, cooldown_until
+                   FROM technique_state
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+        if not row:
+            return {"current_technique": "", "cooldown_until": 0}
+        return {
+            "current_technique": str(row[0] or ""),
+            "cooldown_until": int(row[1] or 0),
+        }
+
+    def set_current_technique(self, chat_id: str, sender_id: str,
+                              technique_id: str,
+                              now_ts: int | None = None) -> bool:
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            owned = self.conn.execute(
+                """SELECT 1 FROM technique_progress
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND technique_id = ?""",
+                (str(chat_id), str(sender_id), str(technique_id)),
+            ).fetchone()
+            if not owned:
+                return False
+            self.conn.execute(
+                """INSERT INTO technique_state
+                   (chat_id, sender_id, current_technique,
+                    cooldown_until, updated_at)
+                   VALUES (?, ?, ?, 0, ?)
+                   ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                     current_technique = excluded.current_technique,
+                     updated_at = excluded.updated_at""",
+                (str(chat_id), str(sender_id), str(technique_id), now),
+            )
+        return True
+
+    def learn_technique(self, chat_id: str, sender_id: str,
+                        sender_name: str, technique_id: str, cost: int,
+                        message_id: str,
+                        now_ts: int | None = None,
+                        ) -> tuple[bool, str, int]:
+        """Spend 灵石 to learn a technique. Returns (ok, code, balance)."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        cost = max(0, int(cost))
+        with self._lock, self.conn:
+            owned = self.conn.execute(
+                """SELECT 1 FROM technique_progress
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND technique_id = ?""",
+                (str(chat_id), str(sender_id), str(technique_id)),
+            ).fetchone()
+            if owned:
+                return False, "owned", self._balance_locked(
+                    chat_id, sender_id)
+
+            balance = self._balance_locked(chat_id, sender_id)
+            if balance < cost:
+                return False, "insufficient", balance
+
+            if cost > 0:
+                cur = self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       SELECT ?, ?, ?, ?, 'learn_technique', 'spend', ?, ?, ?, ?
+                       WHERE (SELECT COALESCE(SUM(points), 0)
+                              FROM point_events
+                              WHERE chat_id = ? AND sender_id = ?) >= ?""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     str(message_id), -cost, local_day(now),
+                     local_season(now), now, str(chat_id), str(sender_id),
+                     cost),
+                )
+                if cur.rowcount == 0:
+                    return False, "duplicate", self._balance_locked(
+                        chat_id, sender_id)
+
+            self.conn.execute(
+                """INSERT INTO technique_progress
+                   (chat_id, sender_id, technique_id, layer, progress,
+                    failures, learned_at, updated_at)
+                   VALUES (?, ?, ?, 1, 0, 0, ?, ?)""",
+                (str(chat_id), str(sender_id), str(technique_id), now, now),
+            )
+            state = self.conn.execute(
+                """SELECT current_technique FROM technique_state
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+            if not state or not state[0]:
+                self.conn.execute(
+                    """INSERT INTO technique_state
+                       (chat_id, sender_id, current_technique,
+                        cooldown_until, updated_at)
+                       VALUES (?, ?, ?, 0, ?)
+                       ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                         current_technique = excluded.current_technique,
+                         updated_at = excluded.updated_at""",
+                    (str(chat_id), str(sender_id), str(technique_id), now),
+                )
+            balance = self._balance_locked(chat_id, sender_id)
+        return True, "ok", balance
+
+    def meditate(self, chat_id: str, sender_id: str, sender_name: str,
+                 minutes: int, points: int, progress_gain: int,
+                 max_progress: int, message_id: str,
+                 now_ts: int | None = None) -> dict:
+        """Complete one meditation session.
+
+        Awards earned-only 修炼值 (paired with an ``earned_offset`` row so
+        灵石 does not change), adds progress to the current technique,
+        and starts a cooldown equal to the session length.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        minutes = max(1, int(minutes))
+        points = max(0, int(points))
+        progress_gain = max(0, int(progress_gain))
+        max_progress = max(0, int(max_progress))
+        event_id = f"meditation:{message_id}"
+        with self._lock, self.conn:
+            state = self.conn.execute(
+                """SELECT current_technique, cooldown_until
+                   FROM technique_state
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchone()
+            current = str(state[0] or "") if state else ""
+            cooldown_until = int(state[1] or 0) if state else 0
+            if cooldown_until > now:
+                return {"ok": False, "code": "cooldown",
+                        "cooldown_until": cooldown_until}
+
+            replay = self.conn.execute(
+                """SELECT 1 FROM point_events
+                   WHERE message_id = ? AND reason = 'meditation'""",
+                (event_id,),
+            ).fetchone()
+            if replay:
+                return {"ok": False, "code": "duplicate"}
+
+            if points > 0:
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       VALUES (?, ?, ?, ?, 'meditation', 'adjust', ?, ?, ?, ?)""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     event_id, points, local_day(now), local_season(now),
+                     now),
+                )
+                self.conn.execute(
+                    """INSERT OR IGNORE INTO point_events
+                       (chat_id, sender_id, sender_name, message_id, reason,
+                        category, points, day, season, created_at)
+                       VALUES (?, ?, ?, ?, 'meditation_offset',
+                               'earned_offset', ?, ?, ?, ?)""",
+                    (str(chat_id), str(sender_id), str(sender_name or ""),
+                     event_id, -points, local_day(now), local_season(now),
+                     now),
+                )
+
+            actual_gain = 0
+            layer = 0
+            progress_now = 0
+            if current:
+                row = self.conn.execute(
+                    """SELECT layer, progress FROM technique_progress
+                       WHERE chat_id = ? AND sender_id = ?
+                         AND technique_id = ?""",
+                    (str(chat_id), str(sender_id), current),
+                ).fetchone()
+                if row:
+                    layer = int(row[0])
+                    progress_now = int(row[1])
+                    if progress_gain > 0:
+                        cap = max_progress if max_progress > 0 else progress_now
+                        new_progress = min(
+                            cap, progress_now + progress_gain)
+                        actual_gain = new_progress - progress_now
+                        self.conn.execute(
+                            """UPDATE technique_progress
+                               SET progress = ?, updated_at = ?
+                               WHERE chat_id = ? AND sender_id = ?
+                                 AND technique_id = ?""",
+                            (new_progress, now, str(chat_id),
+                             str(sender_id), current),
+                        )
+                        progress_now = new_progress
+
+            self.conn.execute(
+                """INSERT INTO technique_state
+                   (chat_id, sender_id, current_technique,
+                    cooldown_until, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id) DO UPDATE SET
+                     cooldown_until = excluded.cooldown_until,
+                     updated_at = excluded.updated_at""",
+                (str(chat_id), str(sender_id), current,
+                 now + minutes * 60, now),
+            )
+            balance = self._balance_locked(chat_id, sender_id)
+        return {
+            "ok": True, "code": "ok", "points": points,
+            "progress_gain": actual_gain, "technique_id": current,
+            "layer": layer, "progress": progress_now,
+            "max_progress": max_progress, "balance": balance,
+            "cooldown_until": now + minutes * 60,
+        }
+
+    def attempt_technique_breakthrough(
+            self, chat_id: str, sender_id: str, technique_id: str,
+            expected_layer: int, success: bool, required: int,
+            max_layer: int, now_ts: int | None = None) -> dict:
+        """Apply a breakthrough roll to a technique."""
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                """SELECT layer, progress, failures
+                   FROM technique_progress
+                   WHERE chat_id = ? AND sender_id = ?
+                     AND technique_id = ?""",
+                (str(chat_id), str(sender_id), str(technique_id)),
+            ).fetchone()
+            if not row:
+                return {"ok": False, "code": "not_learned"}
+            layer, progress, failures = int(row[0]), int(row[1]), int(row[2])
+            if layer != int(expected_layer):
+                return {"ok": False, "code": "stale"}
+            if layer >= int(max_layer):
+                return {"ok": False, "code": "max", "layer": layer}
+            if progress < int(required):
+                return {"ok": False, "code": "not_ready",
+                        "layer": layer, "progress": progress,
+                        "required": int(required)}
+
+            dropped = False
+            if success:
+                layer += 1
+                progress = 0
+                failures = 0
+                code = "success"
+            else:
+                progress //= 2
+                failures += 1
+                code = "fail"
+                if failures >= 5:
+                    layer = max(1, layer - 1)
+                    progress = 0
+                    failures = 0
+                    dropped = True
+                    code = "drop"
+
+            self.conn.execute(
+                """UPDATE technique_progress
+                   SET layer = ?, progress = ?, failures = ?, updated_at = ?
+                   WHERE chat_id = ? AND sender_id = ? AND technique_id = ?""",
+                (layer, progress, failures, now, str(chat_id),
+                 str(sender_id), str(technique_id)),
+            )
+        return {"ok": True, "code": code, "layer": layer,
+                "progress": progress, "failures": failures,
+                "dropped": dropped}
+
     # ── Daily lottery ─────────────────────────────────────────────
 
     def lottery_draws_today(self, chat_id: str, sender_id: str,

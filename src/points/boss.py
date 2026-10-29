@@ -228,8 +228,12 @@ class BossService:
 
         power = self._duels.power(chat_id, sender_id)
         damage, crit = roll_damage(
-            power.total, _roll(rng), _roll(rng),
+            power.attack, _roll(rng), _roll(rng),
         )
+        boss_bonus = float(
+            power.technique_effects.get("boss_damage", 0) or 0)
+        if boss_bonus > 0:
+            damage = max(1, int(round(damage * (1 + boss_bonus))))
         inserted, hp_left, damage = self._store.boss_attack(
             chat_id, season, message_id or f"boss:{chat_id}:{now}",
             sender_id, sender_name, damage, crit, day, now,
@@ -263,7 +267,7 @@ class BossService:
             "hp_total": int(state["hp_total"]),
             "hp_left": hp_left,
             "killed": killed,
-            "power": power.total,
+            "power": power.attack,
             "attempts_used": used + 1,
             "attempts_left": attempts,
             "attempts_max": cap,

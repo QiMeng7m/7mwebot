@@ -158,7 +158,7 @@ class AdminCommandHandler:
                 "  装备 铁剑 / 卸下 铁剑       穿戴 / 卸下",
                 "  出售 铁剑 / 出售 碳素竿      按原价 50% 回收装备或鱼竿",
                 "  背包                       我的装备",
-                "  战力 / 战力榜              战力值与战力排行",
+                "  战力 / 战力榜              攻击、防御与战力排行",
             ])
         if self._flag(config, "duel_enabled"):
             gear.extend([
@@ -212,6 +212,17 @@ class AdminCommandHandler:
             lines.extend(advanced)
             lines.append("")
 
+        if points_on:
+            lines.extend([
+                "【功法与打坐】",
+                "  打坐 / 打坐 5 / 打坐5      打坐 10 分钟（可指定 1~60 分钟）",
+                "  功法                       查看功法、层数与效果",
+                "  学习功法 吐纳诀            花费 500 灵石学习功法",
+                "  切换功法 吐纳诀            选择打坐积累进度的功法",
+                "  突破功法                   进度满后突破（失败减半，5 次掉层）",
+                "",
+            ])
+
         if self._flag(config, "todo_enabled"):
             lines.extend([
                 "【待办】",
@@ -234,8 +245,6 @@ class AdminCommandHandler:
                 "  改名 wxid_xxx = 昵称       添加 / 修改昵称映射",
                 "  删除昵称 wxid_xxx          删除昵称映射",
                 "  刷新昵称                   重新加载昵称缓存",
-                "  修炼值调整 昵称 +10 原因      只调整修炼值（灵石不变）",
-                "  灵石调整 昵称 +100 原因      只调整灵石（修炼值不变）",
                 "  修炼值重算                   重算本群修炼值",
             ])
 

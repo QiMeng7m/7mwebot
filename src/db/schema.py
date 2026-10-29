@@ -290,6 +290,31 @@ CREATE TABLE IF NOT EXISTS member_realms (
     PRIMARY KEY (chat_id, sender_id)
 );
 
+-- 功法 progress per member/technique.  ``layer`` starts at 1, ``progress``
+-- accumulates through 打坐, ``failures`` counts consecutive failed
+-- breakthroughs at the current layer.
+CREATE TABLE IF NOT EXISTS technique_progress (
+    chat_id      TEXT    NOT NULL,
+    sender_id    TEXT    NOT NULL,
+    technique_id TEXT    NOT NULL,
+    layer        INTEGER NOT NULL DEFAULT 1,
+    progress     INTEGER NOT NULL DEFAULT 0,
+    failures     INTEGER NOT NULL DEFAULT 0,
+    learned_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, technique_id)
+);
+
+-- Current technique used for meditation, plus the meditation cooldown.
+CREATE TABLE IF NOT EXISTS technique_state (
+    chat_id           TEXT    NOT NULL,
+    sender_id         TEXT    NOT NULL,
+    current_technique TEXT    NOT NULL DEFAULT '',
+    cooldown_until    INTEGER NOT NULL DEFAULT 0,
+    updated_at        INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
 -- Daily lottery: one row per paid draw.  UNIQUE(chat_id, message_id)
 -- makes command replay safe; the day column enforces the daily limit.
 CREATE TABLE IF NOT EXISTS lottery_draws (

@@ -80,6 +80,25 @@ def effective_power(item: dict, level: int) -> int:
         level * ENHANCE_POWER_PER_LEVEL
 
 
+def effective_stats(item: dict, level: int) -> tuple[int, int]:
+    """Split one item's effective power into ``(attack, defense)``.
+
+    Weapons are pure attack, armor pure defense, charms lean attack and
+    mounts lean defense.  The sum always equals :func:`effective_power`.
+    """
+    total = effective_power(item, level)
+    slot = str(item.get("slot") or "")
+    if slot == "weapon":
+        return total, 0
+    if slot == "armor":
+        return 0, total
+    if slot == "mount":
+        attack = total // 2
+        return attack, total - attack
+    attack = (total + 1) // 2
+    return attack, total - attack
+
+
 def resolve_path(path: str | Path | None) -> Path:
     if not path:
         return DEFAULT_CATALOG_PATH

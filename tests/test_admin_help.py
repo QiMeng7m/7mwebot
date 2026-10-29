@@ -120,7 +120,8 @@ class AdminHelpTests(unittest.TestCase):
 
         self.assertIn("【管理（仅管理员）】", reply)
         self.assertIn("改名 wxid_xxx = 昵称", reply)
-        self.assertIn("修炼值调整", reply)
+        self.assertNotIn("修炼值调整", reply)
+        self.assertNotIn("灵石调整", reply)
         self.assertIn("修炼值重算", reply)
 
     def test_help_aliases(self):

@@ -7,17 +7,23 @@ import math
 import random
 import time
 
-from .equipment import EquipmentCatalog, effective_power
+from .equipment import EquipmentCatalog, effective_stats
 from .levels import LevelTable
 from .models import DuelResult, PowerBreakdown
 from .realm import realm_info
 from .store import PointStore
+from .techniques import effects_for
 from .util import is_group_enabled, local_day
 
 logger = logging.getLogger(__name__)
 
-BASE_POWER = 10
-POWER_PER_LEVEL = 5
+BASE_ATTACK = 5
+BASE_DEFENSE = 5
+ATTACK_PER_LEVEL = 2
+DEFENSE_PER_LEVEL = 3
+# Backwards-compatible total (attack + defense) used by older displays.
+BASE_POWER = BASE_ATTACK + BASE_DEFENSE
+POWER_PER_LEVEL = ATTACK_PER_LEVEL + DEFENSE_PER_LEVEL
 MIN_DEFENDER_BALANCE = 2
 
 # 切磋段位 — based on career wins (not daily), so strong players keep a
@@ -113,10 +119,13 @@ class DuelService:
     def power(self, chat_id: str, sender_id: str) -> PowerBreakdown:
         earned = self._store.earned_of(chat_id, sender_id)
         level = self._levels.for_points(earned)
-        base = BASE_POWER + int(level["level"]) * POWER_PER_LEVEL
+        level_no = int(level["level"])
+        base_attack = BASE_ATTACK + level_no * ATTACK_PER_LEVEL
+        base_defense = BASE_DEFENSE + level_no * DEFENSE_PER_LEVEL
 
         items: list[dict] = []
-        equipment_power = 0
+        equipment_attack = 0
+        equipment_defense = 0
         for owned in self._store.owned_items(chat_id, sender_id):
             if not owned.get("equipped"):
                 continue
@@ -124,22 +133,51 @@ class DuelService:
             if item is None:
                 continue
             enhance_level = int(owned.get("enhance_level", 0) or 0)
-            items.append({**item, "enhance_level": enhance_level,
-                          "effective_power": effective_power(
-                              item, enhance_level)})
-            equipment_power += effective_power(item, enhance_level)
+            item_attack, item_defense = effective_stats(
+                item, enhance_level)
+            items.append({
+                **item, "enhance_level": enhance_level,
+                "attack": item_attack, "defense": item_defense,
+                "effective_power": item_attack + item_defense,
+            })
+            equipment_attack += item_attack
+            equipment_defense += item_defense
 
         realm = self._store.realm_of(chat_id, sender_id)
         realm_bonus = realm_info(realm)["power_bonus"]
+        realm_attack = realm_bonus // 2
+        realm_defense = realm_bonus - realm_attack
+
+        technique_effects = effects_for(self._store, chat_id, sender_id)
+        technique_attack = int(round(technique_effects.get("attack", 0)))
+        technique_defense = int(round(technique_effects.get("defense", 0)))
+
+        attack = base_attack + equipment_attack + realm_attack + \
+            technique_attack
+        defense = base_defense + equipment_defense + realm_defense + \
+            technique_defense
+        base = base_attack + base_defense
+        equipment = equipment_attack + equipment_defense
 
         return PowerBreakdown(
-            total=base + equipment_power + realm_bonus,
+            total=attack + defense,
             base=base,
-            level=int(level["level"]),
+            level=level_no,
             title=str(level["title"]),
-            equipment=equipment_power,
+            equipment=equipment,
             realm=realm,
-            realm_bonus=realm_bonus,
+            realm_bonus=realm_attack + realm_defense,
+            attack=attack,
+            defense=defense,
+            base_attack=base_attack,
+            base_defense=base_defense,
+            equipment_attack=equipment_attack,
+            equipment_defense=equipment_defense,
+            realm_attack=realm_attack,
+            realm_defense=realm_defense,
+            technique_attack=technique_attack,
+            technique_defense=technique_defense,
+            technique_effects=technique_effects,
             items=items,
         )
 
@@ -299,10 +337,15 @@ class DuelService:
         attacker = self.power(chat_id, attacker_id)
         defender = self.power(chat_id, target_id)
         prob = win_probability(
-            attacker.total, defender.total,
+            attacker.attack, defender.defense,
             k=float(getattr(cfg, "duel_prob_k", 1.15)),
             min_prob=float(getattr(cfg, "duel_min_prob", 0.08)),
             max_prob=float(getattr(cfg, "duel_max_prob", 0.92)),
+        )
+        # 功法 can add a small flat win-rate bonus.
+        prob = min(
+            float(getattr(cfg, "duel_max_prob", 0.92)),
+            prob + float(attacker.technique_effects.get("duel_win", 0)),
         )
 
         roll = self._roll(rng)
@@ -311,7 +354,7 @@ class DuelService:
         moved = 0
         if attacker_win:
             moved = steal_amount(
-                attacker.total, defender.total, defender_balance,
+                attacker.attack, defender.defense, defender_balance,
                 ratio=float(getattr(cfg, "duel_base_steal_ratio", 0.08)),
                 reward_k=float(getattr(cfg, "duel_reward_k", 1.2)),
                 per_fight_cap=int(getattr(cfg, "duel_per_fight_cap", 20)),
@@ -320,14 +363,14 @@ class DuelService:
 
         self._store.record_duel(
             chat_id, message_id, attacker_id, attacker_name,
-            target_id, defender_name, attacker.total, defender.total,
+            target_id, defender_name, attacker.attack, defender.defense,
             prob, attacker_win, moved, now_ts=now,
         )
 
         return DuelResult(
             True, "win" if attacker_win else "lose", "",
-            attacker_power=attacker.total,
-            defender_power=defender.total,
+            attacker_power=attacker.attack,
+            defender_power=defender.defense,
             win_prob=prob,
             attacker_win=attacker_win,
             points_moved=moved,

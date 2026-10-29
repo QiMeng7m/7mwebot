@@ -93,9 +93,9 @@ export default function PointsPanel() {
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const [delta, setDelta] = useState('')
+  const [earnedDelta, setEarnedDelta] = useState('')
+  const [balanceDelta, setBalanceDelta] = useState('')
   const [reason, setReason] = useState('')
-  const [adjustKind, setAdjustKind] = useState('earned') // earned | balance
 
   useEffect(() => {
     async function loadGroups() {
@@ -190,10 +190,12 @@ export default function PointsPanel() {
     if (detail) await openMember(detail.sender_id)
   }
 
-  async function adjustPoints() {
-    const value = parseInt(delta, 10)
+  async function adjustPoints(kind) {
+    const raw = kind === 'balance' ? balanceDelta : earnedDelta
+    const value = parseInt(raw, 10)
+    const label = kind === 'balance' ? '灵石' : '修炼值'
     if (!detail || !Number.isFinite(value) || value === 0) {
-      setMessage('请输入非零的分值')
+      setMessage(`请输入非零的${label}`)
       return
     }
     setBusy(true)
@@ -206,15 +208,16 @@ export default function PointsPanel() {
           sender_name: detail.sender_name,
           delta: value,
           reason,
-          kind: adjustKind,
+          kind,
         }),
       })
       if (data.ok) {
-        const label = data.kind === 'balance' ? '灵石' : '修炼值'
+        const sign = value > 0 ? '+' : ''
         setMessage(
-          `已调整${label}，当前修炼值 ${data.earned} · 灵石 ${data.balance}`,
+          `已调整${label} ${sign}${value}，当前修炼值 ${data.earned} · 灵石 ${data.balance}`,
         )
-        setDelta('')
+        if (kind === 'balance') setBalanceDelta('')
+        else setEarnedDelta('')
         setReason('')
         await refreshAll()
       } else {
@@ -478,7 +481,9 @@ export default function PointsPanel() {
                       <Stat label="灵石" value={detail.balance} />
                       <Stat label="本月" value={detail.season_points} />
                       <Stat label="今日" value={detail.day_points} />
-                      <Stat label="武力值" value={detail.power?.total ?? 0} />
+                      <Stat label="战力" value={detail.power?.total ?? 0} />
+                      <Stat label="攻击" value={detail.power?.attack ?? 0} />
+                      <Stat label="防御" value={detail.power?.defense ?? 0} />
                       <Stat label="连续活跃" value={`${detail.streak_days}天`} />
                     </div>
                     {detail.next_level && (
@@ -488,38 +493,51 @@ export default function PointsPanel() {
                       </p>
                     )}
                     <div className="border-t border-border-main pt-4">
-                      <p className="text-[13px] font-semibold text-text-main mb-2">管理员调整</p>
-                      <div className="flex gap-2 mb-2">
-                        <select
-                          value={adjustKind}
-                          onChange={e => setAdjustKind(e.target.value)}
-                          className="w-24 bg-bg-raised border border-border-main rounded-lg px-2 py-2 text-[13px] text-text-main focus:outline-none focus:border-brand-green cursor-pointer"
-                        >
-                          <option value="earned">修炼值</option>
-                          <option value="balance">灵石</option>
-                        </select>
+                      <p className="text-[13px] font-semibold text-text-main mb-1">管理员调整</p>
+                      <p className="text-[11px] text-text-muted mb-3">
+                        修炼值与灵石分开调整，互不影响。
+                      </p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="w-12 shrink-0 text-[13px] text-text-main">修炼值</span>
                         <input
                           type="number"
-                          value={delta}
-                          onChange={e => setDelta(e.target.value)}
+                          value={earnedDelta}
+                          onChange={e => setEarnedDelta(e.target.value)}
                           placeholder="+20 / -10"
-                          className="w-24 bg-bg-raised border border-border-main rounded-lg px-3 py-2 text-[13px] text-text-main font-mono focus:outline-none focus:border-brand-green"
+                          className="flex-1 min-w-0 bg-bg-raised border border-border-main rounded-lg px-3 py-2 text-[13px] text-text-main font-mono focus:outline-none focus:border-brand-green"
                         />
-                        <input
-                          type="text"
-                          value={reason}
-                          onChange={e => setReason(e.target.value)}
-                          placeholder="理由（可选）"
-                          className="flex-1 bg-bg-raised border border-border-main rounded-lg px-3 py-2 text-[13px] text-text-main focus:outline-none focus:border-brand-green"
-                        />
+                        <button
+                          disabled={busy}
+                          onClick={() => adjustPoints('earned')}
+                          className="shrink-0 px-3 py-2 rounded-lg bg-brand-green-light border border-brand-green/20 text-[13px] text-brand-green-hover dark:text-brand-green font-medium disabled:opacity-50 cursor-pointer"
+                        >
+                          调整修炼值
+                        </button>
                       </div>
-                      <button
-                        disabled={busy}
-                        onClick={adjustPoints}
-                        className="w-full py-2 rounded-lg bg-brand-green-light border border-brand-green/20 text-[13px] text-brand-green-hover dark:text-brand-green font-medium disabled:opacity-50 cursor-pointer"
-                      >
-                        确认调整
-                      </button>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="w-12 shrink-0 text-[13px] text-text-main">灵石</span>
+                        <input
+                          type="number"
+                          value={balanceDelta}
+                          onChange={e => setBalanceDelta(e.target.value)}
+                          placeholder="+100 / -50"
+                          className="flex-1 min-w-0 bg-bg-raised border border-border-main rounded-lg px-3 py-2 text-[13px] text-text-main font-mono focus:outline-none focus:border-brand-green"
+                        />
+                        <button
+                          disabled={busy}
+                          onClick={() => adjustPoints('balance')}
+                          className="shrink-0 px-3 py-2 rounded-lg bg-brand-green-light border border-brand-green/20 text-[13px] text-brand-green-hover dark:text-brand-green font-medium disabled:opacity-50 cursor-pointer"
+                        >
+                          调整灵石
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={reason}
+                        onChange={e => setReason(e.target.value)}
+                        placeholder="理由（可选，两种调整共用）"
+                        className="w-full bg-bg-raised border border-border-main rounded-lg px-3 py-2 text-[13px] text-text-main focus:outline-none focus:border-brand-green"
+                      />
                     </div>
                     {detail.events?.length > 0 && (
                       <div className="border-t border-border-main pt-4 mt-4">
@@ -560,7 +578,7 @@ export default function PointsPanel() {
                 </div>
                 <span className="text-xs font-mono text-text-muted">灵石 {balance}</span>
                 {power && (
-                  <span className="text-xs font-mono text-text-muted">武力值 {power.total}</span>
+                  <span className="text-xs font-mono text-text-muted">战力 {power.total} · 攻{power.attack} 防{power.defense}</span>
                 )}
               </div>
 
@@ -578,7 +596,12 @@ export default function PointsPanel() {
                             <div className="flex-1 min-w-0">
                               <p className="text-[14px] text-text-main truncate">{item.name}</p>
                               <p className="text-[11px] text-text-muted font-mono">
-                                武力 +{item.power} · {item.price} 灵石
+                                {item.slot === 'weapon'
+                                  ? `攻击 +${item.power}`
+                                  : item.slot === 'armor'
+                                    ? `防御 +${item.power}`
+                                    : `攻${Math.ceil(item.power / 2)} 防${Math.floor(item.power / 2)}`}
+                                {' · '}{item.price} 灵石
                                 {mine?.equipped ? ' · 已装备' : ''}
                               </p>
                             </div>
@@ -863,7 +886,7 @@ export default function PointsPanel() {
       </AnimatePresence>
 
       <p className="text-[11px] text-text-muted font-mono">
-        群内指令：修炼值 · 我的信息 · 查询 名字 · 修炼榜 · 月榜 · 商店 · 购买 · 武力值 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
+        群内指令：修炼值 · 我的信息 · 查询 名字 · 修炼榜 · 月榜 · 商店 · 购买 · 战力 · 打坐 · 功法 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
       </p>
     </div>
   )

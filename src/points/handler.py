@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import time
 import unicodedata
@@ -28,7 +29,7 @@ from .duel import DuelService
 from .equipment import (
     ENHANCE_MAX,
     EquipmentCatalog,
-    effective_power,
+    effective_stats,
     enhance_cost,
 )
 from .fishing import FishingService, fishing_level, format_weight
@@ -40,6 +41,20 @@ from .realm import (
     REALM_MAX,
     realm_cost,
     realm_info,
+)
+from .techniques import (
+    LEARN_COST,
+    MAX_LAYER,
+    MEDITATION_MAX_MINUTES,
+    MEDITATION_POINTS_PER_MIN,
+    MEDITATION_PROGRESS_PER_MIN,
+    TECHNIQUES,
+    breakthrough_chance,
+    effects_for,
+    format_effects,
+    required_progress,
+    technique_by_id,
+    technique_by_name,
 )
 from .rules import (
     INVISIBLE_WS as _WS,
@@ -111,6 +126,9 @@ EXACT_COMMANDS = {
     "称号": ("titles", ""),
     "境界": ("realm", ""),
     "突破": ("breakthrough", ""),
+    # ── 功法 / 打坐 ──
+    "功法": ("techniques", ""),
+    "突破功法": ("technique_breakthrough", ""),
     # ── Legacy aliases (old 积分/余额 wording) ──
     "积分": ("member_card", ""),
     "我的积分": ("member_card", ""),
@@ -120,11 +138,10 @@ EXACT_COMMANDS = {
 }
 
 PREFIX_COMMANDS = (
-    "购买", "装备", "卸下", "查询", "切磋", "修炼值调整", "修炼值重算",
-    "积分调整", "积分重算", "灵石调整",
+    "购买", "装备", "卸下", "查询", "切磋", "修炼值重算", "积分重算",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
-    "出售", "卖掉", "卖出",
+    "出售", "卖掉", "卖出", "学习功法", "切换功法",
 )
 
 _BOARD_SCOPES = {
@@ -145,18 +162,14 @@ _CN_NUMBERS = {
     "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
 }
 
-_ADMIN_ADJUST_RE = re.compile(
-    rf"^(?:修炼值调整|积分调整|灵石调整){_WS}+(.+?){_WS}+([+-]?\d+)"
-    rf"(?:{_WS}+(.+))?{_WS}*$"
-)
-
-
 def looks_like_command(text: str) -> bool:
     """Cheap syntax check used by the router for the staleness guard."""
     text = _strip_invisible(text)
     if not text:
         return False
     if text in EXACT_COMMANDS:
+        return True
+    if re.match(rf"^打坐{_WS}*\S*{_WS}*$", text):
         return True
     if re.match(rf"^(?:修炼榜|积分榜){_WS}+", text):
         return True
@@ -233,6 +246,12 @@ class PointHandler:
         is_admin = bool(getattr(cfg, "admin_wxid", "")) and \
             sender_id == cfg.admin_wxid
 
+        # ── 打坐 / 打坐 5 / 打坐5 ────────────────────────────────
+        m = re.match(rf"^打坐{_WS}*(\S*){_WS}*$", text)
+        if m:
+            return self._meditate(
+                msg, chat_id, sender_id, sender_name, m.group(1))
+
         # ── Exact commands ───────────────────────────────────────
         if text in EXACT_COMMANDS:
             kind, arg = EXACT_COMMANDS[text]
@@ -285,10 +304,13 @@ class PointHandler:
                 chat_id, sender_id, sender_name, rest)
         if head in ("出售", "卖掉", "卖出"):
             return self._sell(chat_id, sender_id, sender_name, rest)
+        if head == "学习功法":
+            return self._learn_technique(
+                msg, chat_id, sender_id, sender_name, rest)
+        if head == "切换功法":
+            return self._switch_technique(chat_id, sender_id, rest)
         if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
-        if head in ("修炼值调整", "积分调整", "灵石调整"):
-            return self._admin_adjust(chat_id, text, is_admin)
 
         # 引用回复 + 切磋 / @某人 切磋（关键字可能在末尾）
         if _ends_with_keyword(text, "切磋"):
@@ -367,6 +389,12 @@ class PointHandler:
             return self._realm_command(chat_id, sender_id, sender_name)
         if kind == "breakthrough":
             return self._breakthrough(msg, chat_id, sender_id, sender_name)
+        if kind == "techniques":
+            return self._techniques_command(
+                chat_id, sender_id, sender_name)
+        if kind == "technique_breakthrough":
+            return self._breakthrough_technique(
+                chat_id, sender_id, sender_name)
         return None
 
     # ── Identity helpers ──────────────────────────────────────────
@@ -600,6 +628,7 @@ class PointHandler:
         return (
             f"{prefix}{stats.sender_name} 修炼值：{stats.earned} "
             f"灵石：{stats.balance} 武力值：{power.total}"
+            f"（攻{power.attack}/防{power.defense}）"
             f" 境界：{realm['title']}"
         )
 
@@ -620,8 +649,11 @@ class PointHandler:
             f"灵石 {stats.balance} · 本月 {stats.season_points}"
             + (f"（第{stats.season_rank}名）" if stats.season_rank else "")
             + f" · 今日 {stats.day_points}",
-            f"武力值 {power.total}（基础 {power.base} + 装备 {power.equipment}"
-            f" + 境界 {power.realm_bonus}）· 境界 {realm['title']}",
+            f"武力值 {power.total}（攻击 {power.attack} · 防御 {power.defense}"
+            f"；基础 {power.base} + 装备 {power.equipment}"
+            f" + 境界 {power.realm_bonus} + 功法 "
+            f"{power.technique_attack + power.technique_defense}）"
+            f" · 境界 {realm['title']}",
         ]
         if nxt is not None:
             lines.append(
@@ -673,7 +705,7 @@ class PointHandler:
         return (
             f"{stats.sender_name} 修炼值：{stats.earned} "
             f"灵石：{stats.balance} "
-            f"武力值：{power.total}"
+            f"武力值：{power.total}（攻{power.attack}/防{power.defense}）"
         )
 
     # ── Boards ────────────────────────────────────────────────────
@@ -743,7 +775,8 @@ class PointHandler:
             for item in items:
                 mark = " ✓" if item["id"] in owned else ""
                 rendered.append(
-                    f"{item['name']} {item['price']}灵石(+{item['power']}){mark}"
+                    f"{item['name']} {item['price']}灵石"
+                    f"({self._stat_text(item)}){mark}"
                 )
             lines.append(f"【{slot['name']}】" + " · ".join(rendered))
         lines.append("发送「购买 名称」即可；「我的装备」查看背包。")
@@ -777,9 +810,9 @@ class PointHandler:
             if equipped else "，已放入背包（「装备 名称」可穿上）"
         )
         return (
-            f"购买成功：{item['name']}（武力 +{item['power']}），"
+            f"购买成功：{item['name']}（{self._stat_text(item)}），"
             f"花费 {item['price']} 灵石，剩余 {balance} 灵石{suffix}。\n"
-            f"当前武力值 {power.total}。"
+            f"当前战力 {power.total}（攻击 {power.attack} · 防御 {power.defense}）。"
         )
 
     def _equip(self, chat_id: str, sender_id: str, raw: str,
@@ -814,7 +847,8 @@ class PointHandler:
             power = self._duels.power(chat_id, sender_id)
             return (
                 f"已卸下 {item['name']}（{self._catalog.slot_name(item['slot'])}）"
-                f"，当前武力值 {power.total}。"
+                f"，当前战力 {power.total}"
+                f"（攻{power.attack}/防{power.defense}）。"
             )
 
         if item is None:
@@ -826,9 +860,12 @@ class PointHandler:
             self._catalog.same_slot_ids(item), equip=True,
         )
         power = self._duels.power(chat_id, sender_id)
+        level = self._store.item_enhance_level(
+            chat_id, sender_id, item["id"])
         return (
             f"已装备 {item['name']}（{self._catalog.slot_name(item['slot'])}，"
-            f"武力 +{item['power']}），当前武力值 {power.total}。"
+            f"{self._stat_text(item, level)}），"
+            f"当前战力 {power.total}（攻击 {power.attack} · 防御 {power.defense}）。"
         )
 
     def _find_slot(self, raw: str) -> dict | None:
@@ -837,6 +874,17 @@ class PointHandler:
             if key in (slot["id"], slot["name"]):
                 return slot
         return None
+
+    @staticmethod
+    def _stat_text(item: dict, level: int = 0) -> str:
+        """Render one item's split stats, e.g. ``攻击 +9``."""
+        attack, defense = effective_stats(item, level)
+        parts = []
+        if attack:
+            parts.append(f"攻击 +{attack}")
+        if defense:
+            parts.append(f"防御 +{defense}")
+        return " / ".join(parts) or "攻防 +0"
 
     def _sell(self, chat_id: str, sender_id: str,
               sender_name: str, raw: str) -> str:
@@ -890,7 +938,8 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         if not owned:
             return (
-                f"{sender_name} 还没有装备。武力值 {power.total}，"
+                f"{sender_name} 还没有装备。战力 {power.total}"
+                f"（攻击 {power.attack} · 防御 {power.defense}），"
                 "发「商店」看看能买什么。"
             )
 
@@ -903,11 +952,14 @@ class PointHandler:
             mark = "（已装备）" if row.get("equipped") else ""
             suffix = f"(+{level})" if level else ""
             by_slot.setdefault(item["slot"], []).append(
-                f"{item['name']} +{effective_power(item, level)}"
+                f"{item['name']} {self._stat_text(item, level)}"
                 f"{suffix}{mark}"
             )
 
-        lines = [f"{sender_name} 的装备 · 武力值 {power.total}"]
+        lines = [
+            f"{sender_name} 的装备 · 战力 {power.total}"
+            f"（攻击 {power.attack} · 防御 {power.defense}）"
+        ]
         for slot in self._catalog.slots():
             items = by_slot.get(slot["id"])
             if items:
@@ -919,21 +971,29 @@ class PointHandler:
     def _power(self, chat_id: str, sender_id: str,
                sender_name: str) -> str:
         power = self._duels.power(chat_id, sender_id)
-        parts = [f"基础 {power.base}（Lv{power.level} {power.title}）"]
+        parts = [
+            f"基础 攻{power.base_attack}/防{power.base_defense}"
+            f"（Lv{power.level} {power.title}）"
+        ]
         for item in power.items:
             level = int(item.get("enhance_level", 0) or 0)
             suffix = f"(+{level})" if level else ""
             parts.append(
                 f"{self._catalog.slot_name(item['slot'])} {item['name']} "
-                f"+{item.get('effective_power', item['power'])}{suffix}"
+                f"{self._stat_text(item, level)}{suffix}"
             )
         if power.realm_bonus:
             parts.append(
                 f"境界 {realm_info(power.realm)['title']} "
-                f"+{power.realm_bonus}"
+                f"攻+{power.realm_attack}/防+{power.realm_defense}"
+            )
+        if power.technique_attack or power.technique_defense:
+            parts.append(
+                f"功法 攻+{power.technique_attack}/防+{power.technique_defense}"
             )
         lines = [
-            f"{sender_name} 的武力值：{power.total}",
+            f"{sender_name} 的武力值：{power.total}"
+            f"（攻击 {power.attack} · 防御 {power.defense}）",
             " + ".join(parts),
         ]
 
@@ -961,15 +1021,18 @@ class PointHandler:
         rows = []
         for member in self._store.members(chat_id):
             power = self._duels.power(chat_id, member["sender_id"])
-            rows.append((power.total, member["sender_id"]))
-        rows.sort(key=lambda item: (-item[0], item[1]))
+            rows.append((power, member["sender_id"]))
+        rows.sort(key=lambda item: (-item[0].total, item[1]))
         group = _strip_invisible(group_name) or chat_id
         lines = [f"战力榜 · {group}"]
         if not rows:
             lines.append("本群还没有成员记录。")
             return "\n".join(lines)
-        for rank, (total, sid) in enumerate(rows[:size], 1):
-            lines.append(f"{rank}. {self._display_name(chat_id, sid)} {total}")
+        for rank, (power, sid) in enumerate(rows[:size], 1):
+            lines.append(
+                f"{rank}. {self._display_name(chat_id, sid)} {power.total}"
+                f"（攻{power.attack} 防{power.defense}）"
+            )
         return "\n".join(lines)
 
     # ── Duel ──────────────────────────────────────────────────────
@@ -1020,8 +1083,8 @@ class PointHandler:
 
         prob = round(result.win_prob * 100)
         lines = [
-            f"{attacker_name} 武力{result.attacker_power} · "
-            f"{defender_name} 武力{result.defender_power} · 胜率{prob}%",
+            f"{attacker_name} 攻击{result.attacker_power} · "
+            f"{defender_name} 防御{result.defender_power} · 胜率{prob}%",
         ]
         if result.attacker_win:
             if result.points_moved > 0:
@@ -1617,6 +1680,248 @@ class PointHandler:
             lines.append(f"{when} {row['reward_name']}")
         return "\n".join(lines)
 
+    # ── 功法 / 打坐 ──────────────────────────────────────────────
+
+    def _parse_meditation_minutes(self, raw: str) -> int | None:
+        text = _strip_invisible(raw).replace("分钟", "").strip()
+        if not text:
+            return 10
+        try:
+            value = int(text)
+        except (TypeError, ValueError):
+            value = _CN_NUMBERS.get(text)
+        if value is None or not (1 <= value <= MEDITATION_MAX_MINUTES):
+            return None
+        return value
+
+    def _meditate(self, msg: dict, chat_id: str, sender_id: str,
+                  sender_name: str, raw: str) -> str:
+        minutes = self._parse_meditation_minutes(raw)
+        if minutes is None:
+            return f"用法：打坐 / 打坐 5（1~{MEDITATION_MAX_MINUTES} 分钟）"
+
+        now = int(time.time())
+        state = self._store.technique_state(chat_id, sender_id)
+        if int(state.get("cooldown_until", 0)) > now:
+            wait = int(state["cooldown_until"]) - now
+            return (
+                f"{sender_name} 还在打坐中，"
+                f"{self._format_duration(wait)}后才能再次打坐。"
+            )
+
+        current = str(state.get("current_technique") or "")
+        technique = technique_by_id(current)
+        row = next(
+            (item for item in self._store.techniques_of(
+                chat_id, sender_id)
+             if item["technique_id"] == current),
+            None,
+        )
+        layer = int(row["layer"]) if row else 0
+        required = required_progress(layer) if layer else 0
+
+        effects = effects_for(self._store, chat_id, sender_id)
+        points = max(1, int(round(
+            minutes * MEDITATION_POINTS_PER_MIN
+            * (1 + float(effects.get("meditation_points", 0) or 0))
+        )))
+        progress_gain = 0
+        if technique is not None and row is not None:
+            progress_gain = max(0, int(round(
+                minutes * MEDITATION_PROGRESS_PER_MIN
+                * (1 + float(effects.get("meditation_progress", 0) or 0))
+            )))
+
+        result = self._store.meditate(
+            chat_id, sender_id, sender_name, minutes, points,
+            progress_gain, required,
+            f"meditate:{msg.get('message_id') or now}", now,
+        )
+        if not result.get("ok"):
+            if result.get("code") == "cooldown":
+                wait = max(0, int(result.get("cooldown_until", now)) - now)
+                return (
+                    f"{sender_name} 还在打坐中，"
+                    f"{self._format_duration(wait)}后才能再次打坐。"
+                )
+            return f"{sender_name} 这次打坐没有成功，请稍后再试。"
+
+        lines = [
+            f"{sender_name} 打坐了 {minutes} 分钟，"
+            f"修炼值 +{result.get('points', points)}。"
+        ]
+        if technique is not None and row is not None:
+            progress = int(result.get("progress", 0))
+            max_progress = int(result.get("max_progress", required))
+            lines.append(
+                f"《{technique['name']}》第{result.get('layer', layer)}层"
+                f" 进度 +{result.get('progress_gain', 0)}"
+                f"（{progress}/{max_progress or '满'}）。"
+            )
+            if max_progress and progress >= max_progress:
+                lines.append("进度已满，发「突破功法」尝试突破！")
+        else:
+            lines.append(
+                "你还没有选择功法；发「学习功法 名称」学习，"
+                "或「切换功法 名称」选择已学功法。"
+            )
+        lines.append(f"{minutes} 分钟后可再次打坐。")
+        return "\n".join(lines)
+
+    def _techniques_command(self, chat_id: str, sender_id: str,
+                            sender_name: str) -> str:
+        rows = {
+            row["technique_id"]: row
+            for row in self._store.techniques_of(chat_id, sender_id)
+        }
+        state = self._store.technique_state(chat_id, sender_id)
+        current = str(state.get("current_technique") or "")
+        current_tech = technique_by_id(current)
+        current_row = rows.get(current)
+
+        lines = [
+            f"{sender_name} 的功法（已学 {len(rows)}/{len(TECHNIQUES)}）"
+            + (f" · 当前《{current_tech['name']}》" if current_tech else ""),
+        ]
+        if current_tech and current_row:
+            lines.append(
+                f"当前效果：{format_effects(current_tech['effects'], int(current_row['layer']))}"
+            )
+        for tech in TECHNIQUES:
+            row = rows.get(tech["id"])
+            mark = " ★" if tech["id"] == current else ""
+            if row is None:
+                lines.append(
+                    f"·《{tech['name']}》（{tech['feature']}）未学")
+                continue
+            layer = int(row["layer"])
+            if layer >= MAX_LAYER:
+                progress_text = "已满级"
+            else:
+                required = required_progress(layer)
+                progress_text = f"{int(row['progress'])}/{required}"
+            lines.append(
+                f"·《{tech['name']}》第{layer}层 · 进度{progress_text}"
+                f" · 失败{int(row['failures'])}/5"
+                f" · {format_effects(tech['effects'], layer)}{mark}"
+            )
+        lines.append(
+            f"学习功法 名称（{LEARN_COST} 灵石）· 切换功法 名称 · "
+            "突破功法"
+        )
+        return "\n".join(lines)
+
+    def _learn_technique(self, msg: dict, chat_id: str, sender_id: str,
+                         sender_name: str, raw: str) -> str:
+        name = _strip_invisible(raw).strip()
+        if not name:
+            names = "、".join(t["name"] for t in TECHNIQUES)
+            return f"用法：学习功法 名称（可学：{names}）"
+        technique = technique_by_name(name) or technique_by_id(name)
+        if technique is None:
+            return f"没有找到功法「{name}」，发「功法」查看列表。"
+
+        maybe_current = self._store.technique_state(
+            chat_id, sender_id).get("current_technique", "")
+        ok, code, balance = self._store.learn_technique(
+            chat_id, sender_id, sender_name, technique["id"],
+            LEARN_COST, f"learn:{msg.get('message_id') or time.time()}",
+        )
+        if code == "owned":
+            return f"你已经学会《{technique['name']}》了。"
+        if code == "insufficient":
+            return (
+                f"灵石不足：学习《{technique['name']}》需要 "
+                f"{LEARN_COST} 灵石，你只有 {balance}。"
+            )
+        if not ok:
+            return "学习功法失败，请稍后再试。"
+
+        suffix = (
+            "，并已设为当前功法"
+            if not maybe_current or maybe_current == technique["id"]
+            else "；可用「切换功法 名称」设为当前"
+        )
+        return (
+            f"学会《{technique['name']}》（{technique['feature']}）！"
+            f"第1层效果：{format_effects(technique['effects'], 1)}"
+            f"{suffix}。花费 {LEARN_COST} 灵石，余额 {balance}。"
+        )
+
+    def _switch_technique(self, chat_id: str, sender_id: str,
+                          raw: str) -> str:
+        name = _strip_invisible(raw).strip()
+        if not name:
+            return "用法：切换功法 名称（先发「功法」查看已学功法）"
+        technique = technique_by_name(name) or technique_by_id(name)
+        if technique is None:
+            return f"没有找到功法「{name}」，发「功法」查看列表。"
+        if not self._store.set_current_technique(
+            chat_id, sender_id, technique["id"],
+        ):
+            return f"你还没有学会《{technique['name']}》，先「学习功法 名称」。"
+        return (
+            f"已切换当前功法为《{technique['name']}》。"
+            "之后打坐会积累它的进度。"
+        )
+
+    def _breakthrough_technique(self, chat_id: str, sender_id: str,
+                                sender_name: str) -> str:
+        state = self._store.technique_state(chat_id, sender_id)
+        current = str(state.get("current_technique") or "")
+        technique = technique_by_id(current)
+        rows = {
+            row["technique_id"]: row
+            for row in self._store.techniques_of(chat_id, sender_id)
+        }
+        row = rows.get(current)
+        if technique is None or row is None:
+            return "你还没有当前功法，先「学习功法 名称」或「切换功法 名称」。"
+
+        layer = int(row["layer"])
+        progress = int(row["progress"])
+        if layer >= MAX_LAYER:
+            return f"《{technique['name']}》已经修炼到最高第{MAX_LAYER}层。"
+        required = required_progress(layer)
+        if progress < required:
+            return (
+                f"《{technique['name']}》进度不足："
+                f"{progress}/{required}，先发「打坐」积累进度。"
+            )
+
+        chance = breakthrough_chance(layer)
+        success = random.random() < chance
+        result = self._store.attempt_technique_breakthrough(
+            chat_id, sender_id, technique["id"], layer,
+            success, required, MAX_LAYER,
+        )
+        if not result.get("ok"):
+            if result.get("code") == "max":
+                return f"《{technique['name']}》已经满级。"
+            if result.get("code") == "not_ready":
+                return "进度不足，先发「打坐」积累进度。"
+            return "突破失败，请稍后再试。"
+
+        code = result.get("code")
+        new_layer = int(result.get("layer", layer))
+        pct = round(chance * 100)
+        if code == "success":
+            return (
+                f"突破成功！《{technique['name']}》→ 第{new_layer}层"
+                f"（成功率 {pct}%）。\n"
+                f"当前效果：{format_effects(technique['effects'], new_layer)}"
+            )
+        if code == "drop":
+            return (
+                f"突破失败，连续失败达到 5 次，《{technique['name']}》"
+                f"跌回第{new_layer}层，进度清零（成功率 {pct}%）。"
+            )
+        return (
+            f"突破失败，《{technique['name']}》进度减半："
+            f"{result.get('progress', 0)}/{required}，"
+            f"连续失败 {result.get('failures', 0)}/5（成功率 {pct}%）。"
+        )
+
     # ── Endgame: enhance / realm / boss / achievements ────────────
 
     def _enhance(self, msg: dict, chat_id: str, sender_id: str,
@@ -1660,9 +1965,10 @@ class PointHandler:
         power = self._duels.power(chat_id, sender_id)
         return (
             f"强化成功：{item['name']} +{new_level}"
-            f"（武力 +{effective_power(item, new_level)}，"
+            f"（{self._stat_text(item, new_level)}，"
             f"强化加成 +{new_level * 2}），花费 {cost} 灵石，"
-            f"剩余 {balance} 灵石，当前战力 {power.total}。"
+            f"剩余 {balance} 灵石，当前战力 {power.total}"
+            f"（攻{power.attack}/防{power.defense}）。"
         )
 
     def _realm_command(self, chat_id: str, sender_id: str,
@@ -1877,48 +2183,6 @@ class PointHandler:
 
     # ── Admin ─────────────────────────────────────────────────────
 
-    def _admin_adjust(self, chat_id: str, text: str,
-                      is_admin: bool) -> str | None:
-        if not is_admin:
-            return "仅管理员可以调整。"
-        m = _ADMIN_ADJUST_RE.match(text)
-        if not m:
-            return (
-                "用法：修炼值调整 名字 +20 [理由] / "
-                "灵石调整 名字 +100 [理由]"
-            )
-        name, delta_raw, note = m.group(1), m.group(2), m.group(3) or ""
-        delta = int(delta_raw)
-        if delta == 0:
-            return "调整数值不能为 0。"
-
-        sid, display, ambiguous = self._resolve_name(chat_id, name)
-        if ambiguous:
-            return f"本群有多个「{name}」，请改用 wxid 或更完整的昵称。"
-        if not sid:
-            return f"没找到成员「{name}」。"
-
-        kind = "balance" if text.startswith("灵石调整") else "earned"
-        sign = "+" if delta > 0 else ""
-        suffix = f"（{note.strip()}）" if note.strip() else ""
-
-        if kind == "earned":
-            earned = self._store.adjust_earned(
-                chat_id, sid, display, delta, note=note.strip(),
-            )
-            return (
-                f"已调整 {display} 的修炼值 {sign}{delta}{suffix}，"
-                f"当前修炼值 {earned}（灵石不变）。"
-            )
-
-        balance = self._store.adjust_balance(
-            chat_id, sid, display, delta, note=note.strip(),
-        )
-        return (
-            f"已调整 {display} 的灵石 {sign}{delta}{suffix}，"
-            f"当前灵石 {balance}（修炼值不变）。"
-        )
-
     def _rebuild(self, chat_id: str, is_admin: bool) -> str | None:
         if not is_admin:
             return "仅管理员可以重算修炼值。"
@@ -1962,6 +2226,9 @@ class PointHandler:
             "· 钓鱼只增加灵石，不影响修炼值、等级和榜单\n"
             "· 累计钓鱼条数提升钓鱼等级，额外增加稀有与价值加成\n"
             "· 装备可用「强化 名称」提升，最高 +15（每级 +2 武力）\n"
+            "· 武力拆分为攻击/防御：切磋用攻击对防御，Boss 伤害按攻击计算\n"
+            "· 「打坐」积累当前功法进度，进度满后「突破功法」；"
+            "失败进度减半，连续失败 5 次掉一层\n"
             "· 累计修炼值达到门槛可「突破」境界（不扣修炼值），"
             "每重境界永久 +10 武力\n"
             "· 群 Boss 每周刷新，伤害按战力结算，击杀奖励按伤害分配"
