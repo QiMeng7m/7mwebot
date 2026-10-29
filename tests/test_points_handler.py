@@ -473,8 +473,25 @@ class AdminTests(HandlerTestBase):
             "修炼值调整 张三 +20 奖励", sender_id="wxid_admin", name="管理员",
         )
         self.assertIn("已调整", reply)
+        self.assertIn("灵石不变", reply)
         self.assertEqual(
             self.store.earned_of(self.chat, "wxid_a"), 30,
+        )
+        self.assertEqual(
+            self.store.balance_of(self.chat, "wxid_a"), 10,
+        )
+
+    def test_admin_can_adjust_balance_only(self):
+        reply = self.run_cmd(
+            "灵石调整 张三 +100 补偿", sender_id="wxid_admin", name="管理员",
+        )
+        self.assertIn("已调整", reply)
+        self.assertIn("修炼值不变", reply)
+        self.assertEqual(
+            self.store.earned_of(self.chat, "wxid_a"), 10,
+        )
+        self.assertEqual(
+            self.store.balance_of(self.chat, "wxid_a"), 110,
         )
 
     def test_non_admin_is_rejected(self):
@@ -482,6 +499,11 @@ class AdminTests(HandlerTestBase):
         self.assertIn("仅管理员", reply)
         self.assertEqual(
             self.store.earned_of(self.chat, "wxid_a"), 10,
+        )
+        reply = self.run_cmd("灵石调整 张三 +20")
+        self.assertIn("仅管理员", reply)
+        self.assertEqual(
+            self.store.balance_of(self.chat, "wxid_a"), 10,
         )
 
 

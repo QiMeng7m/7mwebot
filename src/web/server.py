@@ -2011,13 +2011,30 @@ class _UIHandler(SimpleHTTPRequestHandler):
                         self.send_json({"ok": False,
                                         "error": "delta must be non-zero"})
                         return
+                    kind = str(data.get("kind") or "earned")
+                    if kind not in ("earned", "balance"):
+                        self.send_json({"ok": False,
+                                        "error": "kind must be earned or balance"})
+                        return
                     name = str(data.get("sender_name")
                                or store.member_name(chat_id, sender_id))
-                    balance = store.adjust(
-                        chat_id, sender_id, name, delta,
-                        note=str(data.get("reason", "")),
-                    )
-                    self.send_json({"ok": True, "balance": balance})
+                    if kind == "earned":
+                        earned = store.adjust_earned(
+                            chat_id, sender_id, name, delta,
+                            note=str(data.get("reason", "")),
+                        )
+                    else:
+                        store.adjust_balance(
+                            chat_id, sender_id, name, delta,
+                            note=str(data.get("reason", "")),
+                        )
+                        earned = store.earned_of(chat_id, sender_id)
+                    self.send_json({
+                        "ok": True,
+                        "kind": kind,
+                        "earned": earned,
+                        "balance": store.balance_of(chat_id, sender_id),
+                    })
                     return
 
                 # ── GET/POST /api/points/levels ──────────────────

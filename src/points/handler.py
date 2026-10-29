@@ -121,7 +121,7 @@ EXACT_COMMANDS = {
 
 PREFIX_COMMANDS = (
     "购买", "装备", "卸下", "查询", "切磋", "修炼值调整", "修炼值重算",
-    "积分调整", "积分重算",
+    "积分调整", "积分重算", "灵石调整",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
     "出售", "卖掉", "卖出",
@@ -146,7 +146,7 @@ _CN_NUMBERS = {
 }
 
 _ADMIN_ADJUST_RE = re.compile(
-    rf"^(?:修炼值调整|积分调整){_WS}+(.+?){_WS}+([+-]?\d+)"
+    rf"^(?:修炼值调整|积分调整|灵石调整){_WS}+(.+?){_WS}+([+-]?\d+)"
     rf"(?:{_WS}+(.+))?{_WS}*$"
 )
 
@@ -287,7 +287,7 @@ class PointHandler:
             return self._sell(chat_id, sender_id, sender_name, rest)
         if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
-        if head in ("修炼值调整", "积分调整"):
+        if head in ("修炼值调整", "积分调整", "灵石调整"):
             return self._admin_adjust(chat_id, text, is_admin)
 
         # 引用回复 + 切磋 / @某人 切磋（关键字可能在末尾）
@@ -1880,14 +1880,17 @@ class PointHandler:
     def _admin_adjust(self, chat_id: str, text: str,
                       is_admin: bool) -> str | None:
         if not is_admin:
-            return "仅管理员可以调整修炼值。"
+            return "仅管理员可以调整。"
         m = _ADMIN_ADJUST_RE.match(text)
         if not m:
-            return "用法：修炼值调整 名字 +20 [理由]"
+            return (
+                "用法：修炼值调整 名字 +20 [理由] / "
+                "灵石调整 名字 +100 [理由]"
+            )
         name, delta_raw, note = m.group(1), m.group(2), m.group(3) or ""
         delta = int(delta_raw)
         if delta == 0:
-            return "调整分值不能为 0。"
+            return "调整数值不能为 0。"
 
         sid, display, ambiguous = self._resolve_name(chat_id, name)
         if ambiguous:
@@ -1895,15 +1898,25 @@ class PointHandler:
         if not sid:
             return f"没找到成员「{name}」。"
 
-        balance = self._store.adjust(
-            chat_id, sid, display, delta,
-            note=note.strip(),
-        )
+        kind = "balance" if text.startswith("灵石调整") else "earned"
         sign = "+" if delta > 0 else ""
         suffix = f"（{note.strip()}）" if note.strip() else ""
+
+        if kind == "earned":
+            earned = self._store.adjust_earned(
+                chat_id, sid, display, delta, note=note.strip(),
+            )
+            return (
+                f"已调整 {display} 的修炼值 {sign}{delta}{suffix}，"
+                f"当前修炼值 {earned}（灵石不变）。"
+            )
+
+        balance = self._store.adjust_balance(
+            chat_id, sid, display, delta, note=note.strip(),
+        )
         return (
-            f"已调整 {display} 的修炼值 {sign}{delta}{suffix}，"
-            f"当前灵石 {balance}。"
+            f"已调整 {display} 的灵石 {sign}{delta}{suffix}，"
+            f"当前灵石 {balance}（修炼值不变）。"
         )
 
     def _rebuild(self, chat_id: str, is_admin: bool) -> str | None:

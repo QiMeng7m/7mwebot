@@ -70,12 +70,64 @@ class PointStore:
     def adjust(self, chat_id: str, sender_id: str, sender_name: str,
                delta: int, note: str = "",
                now_ts: int | None = None) -> int:
-        """Admin adjustment. Returns the member's new balance."""
+        """Legacy adjustment: changes both earned points and balance.
+
+        Returns the member's new balance.  Admin commands now use
+        :meth:`adjust_earned` / :meth:`adjust_balance` so the two
+        currencies can be changed independently.
+        """
         now = int(time.time()) if now_ts is None else int(now_ts)
         message_id = f"manual:{uuid.uuid4().hex}"
         self.record_event(
             chat_id, sender_id, sender_name, message_id,
             "manual", int(delta), category="adjust", now_ts=now,
+        )
+        return self.balance_of(chat_id, sender_id)
+
+    def adjust_earned(self, chat_id: str, sender_id: str,
+                      sender_name: str, delta: int, note: str = "",
+                      now_ts: int | None = None) -> int:
+        """Change cumulative 修炼值 without changing 灵石.
+
+        A positive/negative ``category='adjust'`` row is paired with an
+        opposite ``category='earned_offset'`` row.  The pair cancels in
+        every balance sum, while only the ``adjust`` row counts toward
+        ``earned_of()`` / boards / levels.
+
+        Returns the member's new cumulative earned points.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        message_id = f"manual_earned:{uuid.uuid4().hex}"
+        delta = int(delta)
+        self.record_events(
+            chat_id, message_id,
+            [
+                PointAward(sender_id, sender_name, "manual_earned",
+                           delta, "adjust"),
+                PointAward(sender_id, sender_name, "manual_earned_offset",
+                           -delta, "earned_offset"),
+            ],
+            now_ts=now,
+        )
+        return self.earned_of(chat_id, sender_id)
+
+    def adjust_balance(self, chat_id: str, sender_id: str,
+                       sender_name: str, delta: int, note: str = "",
+                       now_ts: int | None = None) -> int:
+        """Change 灵石 without changing cumulative 修炼值.
+
+        The ``category='balance_adjust'`` row is not part of the earned
+        categories, so levels / rankings stay untouched.
+
+        Returns the member's new balance.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        message_id = f"manual_balance:{uuid.uuid4().hex}"
+        self.record_events(
+            chat_id, message_id,
+            [PointAward(sender_id, sender_name, "manual_balance",
+                        int(delta), "balance_adjust")],
+            now_ts=now,
         )
         return self.balance_of(chat_id, sender_id)
 
@@ -256,6 +308,7 @@ class PointStore:
                 """SELECT reason, category, points, day, season, created_at
                    FROM point_events
                    WHERE chat_id = ? AND sender_id = ?
+                     AND category != 'earned_offset'
                    ORDER BY created_at DESC, id DESC LIMIT ?""",
                 (str(chat_id), str(sender_id), int(limit)),
             ).fetchall()

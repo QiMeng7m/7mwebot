@@ -62,6 +62,20 @@ class LedgerTests(PointStoreTestBase):
         self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 12)
         self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 12)
 
+    def test_adjust_earned_keeps_balance_unchanged(self):
+        self.store.record_events(self.chat, "m1", [_award("wxid_a", points=10)])
+        self.store.adjust_earned(self.chat, "wxid_a", "张三", +5, "奖励")
+        self.store.adjust_earned(self.chat, "wxid_a", "张三", -5, "扣回")
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 10)
+        self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 10)
+
+    def test_adjust_balance_keeps_earned_unchanged(self):
+        self.store.record_events(self.chat, "m1", [_award("wxid_a", points=10)])
+        self.store.adjust_balance(self.chat, "wxid_a", "张三", +50, "补偿")
+        self.store.adjust_balance(self.chat, "wxid_a", "张三", -20, "回收")
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 10)
+        self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), 40)
+
 
 class BoardTests(PointStoreTestBase):
     def test_total_board_order_and_ties(self):

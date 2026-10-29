@@ -296,7 +296,7 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter._msg_display_name(msg)` | — | 昵称→微信号→后端名回退 | `msg: dict` | `str` |
 | `MessageRouter._handle_fun_command(msg)` | — | 解析「抽签」/「解签」（裸文本或 @bot 均可） | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_draw(msg)` | — | 抽签并持久化结果，提示可「解签」 | `msg: dict` | `str` |
-| `MessageRouter._handle_read_lot(msg)` | — | 读取最近一签，带群聊上下文调用 AI 解签 | `msg: dict` | `str` |
+| `MessageRouter._handle_read_lot(msg)` | — | 读取本人当天签文，只把签文交给 AI 解读（不传群聊记录/群记忆） | `msg: dict` | `str` |
 | `MessageRouter._handle_welcome(msg)` | ~280 | 发送新成员欢迎消息 | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_proactive_chat(msg, mode)` | ~305 | 处理主动发言 | `msg: dict, mode: ProactiveMode` | `str \| None` |
 
@@ -918,7 +918,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `has_earned_on_day(chat_id, sender_id, day)` | 当天是否已有计分 | 见签名 | `bool` |
 | `store.py` | `event_points(chat_id, message_id, reason)` | 查某条消息某个加分项的分数 | 见签名 | `int` |
 | `store.py` | `has_reason_on_day(chat_id, sender_id, reason, day)` | 当天是否已获得某项加分（如 `daily_first`） | 见签名 | `bool` |
-| `store.py` | `delete_earn_events(chat_id)` / `messages_since(...)` / `adjust(...)` | 回溯重建支持 / 管理员调整 | 见签名 | 见签名 |
+| `store.py` | `delete_earn_events(chat_id)` / `messages_since(...)` / `adjust(...)` | 回溯重建支持 / 旧版同时调整修炼值与灵石 | 见签名 | 见签名 |
+| `store.py` | `adjust_earned(...)` / `adjust_balance(...)` | 分开调整：修炼值（用 `earned_offset` 对冲灵石）/ 灵石（`balance_adjust`，不计修炼值） | 见签名 | `int` |
 | `engine.py` | `PointEngine.award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励）；仅正文为「签到」时加 `daily_first` | 见签名 | `int`（本人得分） |
 | `engine.py` | `PointEngine.check_in(chat_id, sender_id, sender_name, message_id, now_ts=None)` | 显式「签到」补发当天 `daily_first`（已签返回 0） | 见签名 | `int` |
 | `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
@@ -2060,7 +2061,7 @@ MessageRouter.handle(msg)
 | `Boss状态` / `Boss榜` | Boss 血量/参与/剩余时间 / 本周伤害排行 |
 | `成就` / `称号` / `佩戴称号 名称` | 查看成就进度、已解锁称号、切换显示称号 |
 | `抽奖` / `每日抽奖` / `奖池` / `抽奖记录` | 100 灵石抽一次（每日 3 次）；奖池含修炼值/灵石/装备/鱼竿/鱼饵/免战券 |
-| `修炼值调整 名字 ±N [理由]` / `修炼值重算` | 管理员专用 |
+| `修炼值调整 名字 ±N [理由]` / `灵石调整 名字 ±N [理由]` / `修炼值重算` | 管理员专用；修炼值只影响等级/榜单，灵石只影响余额 |
 
 #### 计分与切磋公式
 
@@ -2078,6 +2079,7 @@ Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
 #### 关键约定
 
 - **累计获得**（`earn`+`adjust`）决定总榜/等级/赛季；**灵石**（全部 category）用于消费与被抢
+- 管理员调整已分离：「修炼值调整」写 `adjust +N` + `earned_offset -N`（灵石净值不变）；「灵石调整」写 `balance_adjust`（不计修炼值）
 - `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
 - 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
 - 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时 + 每 60 秒 + 入群事件时由 `wcdb_get_group_nicknames` 刷新，新入群成员无需重启即可解析）
@@ -2110,7 +2112,7 @@ Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
 | 输入 | 行为 |
 |---|---|
 | `抽签` / `@机器人 抽签` | 每人每群每天限一次；按固定概率抽签，回复签文并提示可「解签」；当天重复抽签会回显原签 |
-| `解签` / `@机器人 解签` | 每人每群每天限一次；取当天抽到的签，带最近 600 秒群聊上下文调用 AI 解签 |
+| `解签` / `@机器人 解签` | 每人每群每天限一次；取本人当天抽到的签，只把签文交给 AI 解读（不传群聊记录，避免混入他人发言） |
 | `解签`（今天还没抽/已解过） | 提示先「抽签」或「今天已经解过签啦」 |
 
 **概率固定，不可配置**：`FIXED_WEIGHTS = [2, 5, 18, 40, 25, 10]`（上上签/
@@ -2154,8 +2156,8 @@ MessageRouter.handle(msg)
         └── 「解签」→ MessageStore.get_fun_draw()
                        ├── 非当天 → 提示先抽签
                        ├── MessageStore.claim_fun_reading(day) — 每日一次
-                       ├── MessageStore.get_messages_since(600s, limit=20)
-                       ├── AbstractSummarizer.chat(prompt, context_messages, ...)
+                       ├── AbstractSummarizer.chat(prompt, context_messages=None, group_memory="")
+                       │     （只传签文，不传群聊记录/群记忆）
                        └── 失败 → MessageStore.release_fun_reading(day)
 ```
 

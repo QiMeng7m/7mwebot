@@ -156,15 +156,29 @@ class RouterPointsTests(unittest.TestCase):
         reply = self.router.handle(self._message("解签"))
         self.assertIn("先发「抽签」", reply)
 
-    def test_read_lot_uses_ai_and_context(self):
+    def test_read_lot_uses_ai_without_chat_context(self):
         self.router.handle(self._message("抽签"))
         fake = _FakeChatAi()
         self.router._summarizer = fake
         reply = self.router.handle(self._message("解签"))
         self.assertIn("AI解签", reply)
-        # The prompt carries the drawn lot, and the chat context is fed.
+        # Only the lot is sent; no group chat history is attached.
         self.assertIn("抽到的是", fake.last_message)
-        self.assertIsNotNone(fake.last_context)
+        self.assertIn("不要引用群聊内容", fake.last_message)
+        self.assertIsNone(fake.last_context)
+
+    def test_read_lot_ignores_other_members_messages(self):
+        self.router.handle(self._message(
+            "我最近在准备考试", sender_id="wxid_b", name="李四"))
+        self.router.handle(self._message(
+            "我昨天失恋了", sender_id="wxid_c", name="王五"))
+        self.router.handle(self._message("抽签"))
+        fake = _FakeChatAi()
+        self.router._summarizer = fake
+        self.router.handle(self._message("解签"))
+        self.assertIsNone(fake.last_context)
+        self.assertNotIn("考试", fake.last_message)
+        self.assertNotIn("失恋", fake.last_message)
 
     def test_draw_lots_only_once_per_day(self):
         first = self.router.handle(self._message("抽签"))

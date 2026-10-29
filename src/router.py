@@ -896,30 +896,24 @@ class MessageRouter:
         if not claimed:
             return f"@{name} 今天已经解过签啦，明天再来~"
 
-        since = int(time.time()) - CHAT_CONTEXT_WINDOW_SEC
-        context = self._store.get_messages_since(
-            msg["chat_id"], since, limit=20,
-        )
-        if context:
-            for m in context:
-                custom = self._nicks.resolve_name(m["sender_id"])
-                if custom != m["sender_id"]:
-                    m["sender_name"] = custom
-
+        # 解签只使用本人的签文：不读取群聊记录，也不传群记忆，
+        # 避免把别人的发言误当成提问者的近况。
         prompt = (
-            f"我今天抽到的是「{lot['level']}」签，签文是：{lot['phrase']}。\n"
-            "请结合最近的群聊内容，用 2-3 句话帮我解签："
-            "说说这支签对今天的工作、心情或人际相处有什么提醒，语气轻松一点。"
+            f"我是{name}，今天抽到的是「{lot['level']}」签，"
+            f"签文是：{lot['phrase']}。\n"
+            "请只根据这支签的签文，用 2-3 句话帮我解签："
+            "说说它对今天的工作、心情或人际相处有什么提醒。"
+            "不要引用群聊内容，不要猜测或提到其他人的经历，语气轻松一点。"
         )
 
         try:
             reading = self._summarizer.chat(
                 message=prompt,
-                context_messages=context,
+                context_messages=None,
                 requester_name=name,
                 bot_name=self._config.bot_display_name,
                 group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
-                group_memory=self._get_group_memory(msg["chat_id"]),
+                group_memory="",
             )
             reading = self._nicks.resolve_wxids(reading or "").strip()
             if not reading:

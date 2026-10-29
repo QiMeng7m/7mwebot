@@ -95,6 +95,7 @@ export default function PointsPanel() {
   const [message, setMessage] = useState('')
   const [delta, setDelta] = useState('')
   const [reason, setReason] = useState('')
+  const [adjustKind, setAdjustKind] = useState('earned') // earned | balance
 
   useEffect(() => {
     async function loadGroups() {
@@ -205,10 +206,14 @@ export default function PointsPanel() {
           sender_name: detail.sender_name,
           delta: value,
           reason,
+          kind: adjustKind,
         }),
       })
       if (data.ok) {
-        setMessage(`已调整，当前灵石 ${data.balance}`)
+        const label = data.kind === 'balance' ? '灵石' : '修炼值'
+        setMessage(
+          `已调整${label}，当前修炼值 ${data.earned} · 灵石 ${data.balance}`,
+        )
         setDelta('')
         setReason('')
         await refreshAll()
@@ -485,6 +490,14 @@ export default function PointsPanel() {
                     <div className="border-t border-border-main pt-4">
                       <p className="text-[13px] font-semibold text-text-main mb-2">管理员调整</p>
                       <div className="flex gap-2 mb-2">
+                        <select
+                          value={adjustKind}
+                          onChange={e => setAdjustKind(e.target.value)}
+                          className="w-24 bg-bg-raised border border-border-main rounded-lg px-2 py-2 text-[13px] text-text-main focus:outline-none focus:border-brand-green cursor-pointer"
+                        >
+                          <option value="earned">修炼值</option>
+                          <option value="balance">灵石</option>
+                        </select>
                         <input
                           type="number"
                           value={delta}
