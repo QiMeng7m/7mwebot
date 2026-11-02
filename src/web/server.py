@@ -75,6 +75,7 @@ def _find_or_create_env() -> Path:
     # 3. Last resort: create minimal .env
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(
+        "AI_ENABLED=true\n"
         "AI_BACKEND=deepseek\n"
         "DEEPSEEK_API_KEY=\n"
         "WECHAT_BACKEND=wcdb\n"
@@ -290,6 +291,7 @@ def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
             return ",".join(str(v).strip() for v in value if str(v).strip())
         return str(value).strip()
 
+    put("AI_ENABLED", "ai_enabled", transform=as_bool)
     put("AI_BACKEND", "ai_backend")
     put("DEEPSEEK_API_KEY", "deepseek_api_key")
     put("DEEPSEEK_BASE_URL", "deepseek_base_url")
@@ -1293,6 +1295,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                         k, v = line.split("=", 1)
                         raw[k.strip()] = v.strip()
             config_data = {
+                "ai_enabled": raw.get("AI_ENABLED", "true").lower() == "true",
                 "ai_backend": raw.get("AI_BACKEND", "deepseek"),
                 "deepseek_api_key": _mask_key(raw.get("DEEPSEEK_API_KEY", "")),
                 "deepseek_base_url": raw.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -1355,6 +1358,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                             k, v = line.split("=", 1)
                             raw[k.strip()] = v.strip()
                 export_data = {
+                    "ai_enabled": raw.get("AI_ENABLED", "true").lower() == "true",
                     "ai_backend": raw.get("AI_BACKEND", "deepseek"),
                     "deepseek_api_key": _mask_key(raw.get("DEEPSEEK_API_KEY", "")),
                     "deepseek_base_url": raw.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -2410,6 +2414,16 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     os.environ[key] = str(value)
                 try:
                     config = load_config()
+
+                    # Master switch: block prompt-sandbox tests too, so a
+                    # disabled AI can never be charged from the debug UI.
+                    if not getattr(config, "ai_enabled", True):
+                        self.send_json({
+                            "ok": False,
+                            "error": "AI 功能已关闭（AI_ENABLED=false），"
+                                     "请先在系统配置中启用 AI。",
+                        })
+                        return
 
                     # Apply remaining overrides to the config object directly
                     # (covers fields load_config() reads but doesn't apply from env).

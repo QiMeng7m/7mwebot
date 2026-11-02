@@ -60,6 +60,11 @@ class FeishuExportService:
     def export_recent_chat(self, trigger_msg: dict) -> FeishuExportResult:
         """Summarize recent chat and export it to the configured Feishu target."""
         requester = trigger_msg.get("sender_name", "群友")
+        if not getattr(self._config, "ai_enabled", True):
+            return FeishuExportResult(
+                ok=False,
+                reply_text=f"@{requester} AI 功能已关闭，无法生成飞书总结。",
+            )
         if not self._config.feishu_export_enabled:
             return FeishuExportResult(
                 ok=False,
@@ -130,6 +135,8 @@ class FeishuExportService:
 
     def maybe_auto_export(self, msg: dict) -> FeishuExportResult | None:
         """Silently export recent chat when auto knowledge sync is enabled."""
+        if not getattr(self._config, "ai_enabled", True):
+            return None
         if (
             not self._config.feishu_export_enabled
             or not self._config.feishu_auto_sync_enabled

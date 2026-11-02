@@ -157,6 +157,8 @@ class BotConfig:
     """All configuration for the WeChat summarizer bot."""
 
     # === AI Backend ===
+    # Master switch — when False, no AI API is ever called (no cost).
+    ai_enabled: bool = True
     # "claude" | "deepseek" | "openai"
     ai_backend: str = "claude"
 
@@ -609,23 +611,27 @@ def load_config() -> BotConfig:
     Raises RuntimeError if required configuration is missing.
     """
     ai_backend = os.getenv("AI_BACKEND", "claude").strip().lower()
+    ai_enabled = os.getenv("AI_ENABLED", "true").strip().lower() == "true"
 
-    # Validate required API keys based on selected backend
-    if ai_backend == "deepseek":
-        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if not api_key:
-            msg = "DEEPSEEK_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
-            raise RuntimeError(msg)
-    elif ai_backend == "openai":
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if not api_key:
-            msg = "OPENAI_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
-            raise RuntimeError(msg)
-    else:
-        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        if not api_key:
-            msg = "ANTHROPIC_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
-            raise RuntimeError(msg)
+    # Validate required API keys based on selected backend.
+    # Skipped when AI is switched off so the bot can run with no key / no
+    # remaining balance — a disabled bot must never require a paid key.
+    if ai_enabled:
+        if ai_backend == "deepseek":
+            api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+            if not api_key:
+                msg = "DEEPSEEK_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
+                raise RuntimeError(msg)
+        elif ai_backend == "openai":
+            api_key = os.getenv("OPENAI_API_KEY", "").strip()
+            if not api_key:
+                msg = "OPENAI_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
+                raise RuntimeError(msg)
+        else:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            if not api_key:
+                msg = "ANTHROPIC_API_KEY 未设置，请在 .env 文件中配置或通过引导页完成设置"
+                raise RuntimeError(msg)
 
     # Parse trigger keywords from comma-separated string
     keywords_str = os.getenv("TRIGGER_KEYWORDS", "").strip()
@@ -657,6 +663,7 @@ def load_config() -> BotConfig:
     )
 
     kwargs: dict = {
+        "ai_enabled": ai_enabled,
         "ai_backend": ai_backend,
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", "").strip(),
         "anthropic_base_url": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").strip(),

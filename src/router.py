@@ -623,6 +623,11 @@ class MessageRouter:
 
     # ── Memory helper ────────────────────────────────────────────
 
+    @property
+    def _ai_enabled(self) -> bool:
+        """Master AI switch (AI_ENABLED). False → no paid API calls."""
+        return bool(getattr(self._config, "ai_enabled", True))
+
     def _get_group_memory(self, chat_id: str) -> str:
         """Return the group's memory text, or empty string if none."""
         mem = self._store.get_group_memory(chat_id)
@@ -635,6 +640,8 @@ class MessageRouter:
 
         Summary range: from requester's last message to @bot trigger message.
         Requester's own messages are excluded from the summary."""
+        if not self._ai_enabled:
+            return None
         if not self._config.summarize_enabled:
             return None
 
@@ -743,6 +750,11 @@ class MessageRouter:
         display_name = self._nicks.resolve_name(msg["sender_id"])
         if display_name == msg["sender_id"]:
             display_name = msg["sender_name"]
+
+        # Master switch: answer @mentions with a clear notice instead of
+        # silently dropping them (members might think the bot is broken).
+        if not self._ai_enabled:
+            return f"@{display_name} AI 功能已关闭，暂时不聊啦。"
 
         logger.info(
             "AI chat: '%s' asks '%s'",
@@ -887,6 +899,14 @@ class MessageRouter:
         if not lot or lot.get("day") != day:
             return f"@{name} 今天还没有抽签，先发「抽签」吧"
 
+        # Master switch: still show the lot, but no AI reading and no
+        # daily claim so the member can retry after AI is re-enabled.
+        if not self._ai_enabled:
+            return (
+                f"@{name} AI 功能已关闭，暂时不能解签。"
+                f"你这支是{lot.get('emoji', '')} {lot['level']}：{lot['phrase']}"
+            )
+
         try:
             claimed = self._store.claim_fun_reading(
                 msg["chat_id"], msg["sender_id"], day,
@@ -982,6 +1002,8 @@ class MessageRouter:
         The AI may return an empty string if it judges the conversation
         inappropriate for interjection — no message is sent in that case.
         """
+        if not self._ai_enabled:
+            return None
         now = int(time.time())
 
         # Fetch recent messages — limit to mode's context window

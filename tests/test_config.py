@@ -378,6 +378,49 @@ class LoadConfigTests(unittest.TestCase):
             self.assertEqual(config.ai_backend, "claude")
             self.assertEqual(config.anthropic_api_key, "sk-ant-test-key")
 
+    def test_load_config_ai_disabled_allows_missing_api_key(self):
+        """AI_ENABLED=false must not require any provider API key."""
+        from src.config import load_config
+
+        with patch.dict(os.environ, {
+            "AI_BACKEND": "deepseek",
+            "AI_ENABLED": "false",
+        }, clear=True):
+            config = load_config()
+            self.assertFalse(config.ai_enabled)
+            self.assertEqual(config.deepseek_api_key, "")
+
+    def test_load_config_ai_enabled_by_default(self):
+        """AI_ENABLED defaults to true for backward compatibility."""
+        from src.config import load_config
+
+        with patch.dict(os.environ, {
+            "ANTHROPIC_API_KEY": "sk-ant-test-key",
+        }, clear=True):
+            self.assertTrue(load_config().ai_enabled)
+
+    def test_create_summarizer_returns_disabled_backend(self):
+        """Factory returns the no-op backend when AI is switched off."""
+        from src.config import BotConfig
+        from src.summarize import (
+            AIDisabledError, DisabledSummarizer, create_summarizer,
+        )
+
+        config = BotConfig(ai_enabled=False)
+        summarizer = create_summarizer(config)
+
+        self.assertIsInstance(summarizer, DisabledSummarizer)
+        self.assertTrue(summarizer.is_disabled)
+        with self.assertRaises(AIDisabledError):
+            summarizer.chat("你好")
+        with self.assertRaises(AIDisabledError):
+            summarizer.summarize([], "张三")
+        self.assertEqual(summarizer.proactive_chat(None, []), "")
+        self.assertEqual(
+            summarizer.consolidate_memory("旧记忆", [{"content": "x"}]),
+            "旧记忆",
+        )
+
     def test_load_config_with_deepseek_backend(self):
         """When AI_BACKEND=deepseek, DEEPSEEK_API_KEY is required."""
         from src.config import load_config

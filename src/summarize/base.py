@@ -38,6 +38,10 @@ class AbstractSummarizer(ABC):
     max_retries: int = 3
     retry_exceptions: tuple = ()
 
+    # True for DisabledSummarizer — lets callers (memory consolidation,
+    # health checks, …) skip work without importing the disabled backend.
+    is_disabled: bool = False
+
     # Health monitoring: track last successful API call timestamp
     last_api_call_time: float = 0.0
 

@@ -86,6 +86,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 
 | 环境变量名 | 类型 | 默认值 | 定义位置 | 消费位置 |
 |---|---|---|---|---|
+| `AI_ENABLED` | `bool` | `True` | `src/config.py:load_config()` | `src/summarize/__init__.py:create_summarizer()`、`src/router.py` 各 AI 入口、`MemoryConsolidator`、`FeishuExportService`、`VoicePipeline`、`/api/sandbox/test` |
 | `AI_BACKEND` | `str` | `"claude"` | `src/config.py:load_config()` | `src/summarize/__init__.py:create_summarizer()` |
 | `ANTHROPIC_API_KEY` | `str` | `""` | `src/config.py` | `src/summarize/claude_backend.py:ClaudeSummarizer.__init__()` |
 | `ANTHROPIC_BASE_URL` | `str` | `"https://api.anthropic.com"` | `src/config.py` | `src/summarize/claude_backend.py` |
@@ -290,15 +291,16 @@ todo_delete_keywords: list[str] = [
 | `MessageRouter._load_group_names()` | ~115 | 加载 chat_id → 群名映射(懒加载；兼容 `{name, member_count}` 与旧版纯字符串) | 无 | `dict[str, str]` |
 | `MessageRouter._is_todo_group(chat_id)` | ~125 | 判断群聊是否启用待办功能 | `chat_id: str` | `bool` |
 | `MessageRouter._handle_todo_command(msg, content)` | — | 分发群待办命令（@ 与裸文本共用），并触发自动清理 | `msg: dict, content: str` | `str \| None` |
+| `MessageRouter._ai_enabled` | — | 总开关访问器（`config.ai_enabled`）；False 时所有 AI 入口直接跳过 | 无 | `bool` |
 | `MessageRouter._get_group_memory(chat_id)` | ~140 | 获取群聊记忆文本 | `chat_id: str` | `str` |
-| `MessageRouter._handle_summary(msg)` | ~145 | 生成聊天总结 | `msg: dict` | `str \| None` |
-| `MessageRouter._handle_chat(msg, clean_content)` | ~230 | 处理 @bot AI 对话 | `msg: dict, clean_content: str` | `str \| None` |
+| `MessageRouter._handle_summary(msg)` | ~145 | 生成聊天总结（`AI_ENABLED=false` 时直接返回 None） | `msg: dict` | `str \| None` |
+| `MessageRouter._handle_chat(msg, clean_content)` | ~230 | 处理 @bot AI 对话（`AI_ENABLED=false` 时回复"AI 功能已关闭"，不调用 API） | `msg: dict, clean_content: str` | `str \| None` |
 | `MessageRouter._msg_display_name(msg)` | — | 昵称→微信号→后端名回退 | `msg: dict` | `str` |
 | `MessageRouter._handle_fun_command(msg)` | — | 解析「抽签」/「解签」（裸文本或 @bot 均可） | `msg: dict` | `str \| None` |
 | `MessageRouter._handle_draw(msg)` | — | 抽签并持久化结果，提示可「解签」 | `msg: dict` | `str` |
-| `MessageRouter._handle_read_lot(msg)` | — | 读取本人当天签文，只把签文交给 AI 解读（不传群聊记录/群记忆） | `msg: dict` | `str` |
+| `MessageRouter._handle_read_lot(msg)` | — | 读取本人当天签文，只把签文交给 AI 解读（不传群聊记录/群记忆）；AI 关闭时只回显签文、不占用当天名额 | `msg: dict` | `str` |
 | `MessageRouter._handle_welcome(msg)` | ~280 | 发送新成员欢迎消息 | `msg: dict` | `str \| None` |
-| `MessageRouter._handle_proactive_chat(msg, mode)` | ~305 | 处理主动发言 | `msg: dict, mode: ProactiveMode` | `str \| None` |
+| `MessageRouter._handle_proactive_chat(msg, mode)` | ~305 | 处理主动发言（`AI_ENABLED=false` 时静默跳过） | `msg: dict, mode: ProactiveMode` | `str \| None` |
 
 ### 2.4 `src/summarize/base.py` (AbstractSummarizer)
 
@@ -318,6 +320,8 @@ todo_delete_keywords: list[str] = [
 | `_split_into_chunks(messages)` | — | 将消息列表分块 | `messages: list[dict]` | `list[list[dict]]` |
 | `_estimate_tokens(messages)` | — | 估算 token 数(静态) | `messages: list[dict]` | `int` |
 | `_retry_with_backoff(call_fn, label)` | — | 带指数退避的重试执行 | `call_fn: Callable, label: str` | `T` |
+
+> 类属性 `is_disabled`（默认 `False`）供 `MemoryConsolidator` 等调用方判断后端是否为空实现；`DisabledSummarizer` 置为 `True`。
 
 ### 2.5 `src/summarize/claude_backend.py` (ClaudeSummarizer)
 
@@ -359,6 +363,20 @@ todo_delete_keywords: list[str] = [
 | `consolidate_memory(existing_memory, new_messages)` | 记忆合并 | 现有记忆 + 新消息 | `str` |
 | `_parse_summary_from_tool_call(response)` | 解析 tool call 响应(模块级) | `response` | `SummaryResult` |
 | `STORE_SUMMARY_TOOL` | 结构化输出 tool schema(模块级) | — | `dict` |
+
+### 2.6c `src/summarize/disabled_backend.py` (DisabledSummarizer)
+
+> `AI_ENABLED=false` 时由 `create_summarizer()` 返回的空实现后端。不构造任何 SDK 客户端、不访问网络，用于"欠费/不想续费"时彻底关闭 AI 且仍能启动机器人。
+
+| 函数 | 描述 | 参数 | 返回值 |
+|---|---|---|---|
+| `AIDisabledError(RuntimeError)` | AI 已关闭时调用真实接口抛出的异常 | — | — |
+| `DisabledSummarizer.is_disabled` | 固定 `True`，供调用方跳过相关工作 | — | `bool` |
+| `chat(message, **kwargs)` | 直接抛 `AIDisabledError` | 同基类 | `str` |
+| `proactive_chat(mode, context_messages, **kwargs)` | 固定返回空字符串（保持沉默） | 同基类 | `str` |
+| `summarize(messages, requester_name)` | 直接抛 `AIDisabledError` | 同基类 | `SummaryResult` |
+| `_summarize_direct/_summarize_chunk/_merge_chunk_summaries/_call_chat_api` | 直接抛 `AIDisabledError` | 同基类 | — |
+| `consolidate_memory(existing_memory, new_messages)` | 原样返回已有记忆，不做合并 | 同基类 | `str` |
 
 ### 2.7 `src/summarize/prompts.py`
 
@@ -1034,6 +1052,7 @@ Bot.run()
   ├── MessageStore()                     [src/db/store.py]
   ├── TriggerDetector()                  [src/trigger/detector.py]
   ├── create_summarizer()                [src/summarize/__init__.py]
+  │     ├── DisabledSummarizer()          [src/summarize/disabled_backend.py] ← AI_ENABLED=false
   │     ├── ClaudeSummarizer()            [src/summarize/claude_backend.py]
   │     ├── DeepSeekSummarizer()          [src/summarize/deepseek_backend.py]
   │     └── OpenAISummarizer()            [src/summarize/openai_backend.py]
@@ -1342,6 +1361,7 @@ WcdbBackend.start(callback)
 | `claude_backend.py` | `src/summarize/claude_backend.py` | Claude API (Pydantic parse) |
 | `deepseek_backend.py` | `src/summarize/deepseek_backend.py` | DeepSeek API (继承 OpenAISummarizer) |
 | `openai_backend.py` | `src/summarize/openai_backend.py` | 通用 OpenAI 兼容 API (OpenAI / GLM / Moonshot 等) |
+| `disabled_backend.py` | `src/summarize/disabled_backend.py` | AI 总开关关闭时的空实现 (DisabledSummarizer) |
 | `prompts.py` | `src/summarize/prompts.py` | Prompt 模板 (XML格式, Map-Reduce, 记忆合并) |
 | `models.py` | `src/summarize/models.py` | Pydantic 数据模型 |
 | `__init__.py` | `src/summarize/__init__.py` | 工厂函数 create_summarizer() |
@@ -1384,6 +1404,7 @@ MessageRouter.handle(msg)
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
+| `ai_enabled` | `True` | AI 总开关；False 时工厂返回 `DisabledSummarizer`，所有入口零调用 |
 | `token_budget` (Claude) | `150000` | Claude 上下文窗口安全预算 |
 | `token_budget` (DeepSeek) | `900000` | DeepSeek 上下文窗口安全预算 |
 | `token_budget` (OpenAI) | `100000` | 通用 OpenAI 兼容上下文窗口安全预算 |
@@ -1506,7 +1527,7 @@ MessageRouter.handle(msg) → [无 @mention]
 | `GET` | `/api/todos/counts?chat_id=xxx` | 获取各状态待办计数 | 无 |
 | `POST` | `/api/todos/action` | 执行待办操作 (complete/delete/restore/clear) | 无 |
 | `GET` | `/api/logs` | 获取最近 500 行日志 | 无 |
-| `POST` | `/api/sandbox/test` | AI 沙盒测试 (不发送) | 无 |
+| `POST` | `/api/sandbox/test` | AI 沙盒测试 (不发送；`AI_ENABLED=false` 时直接返回错误) | 无 |
 | `GET` | `/api/lots` | 获取抽签配置 | 无 |
 | `POST` | `/api/lots` | 保存抽签配置 | 无 |
 | `GET` | `/api/browse?path=` | 浏览文件系统目录 | 无 |
@@ -1532,6 +1553,7 @@ MessageRouter.handle(msg) → [无 @mention]
 >
 > `/api/sandbox/test` 只测试 AI 对话/总结，**不执行群指令**（活跃查询、抽签、
 > 待办等）。请求里带 `***` 的脱敏密钥会被忽略，实际使用 `.env` 中的真实密钥。
+> 当 `AI_ENABLED=false` 时该端点直接返回错误，不会产生任何 AI 费用。
 
 #### WebSocket 消息类型
 
@@ -1733,6 +1755,7 @@ MessageRouter.handle(msg) → [飞书导出命令]
   │     └── 匹配 feishu_export_trigger_keywords
   │
   ├── [手动导出] FeishuExportService.export_recent_chat(trigger_msg)
+  │     ├── AI_ENABLED=false → 直接返回"AI 功能已关闭，无法生成飞书总结"
   │     ├── _validate_target() — 验证配置完整性
   │     ├── _recent_messages() — 获取时间窗口内消息
   │     ├── _summarizer.summarize() — AI 总结
@@ -1746,6 +1769,7 @@ MessageRouter.handle(msg) → [飞书导出命令]
   │     └── 返回 FeishuExportResult
   │
   └── [自动同步] FeishuExportService.maybe_auto_export(msg)
+        ├── AI_ENABLED=false → 直接返回 None（静默跳过）
         ├── 检查: auto_sync_enabled + mode == "knowledge"
         ├── 冷却: cooldown_sec 内不重复触发
         ├── 最低消息数: >= auto_sync_min_messages
@@ -1790,6 +1814,8 @@ MessageRouter.handle(msg) → [飞书导出命令]
 VoicePipeline.process(msg)
   │
   ├── 检查: voice_asr_enabled?
+  │     └── AI_ENABLED=false 且后端=openai_whisper → 整体禁用（不产生云端费用）
+  │         （local_whisper 仍然免费可用）
   │
   ├── VoiceCache.get(msg_svr_id) → 命中则直接返回
   │
@@ -1867,6 +1893,7 @@ MessageRouter.handle(msg)
   │
   └── MemoryConsolidator.check_and_consolidate(chat_id)
         │
+        ├── AI 总开关检查: summarizer.is_disabled → 直接返回 False
         ├── 获取当前记忆: MessageStore.get_group_memory(chat_id)
         ├── 统计新消息: MessageStore.get_new_message_count(chat_id, last_id)
         │
@@ -2471,6 +2498,9 @@ Boss伤害 = roll_damage(攻击) × (1 + 功法 Boss 伤害加成)
 ### 5.1 `.env` 文件完整配置项
 
 ```ini
+# === AI 总开关 ===
+AI_ENABLED=true                               # false=关闭所有 AI 调用（无需 API Key、不产生费用）
+
 # === AI 后端 ===
 AI_BACKEND=deepseek                           # "deepseek" | "claude" | "openai"
 

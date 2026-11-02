@@ -725,6 +725,54 @@ class FeishuExportServiceTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("飞书同步还没开启", result.reply_text)
 
+    def test_ai_disabled_blocks_manual_export(self):
+        from src.config import BotConfig
+        from src.integrations.feishu.exporter import FeishuExportService
+
+        cfg = BotConfig(ai_enabled=False, feishu_export_enabled=True)
+        summarizer = MagicMock()
+        service = FeishuExportService(
+            cfg, self._store_with_messages(), summarizer, client=MagicMock(),
+        )
+
+        result = service.export_recent_chat({
+            "chat_id": "chat1@chatroom",
+            "group_name": "摸鱼群",
+            "sender_name": "管理员",
+            "sender_id": "admin",
+            "timestamp": int(time.time()),
+        })
+
+        self.assertFalse(result.ok)
+        self.assertIn("AI 功能已关闭", result.reply_text)
+        summarizer.summarize.assert_not_called()
+
+    def test_ai_disabled_skips_auto_export(self):
+        from src.config import BotConfig
+        from src.integrations.feishu.exporter import FeishuExportService
+
+        cfg = BotConfig(
+            ai_enabled=False,
+            feishu_export_enabled=True,
+            feishu_auto_sync_enabled=True,
+            feishu_export_mode="knowledge",
+        )
+        summarizer = MagicMock()
+        service = FeishuExportService(
+            cfg, self._store_with_messages(), summarizer, client=MagicMock(),
+        )
+
+        result = service.maybe_auto_export({
+            "chat_id": "chat1@chatroom",
+            "group_name": "摸鱼群",
+            "sender_name": "管理员",
+            "sender_id": "admin",
+            "timestamp": int(time.time()),
+        })
+
+        self.assertIsNone(result)
+        summarizer.summarize.assert_not_called()
+
     def test_export_includes_meaningful_trigger_message_content(self):
         from src.config import BotConfig
         from src.integrations.feishu.exporter import FeishuExportService

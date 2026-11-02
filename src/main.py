@@ -24,6 +24,7 @@ def _print_config_summary(config: BotConfig) -> None:
     print()
     print("Configuration Summary")
     print("─" * 50)
+    print(f"  AI Enabled:              {config.ai_enabled}")
     print(f"  AI Backend:              {config.ai_backend}")
     print(f"  Summarize Model:         {config.summarize_model}")
     print(f"  Anthropic API Key:       {_mask(config.anthropic_api_key)}")

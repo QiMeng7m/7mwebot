@@ -12,6 +12,7 @@ import logging
 from .base import AbstractSummarizer
 from .claude_backend import ClaudeSummarizer
 from .deepseek_backend import DeepSeekSummarizer
+from .disabled_backend import AIDisabledError, DisabledSummarizer
 from .openai_backend import OpenAISummarizer
 from .models import ParticipantContribution, SummaryResult
 
@@ -19,8 +20,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AbstractSummarizer",
+    "AIDisabledError",
     "ClaudeSummarizer",
     "DeepSeekSummarizer",
+    "DisabledSummarizer",
     "OpenAISummarizer",
     "SummaryResult",
     "ParticipantContribution",
@@ -40,6 +43,11 @@ def create_summarizer(config) -> AbstractSummarizer:
     Raises:
         ValueError: If the configured backend is unknown.
     """
+    # Master switch: never construct a provider client when AI is off.
+    if not getattr(config, "ai_enabled", True):
+        logger.info("AI disabled (AI_ENABLED=false) — using DisabledSummarizer")
+        return DisabledSummarizer()
+
     backend = config.ai_backend.lower()
 
     if backend == "deepseek":

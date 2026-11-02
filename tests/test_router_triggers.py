@@ -16,6 +16,8 @@ class _StubSummarizer:
     def __init__(self):
         self.summarize_calls = 0
         self.chat_calls = 0
+        self.consolidate_calls = 0
+        self.is_disabled = False
 
     def summarize(self, messages, requester_name):
         self.summarize_calls += 1
@@ -29,6 +31,7 @@ class _StubSummarizer:
         return "AI 回复"
 
     def consolidate_memory(self, *args, **kwargs):
+        self.consolidate_calls += 1
         return ""
 
 
@@ -117,6 +120,48 @@ class RouterTriggerTests(unittest.TestCase):
         reply = self.router.handle(self._message("总结一下"))
         self.assertIsNone(reply)
         self.assertEqual(self.summarizer.summarize_calls, 0)
+
+    # ── AI master switch ─────────────────────────────────────────
+
+    def test_ai_disabled_blocks_summary(self):
+        """Bare keyword must not spend an AI call when AI is off."""
+        self.config.ai_enabled = False
+        reply = self.router.handle(self._message("总结一下"))
+        self.assertIsNone(reply)
+        self.assertEqual(self.summarizer.summarize_calls, 0)
+        self.assertEqual(self.summarizer.chat_calls, 0)
+
+    def test_ai_disabled_at_mention_returns_notice(self):
+        """@mentions get a clear notice instead of an AI reply."""
+        self.config.ai_enabled = False
+        reply = self.router.handle(
+            self._message("@群聊小助手 你好", is_at=True)
+        )
+        self.assertIn("AI 功能已关闭", reply)
+        self.assertEqual(self.summarizer.chat_calls, 0)
+
+    def test_ai_disabled_skips_memory_consolidation(self):
+        """Memory upkeep must not call the AI while the switch is off."""
+        self.config.ai_enabled = False
+        self.summarizer.is_disabled = True
+        self.router.handle(self._message("随便聊聊"))
+        self.assertEqual(self.summarizer.consolidate_calls, 0)
+
+    def test_ai_disabled_lot_reading_returns_lot_without_ai(self):
+        """解签 falls back to the raw lot text when AI is off."""
+        from src.points.util import local_day
+
+        self.config.ai_enabled = False
+        self.store.save_fun_draw(
+            self.chat, "wxid_a", "张三", "大吉", "🍀", "顺风顺水",
+            day=local_day(),
+        )
+        reply = self.router.handle(
+            self._message("@群聊小助手 解签", is_at=True)
+        )
+        self.assertIn("AI 功能已关闭", reply)
+        self.assertIn("顺风顺水", reply)
+        self.assertEqual(self.summarizer.chat_calls, 0)
 
     def test_todo_group_matches_dict_group_names(self):
         """group_names.json values are {name, member_count}, not strings."""

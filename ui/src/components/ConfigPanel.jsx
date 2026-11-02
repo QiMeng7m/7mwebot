@@ -32,9 +32,28 @@ function TypewriterText({ text, speed = 15 }) {
 function AiSection({ form, update }) {
   const isDeepSeek = form.ai_backend === 'deepseek'
   const isOpenAI = form.ai_backend === 'openai'
+  const aiEnabled = form.ai_enabled !== false
 
   return (
     <div>
+      <div className="py-4 mb-2 border-b border-border-main/50">
+        <div className="flex items-center justify-between">
+          <div className="flex-1 mr-8">
+            <p className="text-[15px] text-text-main font-medium">AI 功能总开关</p>
+            <p className="text-sm text-text-muted mt-1.5">
+              关闭后不会调用任何 AI 接口（总结、闲聊、解签、记忆整理、飞书 AI 导出、云端语音转写全部停止），不产生 AI 费用；微信收发消息、抽签、积分等功能不受影响
+            </p>
+          </div>
+          <Toggle enabled={aiEnabled} onChange={v => update('ai_enabled', v)} />
+        </div>
+      </div>
+
+      {!aiEnabled && (
+        <div className="mb-4 px-4 py-3 rounded-2xl bg-bg-raised border border-border-main text-xs text-text-muted leading-relaxed">
+          AI 功能已关闭，当前不会产生任何 AI 费用。下面的服务商与 API Key 配置会保留，重新打开开关并重启机器人后即可继续使用。
+        </div>
+      )}
+
       <Field label="AI 服务商" hint="推荐使用 DeepSeek，中文群聊效果更好；OpenAI 兼容支持 GLM / Moonshot 等">
         <Select value={form.ai_backend} onChange={v => update('ai_backend', v)} options={[
           { value: 'deepseek', desc: 'DeepSeek', hint: '推荐 · 中文效果好' },
@@ -1829,6 +1848,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
   const [importSuccess, setImportSuccess] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [form, setForm] = useState({
+    ai_enabled: true,
     ai_backend: 'deepseek', deepseek_api_key: '', deepseek_model: 'deepseek-v4-flash',
     deepseek_base_url: 'https://api.deepseek.com',
     openai_api_key: '', openai_base_url: 'https://api.openai.com/v1', openai_model: 'gpt-4o-mini',
@@ -1947,6 +1967,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ai_enabled: form.ai_enabled,
           ai_backend: form.ai_backend,
           deepseek_api_key: form.deepseek_api_key,
           deepseek_base_url: form.deepseek_base_url,

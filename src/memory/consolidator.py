@@ -63,6 +63,10 @@ class MemoryConsolidator:
 
     def _check_and_consolidate_impl(self, chat_id: str) -> bool:
         """Internal: check triggers and run consolidation."""
+        # AI master switch off → never spend API calls on memory upkeep.
+        if getattr(self._summarizer, "is_disabled", False):
+            return False
+
         memory = self._store.get_group_memory(chat_id)
         last_id = memory["last_message_id"] if memory else None
         last_consolidated = memory["last_consolidated"] if memory else None

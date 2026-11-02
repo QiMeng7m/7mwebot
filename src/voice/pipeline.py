@@ -179,6 +179,20 @@ class VoicePipeline:
             logger.info("VoicePipeline disabled (VOICE_ASR_ENABLED=false)")
             return
 
+        # Paid cloud ASR is also an AI API.  When the master AI switch is
+        # off, fall back to no transcription rather than silently charging
+        # OpenAI Whisper.  Local Whisper stays free and unaffected.
+        if (
+            not getattr(config, "ai_enabled", True)
+            and getattr(config, "voice_asr_backend", "local_whisper")
+            == "openai_whisper"
+        ):
+            logger.warning(
+                "VoicePipeline disabled: AI 功能已关闭，云端 Whisper 不会调用"
+            )
+            self._enabled = False
+            return
+
         data_dir = getattr(config, "wechat_data_dir", "")
         if not data_dir:
             logger.warning(

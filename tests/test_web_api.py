@@ -1094,6 +1094,30 @@ class ApiConfigEndpointTests(unittest.TestCase):
             self.assertEqual(config["bot_display_name"], "MyBot")
             self.assertFalse(config["fun_enabled"])
 
+    def test_load_config_reads_ai_enabled(self):
+        """GET /api/load-config exposes the AI master switch."""
+        with patch("src.web.server._find_or_create_env") as mock_find:
+            fake_env = MagicMock()
+            fake_env.exists.return_value = True
+            fake_env.read_text.return_value = "AI_ENABLED=false\n"
+            mock_find.return_value = fake_env
+            handler, sock = _build_handler("/api/load-config")
+            parts = sock.get_response_text().split("\r\n\r\n", 1)
+            body = json.loads(parts[1])
+            self.assertFalse(body["config"]["ai_enabled"])
+
+    def test_load_config_defaults_ai_enabled_true(self):
+        """Missing AI_ENABLED keeps AI on (backward compatible)."""
+        with patch("src.web.server._find_or_create_env") as mock_find:
+            fake_env = MagicMock()
+            fake_env.exists.return_value = True
+            fake_env.read_text.return_value = "AI_BACKEND=deepseek\n"
+            mock_find.return_value = fake_env
+            handler, sock = _build_handler("/api/load-config")
+            parts = sock.get_response_text().split("\r\n\r\n", 1)
+            body = json.loads(parts[1])
+            self.assertTrue(body["config"]["ai_enabled"])
+
     def test_load_config_reads_openai_values(self):
         """GET /api/load-config returns openai fields (masked key + base_url/model)."""
         with patch("src.web.server._find_or_create_env") as mock_find:
@@ -1223,6 +1247,32 @@ class ApiConfigEndpointTests(unittest.TestCase):
                 parts = sock.get_response_text().split("\r\n\r\n", 1)
                 result = json.loads(parts[1])
                 self.assertTrue(result["ok"])
+
+    def test_save_config_persists_ai_enabled(self):
+        """POST /api/config writes AI_ENABLED and load-config reads it back."""
+        tmp_dir = Path(tempfile.mkdtemp())
+        tmp_env = tmp_dir / ".env"
+        tmp_env.write_text("AI_ENABLED=true\nAI_BACKEND=deepseek\n",
+                           encoding="utf-8")
+        try:
+            body = json.dumps({"ai_enabled": False}).encode()
+            with (
+                patch.dict(os.environ, {}, clear=False),
+                patch("src.web.server._find_or_create_env",
+                      return_value=tmp_env),
+            ):
+                handler, sock = _build_handler(
+                    "/api/config", method="POST", body=body,
+                    headers={"Content-Type": "application/json",
+                             "Content-Length": str(len(body))},
+                )
+                parts = sock.get_response_text().split("\r\n\r\n", 1)
+                self.assertTrue(json.loads(parts[1])["ok"])
+            self.assertIn("AI_ENABLED=false",
+                          tmp_env.read_text(encoding="utf-8"))
+        finally:
+            tmp_env.unlink(missing_ok=True)
+            tmp_dir.rmdir()
 
     def test_save_config_roundtrip(self):
         """POST /api/config saves, and load-config reads it back correctly."""
