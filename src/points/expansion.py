@@ -1416,6 +1416,11 @@ class ExpansionService:
             if cur.rowcount == 0:
                 return "上架失败：装备状态已变化。"
             self._store.conn.execute(
+                """DELETE FROM equipment_affixes
+                   WHERE chat_id = ? AND sender_id = ? AND item_id = ?""",
+                (str(chat_id), str(sender_id), item["id"]),
+            )
+            self._store.conn.execute(
                 """INSERT INTO market_listings
                    (chat_id, seller_id, seller_name, item_id, price,
                     status, created_at, expires_at)

@@ -1031,7 +1031,7 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 | `.world_status/.cross_board` | 天象与世界事件 / 跨群修炼榜 | 见签名 | `str` |
 
 `PointStore` 新增：`lock` 属性、`skill_levels/skill_level_of/set_skill_level`，
-以及 `expansion.py` 直接使用的 13 张第二阶段表。
+以及 `expansion.py` 直接使用的 14 张第二阶段表。
 
 第二阶段常量：`DUNGEON_DAILY_ATTEMPTS=3`、`DUNGEON_MAX_FLOOR=50`、
 `ARENA_DAILY_ATTEMPTS=3`、`ARENA_WIN_POINTS=10`、`ARENA_LOSS_POINTS=3`、
