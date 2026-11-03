@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X, Fish, Sparkle } from '@phosphor-icons/react'
+import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X, Fish, Sparkle, Broom, Trash, Warning } from '@phosphor-icons/react'
 import { Select } from './SharedComponents'
 
 const API = 'http://127.0.0.1:7327'
@@ -73,6 +73,16 @@ function Bar({ value, max }) {
   )
 }
 
+// 装备属性：武器纯攻击，护甲纯防御，饰品偏攻击，坐骑偏防御
+function equipmentStats(item) {
+  if (item.slot === 'weapon') return `攻击 +${item.power}`
+  if (item.slot === 'armor') return `防御 +${item.power}`
+  const attack = item.slot === 'mount'
+    ? Math.floor(item.power / 2)
+    : Math.ceil(item.power / 2)
+  return `攻 +${attack} · 防 +${item.power - attack}`
+}
+
 export default function PointsPanel() {
   const [groups, setGroups] = useState([])
   const [chatId, setChatId] = useState('')
@@ -92,6 +102,7 @@ export default function PointsPanel() {
   const [balance, setBalance] = useState(0)
   const [power, setPower] = useState(null)
   const [shopMember, setShopMember] = useState('')
+  const [shopSlot, setShopSlot] = useState('')
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -383,6 +394,15 @@ export default function PointsPanel() {
     label: `${r.sender_name}（${r.points}修炼值）`,
   }))
   const ownedMap = Object.fromEntries(owned.map(o => [o.item_id, o]))
+  const shopSlotGroups = catalog.slots
+    .map(slot => ({
+      ...slot,
+      items: catalog.items
+        .filter(item => item.slot === slot.id)
+        .sort((a, b) => a.price - b.price),
+    }))
+    .filter(slot => slot.items.length > 0)
+  const activeShopSlot = shopSlotGroups.find(slot => slot.id === shopSlot) || shopSlotGroups[0]
   const fishInventory = fishing?.inventory || []
   const maxDaily = overview?.daily?.reduce((m, d) => Math.max(m, d.points), 0) || 0
   const distribution = overview?.level_distribution || {}
@@ -603,63 +623,125 @@ export default function PointsPanel() {
                 )}
               </div>
 
-              {catalog.slots.map(slot => {
-                const items = catalog.items.filter(i => i.slot === slot.id)
-                if (!items.length) return null
-                return (
-                  <Card key={slot.id}>
-                    <SectionTitle>{slot.name}</SectionTitle>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {items.map(item => {
+              {shopSlotGroups.length === 0 ? (
+                <Card>
+                  <p className="text-sm text-text-muted">还没有成员数据</p>
+                </Card>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {shopSlotGroups.map(slot => {
+                      const active = activeShopSlot?.id === slot.id
+                      const ownedCount = slot.items.filter(i => ownedMap[i.id]).length
+                      return (
+                        <button
+                          key={slot.id}
+                          onClick={() => setShopSlot(slot.id)}
+                          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium border transition-colors cursor-pointer ${
+                            active
+                              ? 'bg-brand-green-light border-brand-green/30 text-brand-green-hover dark:text-brand-green'
+                              : 'bg-bg-main border-border-main text-text-muted hover:text-text-main'
+                          }`}
+                        >
+                          {slot.name}
+                          <span className="text-[11px] font-mono opacity-60">{slot.items.length}</span>
+                          {ownedCount > 0 && (
+                            <span className="text-[10px] opacity-80">已拥有 {ownedCount}</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <div className="bg-bg-main border border-border-main rounded-2xl overflow-hidden">
+                    <div className="flex items-baseline justify-between px-5 pt-4 pb-3">
+                      <h3 className="text-[14px] font-semibold text-text-main">{activeShopSlot.name}</h3>
+                      <p className="text-[11px] text-text-muted">共 {activeShopSlot.items.length} 件 · 按价格从低到高</p>
+                    </div>
+
+                    <div className="hidden md:grid grid-cols-[minmax(0,1.6fr)_120px_minmax(0,1fr)_110px_88px] gap-3 px-5 py-2 text-[11px] text-text-muted border-y border-border-main bg-bg-raised/40">
+                      <span>装备</span>
+                      <span>属性</span>
+                      <span>技能</span>
+                      <span className="text-right">售价</span>
+                      <span className="text-right">操作</span>
+                    </div>
+
+                    <div className="divide-y divide-border-main">
+                      {activeShopSlot.items.map(item => {
                         const mine = ownedMap[item.id]
+                        const skills = item.skill_names || []
                         return (
-                          <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl border border-border-main bg-bg-raised/40">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-[14px] text-text-main truncate">
-                                {item.name}
-                                {item.tier_title && (
-                                  <span className="ml-2 text-[11px] text-text-muted">{item.tier_title}</span>
+                          <div
+                            key={item.id}
+                            className={`grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[minmax(0,1.6fr)_120px_minmax(0,1fr)_110px_88px] items-center gap-3 px-5 py-2.5 transition-colors ${
+                              mine ? 'bg-brand-green-light/30' : ''
+                            } hover:bg-bg-raised`}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="text-[13px] text-text-main truncate">{item.name}</span>
+                                <span className="shrink-0 rounded px-1 py-0.5 text-[10px] leading-none border border-border-main text-text-muted">
+                                  {item.tier_title}
+                                </span>
+                                {item.set_name && (
+                                  <span className="shrink-0 rounded px-1 py-0.5 text-[10px] leading-none border border-border-main text-text-muted">
+                                    {item.set_name}
+                                  </span>
                                 )}
+                                {mine?.equipped && (
+                                  <span className="shrink-0 text-[10px] text-brand-green">已装备</span>
+                                )}
+                              </div>
+                              {/* 窄屏把属性和价格折到名称下方，避免信息丢失 */}
+                              <p className="md:hidden mt-0.5 text-[11px] font-mono text-text-muted truncate">
+                                {equipmentStats(item)} · {item.price} 灵石
+                                {skills.length > 0 ? ` · ${skills.join('/')}` : ''}
                               </p>
-                              <p className="text-[11px] text-text-muted font-mono">
-                                {item.slot === 'weapon'
-                                  ? `攻击 +${item.power}`
-                                  : item.slot === 'armor'
-                                    ? `防御 +${item.power}`
-                                    : `攻${Math.ceil(item.power / 2)} 防${Math.floor(item.power / 2)}`}
-                                {' · '}{item.price} 灵石
-                                {mine?.equipped ? ' · 已装备' : ''}
-                              </p>
-                              {item.skill_names?.length > 0 && (
-                                <p className="text-[11px] text-brand-green-hover dark:text-brand-green truncate">
-                                  技能：{item.skill_names.join(' / ')}
-                                </p>
+                            </div>
+
+                            <span className="hidden md:block text-[12px] font-mono text-text-main/80 whitespace-nowrap">
+                              {equipmentStats(item)}
+                            </span>
+                            <span className="hidden md:block text-[11px] truncate">
+                              {skills.length > 0 ? (
+                                <span className="text-brand-green-hover dark:text-brand-green">
+                                  {skills.join(' · ')}
+                                </span>
+                              ) : (
+                                <span className="text-text-muted">—</span>
+                              )}
+                            </span>
+                            <span className="hidden md:block text-[12px] font-mono text-right text-text-main whitespace-nowrap">
+                              {item.price} 灵石
+                            </span>
+
+                            <div className="flex items-center justify-end">
+                              {mine ? (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => toggleEquip(item, !mine.equipped)}
+                                  className="px-3 py-1.5 rounded-lg text-[12px] border border-border-main text-text-muted hover:text-text-main transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  {mine.equipped ? '卸下' : '装备'}
+                                </button>
+                              ) : (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => buyItem(item)}
+                                  className="px-3 py-1.5 rounded-lg text-[12px] bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-medium cursor-pointer disabled:opacity-50"
+                                >
+                                  购买
+                                </button>
                               )}
                             </div>
-                            {mine ? (
-                              <button
-                                disabled={busy}
-                                onClick={() => toggleEquip(item, !mine.equipped)}
-                                className="px-3 py-1.5 rounded-lg text-[12px] border border-border-main text-text-muted hover:text-text-main transition-colors cursor-pointer disabled:opacity-50"
-                              >
-                                {mine.equipped ? '卸下' : '装备'}
-                              </button>
-                            ) : (
-                              <button
-                                disabled={busy}
-                                onClick={() => buyItem(item)}
-                                className="px-3 py-1.5 rounded-lg text-[12px] bg-brand-green-light border border-brand-green/20 text-brand-green-hover dark:text-brand-green font-medium cursor-pointer disabled:opacity-50"
-                              >
-                                购买
-                              </button>
-                            )}
                           </div>
                         )
                       })}
                     </div>
-                  </Card>
-                )
-              })}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

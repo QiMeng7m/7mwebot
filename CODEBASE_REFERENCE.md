@@ -827,7 +827,8 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `LiveIndicator` | 实时状态指示灯(脉冲动画) |
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
-| `PointsPanel.jsx` | `PointsPanel` | 修炼值面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整) |
+| `PointsPanel.jsx` | `PointsPanel` | 修炼值面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整)；装备商店按槽位标签切换、单槽位紧凑表格展示属性/技能/售价 |
+| `PointsPanel.jsx` | `equipmentStats(item)` | 把装备 `power` 按槽位拆成展示文本（武器→攻击、护甲→防御、饰品偏攻、坐骑偏防） |
 
 ### 2.35 `src/activity.py`
 
