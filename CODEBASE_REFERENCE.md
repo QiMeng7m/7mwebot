@@ -2448,7 +2448,7 @@ PointHandler.handle("成就")
 | `equipment_affixes` | 装备词条（每件最多 3 条） |
 | `arena_entries` / `arena_claims` | 擂台积分与周奖励领取 |
 | `guilds` / `guild_members` | 门派等级、资金与成员贡献 |
-| `market_listings` | 交易行挂单、状态与过期时间 |
+| `market_listings` | 交易行挂单、状态、强化等级与过期时间 |
 | `pets` | 每人一只宠物（种类/等级/经验） |
 | `alchemy_state` | 草药库存与采集冷却 |
 | `rebirths` | 轮回世数与永久加成 |
