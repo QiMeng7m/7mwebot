@@ -276,6 +276,19 @@ class WorldRebirthTests(ExpansionTestBase):
         self.assertGreater(bonus.get("attack_pct", 0), 0)
 
 
+class HandlerRoutingTests(ExpansionTestBase):
+    def test_expansion_commands_route(self):
+        self.add_member(earned=1000)
+        self.assertIn("套装", self.run_cmd("套装"))
+        self.assertIn("任务", self.run_cmd("任务"))
+        self.assertIn("秘境", self.run_cmd("秘境"))
+        self.assertIn("宠物", self.run_cmd("宠物"))
+        self.assertIn("门派", self.run_cmd("门派"))
+        self.assertIn("天象", self.run_cmd("天象"))
+        self.assertIn("跨群修炼榜", self.run_cmd("跨群榜"))
+        self.assertIn("轮回", self.run_cmd("转世"))
+
+
 class CrossBoardTests(ExpansionTestBase):
     def test_cross_board_aggregates_chats(self):
         self.add_member("wxid_a", "张三", 500)
