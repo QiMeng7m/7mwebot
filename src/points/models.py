@@ -88,6 +88,9 @@ class PowerBreakdown:
     skill_attack: int = 0
     skill_defense: int = 0
     skill_effects: dict = field(default_factory=dict)
+    expansion_attack: int = 0
+    expansion_defense: int = 0
+    expansion_effects: dict = field(default_factory=dict)
     items: list[dict] = field(default_factory=list)
 
 

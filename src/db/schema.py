@@ -346,6 +346,148 @@ CREATE TABLE IF NOT EXISTS lottery_draws (
 
 CREATE INDEX IF NOT EXISTS idx_lottery_member_day
     ON lottery_draws(chat_id, sender_id, day);
+
+-- ── Phase 2: 套装 / 技能升级 / 任务 / 秘境 / 词条 / 擂台 ───────────
+CREATE TABLE IF NOT EXISTS skill_levels (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    skill_id   TEXT    NOT NULL,
+    level      INTEGER NOT NULL DEFAULT 1,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, skill_id)
+);
+
+CREATE TABLE IF NOT EXISTS item_inventory (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    kind       TEXT    NOT NULL,
+    item_id    TEXT    NOT NULL,
+    quantity   INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, kind, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_progress (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    task_id    TEXT    NOT NULL,
+    period     TEXT    NOT NULL,
+    progress   INTEGER NOT NULL DEFAULT 0,
+    claimed    INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, task_id, period)
+);
+
+CREATE TABLE IF NOT EXISTS dungeon_progress (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    best_floor INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS dungeon_state (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    day        TEXT    NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS equipment_affixes (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    item_id    TEXT    NOT NULL,
+    slot       INTEGER NOT NULL,
+    affix_id   TEXT    NOT NULL,
+    value      REAL    NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, item_id, slot)
+);
+
+CREATE TABLE IF NOT EXISTS arena_entries (
+    chat_id    TEXT    NOT NULL,
+    season     TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    sender_name TEXT   NOT NULL DEFAULT '',
+    points     INTEGER NOT NULL DEFAULT 0,
+    wins       INTEGER NOT NULL DEFAULT 0,
+    losses     INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, season, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS arena_claims (
+    chat_id    TEXT    NOT NULL,
+    season     TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    rank       INTEGER NOT NULL,
+    reward     INTEGER NOT NULL,
+    claimed_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, season, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS guilds (
+    chat_id    TEXT    PRIMARY KEY,
+    name       TEXT    NOT NULL,
+    level      INTEGER NOT NULL DEFAULT 1,
+    exp        INTEGER NOT NULL DEFAULT 0,
+    funds      INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS guild_members (
+    chat_id       TEXT    NOT NULL,
+    sender_id     TEXT    NOT NULL,
+    role          TEXT    NOT NULL DEFAULT 'member',
+    contribution  INTEGER NOT NULL DEFAULT 0,
+    joined_at     INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS market_listings (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    seller_id   TEXT    NOT NULL,
+    seller_name TEXT    NOT NULL DEFAULT '',
+    item_id     TEXT    NOT NULL,
+    price       INTEGER NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'open',
+    buyer_id    TEXT    NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_open
+    ON market_listings(chat_id, status, id);
+
+CREATE TABLE IF NOT EXISTS pets (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    species_id TEXT    NOT NULL,
+    level      INTEGER NOT NULL DEFAULT 1,
+    exp        INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS alchemy_state (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    herbs       INTEGER NOT NULL DEFAULT 0,
+    last_gather INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS rebirths (
+    chat_id    TEXT    NOT NULL,
+    sender_id  TEXT    NOT NULL,
+    cycle      INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
 """
 
 

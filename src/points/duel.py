@@ -8,6 +8,7 @@ import random
 import time
 
 from .equipment import EquipmentCatalog, effective_stats
+from .expansion import combat_bonuses
 from .levels import LevelTable
 from .models import DuelResult, PowerBreakdown
 from .realm import realm_info
@@ -166,10 +167,26 @@ class DuelService:
             * float(skill_effects.get("defense_pct", 0) or 0)
         ))
 
-        attack = base_attack + equipment_attack + realm_attack + \
-            technique_attack + skill_attack
-        defense = base_defense + equipment_defense + realm_defense + \
-            technique_defense + skill_defense
+        # Phase-2 passives: sets, affixes, guild, pet, rebirth.
+        expansion_effects = combat_bonuses(
+            self._store, self._catalog, chat_id, sender_id)
+        pre_expansion_attack = (base_attack + equipment_attack
+                                + realm_attack + technique_attack
+                                + skill_attack)
+        pre_expansion_defense = (base_defense + equipment_defense
+                                 + realm_defense + technique_defense
+                                 + skill_defense)
+        expansion_attack = int(round(
+            pre_expansion_attack * float(
+                expansion_effects.get("attack_pct", 0) or 0)
+        )) + int(expansion_effects.get("flat_attack", 0) or 0)
+        expansion_defense = int(round(
+            pre_expansion_defense * float(
+                expansion_effects.get("defense_pct", 0) or 0)
+        )) + int(expansion_effects.get("flat_defense", 0) or 0)
+
+        attack = pre_expansion_attack + expansion_attack
+        defense = pre_expansion_defense + expansion_defense
         base = base_attack + base_defense
         equipment = equipment_attack + equipment_defense
 
@@ -195,6 +212,9 @@ class DuelService:
             skill_attack=skill_attack,
             skill_defense=skill_defense,
             skill_effects=skill_effects,
+            expansion_attack=expansion_attack,
+            expansion_defense=expansion_defense,
+            expansion_effects=expansion_effects,
             items=items,
         )
 
@@ -377,6 +397,7 @@ class DuelService:
             prob
             + float(attacker.technique_effects.get("duel_win", 0))
             + float(attacker.skill_effects.get("duel_win", 0))
+            + float(attacker.expansion_effects.get("duel_win", 0))
             + float(attacker_buffs.get("duel_win", 0)),
         )
 

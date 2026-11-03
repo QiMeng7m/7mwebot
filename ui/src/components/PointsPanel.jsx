@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X, Fish } from '@phosphor-icons/react'
+import { Trophy, ShoppingBag, Sword, ChartBar, ArrowsClockwise, X, Fish, Sparkle } from '@phosphor-icons/react'
 import { Select } from './SharedComponents'
 
 const API = 'http://127.0.0.1:7327'
@@ -84,6 +84,9 @@ export default function PointsPanel() {
   const [owned, setOwned] = useState([])
   const [duels, setDuels] = useState([])
   const [fishing, setFishing] = useState(null)
+  const [expansion, setExpansion] = useState(null)
+  const [expMember, setExpMember] = useState('')
+  const [expBusy, setExpBusy] = useState(false)
   const [fishMember, setFishMember] = useState('')
   const [fishBusy, setFishBusy] = useState(false)
   const [balance, setBalance] = useState(0)
@@ -151,6 +154,15 @@ export default function PointsPanel() {
     else setMessage(data.error || '加载钓鱼数据失败')
   }, [chatId])
 
+  const loadExpansion = useCallback(async (memberId) => {
+    if (!chatId || !memberId) return
+    const data = await api(
+      `/api/expansion?chat_id=${encodeURIComponent(chatId)}&sender_id=${encodeURIComponent(memberId)}`
+    )
+    if (data.ok) setExpansion(data.expansion)
+    else setMessage(data.error || '加载扩展玩法失败')
+  }, [chatId])
+
   useEffect(() => {
     if (!chatId) return
     setLoading(true)
@@ -172,7 +184,12 @@ export default function PointsPanel() {
       if (member && member !== fishMember) setFishMember(member)
       loadFishing(member)
     }
-  }, [view, chatId, shopMember, rows, loadShop, loadDuels, fishMember, loadFishing])
+    if (view === 'expansion') {
+      const member = expMember || rows[0]?.sender_id || ''
+      if (member && member !== expMember) setExpMember(member)
+      loadExpansion(member)
+    }
+  }, [view, chatId, shopMember, rows, loadShop, loadDuels, fishMember, loadFishing, expMember, loadExpansion])
 
   async function openMember(senderId) {
     const data = await api(
@@ -187,6 +204,7 @@ export default function PointsPanel() {
     if (view === 'shop') await loadShop(shopMember)
     if (view === 'duels') await loadDuels()
     if (view === 'fishing') await loadFishing(fishMember)
+    if (view === 'expansion') await loadExpansion(expMember)
     if (detail) await openMember(detail.sender_id)
   }
 
@@ -405,6 +423,9 @@ export default function PointsPanel() {
         </Pill>
         <Pill active={view === 'fishing'} onClick={() => setView('fishing')}>
           <Fish size={14} className="inline mr-1" />钓鱼
+        </Pill>
+        <Pill active={view === 'expansion'} onClick={() => setView('expansion')}>
+          <Sparkle size={14} className="inline mr-1" />扩展玩法
         </Pill>
         <Pill active={view === 'overview'} onClick={() => setView('overview')}>
           <ChartBar size={14} className="inline mr-1" />概览
@@ -842,6 +863,100 @@ export default function PointsPanel() {
                     </div>
                   </Card>
                 </>
+              )}
+            </div>
+          )}
+
+          {view === 'expansion' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="w-64">
+                  {memberOptions.length > 0 ? (
+                    <Select value={expMember} onChange={setExpMember} options={memberOptions} />
+                  ) : (
+                    <p className="text-sm text-text-muted">还没有成员数据</p>
+                  )}
+                </div>
+                <span className="text-xs text-text-muted">套装 / 任务 / 秘境 / 擂台 / 门派 / 宠物 / 炼丹 / 天象 / 转世</span>
+              </div>
+              {!expansion ? (
+                <Card><p className="text-sm text-text-muted">选择成员后加载扩展玩法数据。</p></Card>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card>
+                    <SectionTitle hint="每日 / 周常，群内发送「任务」领取">任务</SectionTitle>
+                    <div className="space-y-1.5">
+                      {expansion.tasks.map(task => (
+                        <div key={task.id} className="flex items-center gap-2 text-[12px]">
+                          <span className="flex-1 text-text-main truncate">
+                            {task.name}
+                            <span className="text-text-muted"> · {task.period === 'daily' ? '每日' : '周常'}</span>
+                          </span>
+                          <span className="font-mono text-text-muted">{task.progress}/{task.target}</span>
+                          <span className={task.claimed ? 'text-text-muted' : task.claimable ? 'text-brand-green' : 'text-text-muted'}>
+                            {task.claimed ? '已领' : task.claimable ? '可领' : '进行中'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                  <Card>
+                    <SectionTitle hint="群内发送「秘境」「擂台」">秘境 / 擂台</SectionTitle>
+                    <p className="text-[13px] text-text-main">秘境最高第 {expansion.dungeon.best} 层</p>
+                    <p className="text-[11px] text-text-muted font-mono mb-2">今日 {expansion.dungeon.attempts}/{expansion.dungeon.limit} 次</p>
+                    <p className="text-[13px] text-text-main">擂台 {expansion.arena.entry.points} 分 · 本周第 {expansion.arena.rank || '-'} 名</p>
+                    <p className="text-[11px] text-text-muted font-mono">今日 {expansion.arena.used}/{expansion.arena.limit} 次</p>
+                    <div className="mt-2 space-y-1">
+                      {expansion.arena.board.map((row, i) => (
+                        <p key={row.sender_id} className="text-[11px] text-text-muted">
+                          {i + 1}. {row.sender_name} {row.points} 分
+                        </p>
+                      ))}
+                    </div>
+                  </Card>
+                  <Card>
+                    <SectionTitle hint="群内发送「门派」「宠物」">门派 / 宠物</SectionTitle>
+                    {expansion.guild.guild ? (
+                      <p className="text-[13px] text-text-main">
+                        【{expansion.guild.guild.name}】Lv{expansion.guild.guild.level}
+                        <span className="text-text-muted"> · 帮派攻防 +{Math.round(expansion.guild.bonus * 100)}%</span>
+                      </p>
+                    ) : (
+                      <p className="text-[12px] text-text-muted">本群还没有门派</p>
+                    )}
+                    <p className="text-[11px] text-text-muted font-mono mt-1">
+                      {expansion.guild.member ? `我的身份：${expansion.guild.member.role} · 贡献 ${expansion.guild.member.contribution}` : '未加入门派'}
+                    </p>
+                    <p className="text-[13px] text-text-main mt-3">
+                      {expansion.pet ? `宠物：${expansion.pet.species} Lv${expansion.pet.level}` : '还没有宠物'}
+                    </p>
+                  </Card>
+                  <Card>
+                    <SectionTitle hint="群内发送「丹药」「天象」「转世」">炼丹 / 天象 / 转世</SectionTitle>
+                    <p className="text-[12px] text-text-main">草药 {expansion.alchemy.herbs} · 技能书 {expansion.alchemy.books}</p>
+                    <p className="text-[11px] text-text-muted font-mono mb-2">
+                      {expansion.alchemy.pills.map(p => `${p.name}×${p.count}`).join(' / ') || '暂无丹药'}
+                    </p>
+                    <p className="text-[13px] text-text-main">{expansion.world.weather.name} — {expansion.world.event.name}</p>
+                    <p className="text-[11px] text-text-muted">{expansion.world.weather.desc}；{expansion.world.event.desc}</p>
+                    <p className="text-[12px] text-text-main mt-2">轮回第 {expansion.rebirth.cycle} 世 · 加成 +{Math.round(expansion.rebirth.bonus * 100)}%</p>
+                  </Card>
+                  <Card className="md:col-span-2">
+                    <SectionTitle hint="穿戴对应套装件数自动激活">套装</SectionTitle>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {expansion.sets.map(set => (
+                        <div key={set.id} className="p-3 rounded-xl border border-border-main bg-bg-raised/40">
+                          <p className="text-[13px] text-text-main">{set.name} <span className="text-text-muted font-mono">{set.equipped}/{set.pieces}</span></p>
+                          {set.bonuses.map((bonus, i) => (
+                            <p key={i} className={`text-[11px] ${bonus.active ? 'text-brand-green' : 'text-text-muted'}`}>
+                              {bonus.active ? '✓' : '·'} {bonus.desc}
+                            </p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                </div>
               )}
             </div>
           )}

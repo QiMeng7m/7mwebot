@@ -31,6 +31,11 @@ class PointStore:
         self.conn = conn
         self._lock = lock if lock is not None else threading.RLock()
 
+    @property
+    def lock(self):
+        """Shared connection lock (used by the expansion sub-store)."""
+        return self._lock
+
     # ── Ledger writes ─────────────────────────────────────────────
 
     def record_events(self, chat_id: str, message_id: str,
@@ -2029,6 +2034,42 @@ class PointStore:
                 "dropped": dropped}
 
     # ── 装备技能 (equipment skills) ──────────────────────────────
+
+    def skill_levels(self, chat_id: str, sender_id: str) -> dict[str, int]:
+        """Learned skill levels (missing skills default to 1)."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT skill_id, level FROM skill_levels
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return {str(row[0]): int(row[1] or 1) for row in rows}
+
+    def skill_level_of(self, chat_id: str, sender_id: str,
+                       skill_id: str) -> int:
+        with self._lock:
+            row = self.conn.execute(
+                """SELECT level FROM skill_levels
+                   WHERE chat_id = ? AND sender_id = ? AND skill_id = ?""",
+                (str(chat_id), str(sender_id), str(skill_id)),
+            ).fetchone()
+        return int(row[0]) if row else 1
+
+    def set_skill_level(self, chat_id: str, sender_id: str,
+                        skill_id: str, level: int,
+                        now_ts: int | None = None) -> None:
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        with self._lock, self.conn:
+            self.conn.execute(
+                """INSERT INTO skill_levels
+                   (chat_id, sender_id, skill_id, level, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id, skill_id) DO UPDATE SET
+                     level = excluded.level,
+                     updated_at = excluded.updated_at""",
+                (str(chat_id), str(sender_id), str(skill_id),
+                 int(level), now),
+            )
 
     def skill_casts(self, chat_id: str, sender_id: str) -> list[dict]:
         """Every recorded active-skill cast for one member."""

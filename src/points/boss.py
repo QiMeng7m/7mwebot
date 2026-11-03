@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import random
 
+from .expansion import world_boss_bonus
 from .skills import active_effects
 from .util import (
     days_until_week_end,
@@ -240,6 +241,9 @@ class BossService:
         boss_bonus = float(
             power.technique_effects.get("boss_damage", 0) or 0)
         boss_bonus += float(power.skill_effects.get("boss_damage", 0) or 0)
+        boss_bonus += float(
+            power.expansion_effects.get("boss_damage", 0) or 0)
+        boss_bonus += world_boss_bonus(chat_id, now)
         boss_bonus += float(buffs.get("boss_damage", 0) or 0)
         if boss_bonus > 0:
             damage = max(1, int(round(damage * (1 + boss_bonus))))

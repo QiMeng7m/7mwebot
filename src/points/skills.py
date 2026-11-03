@@ -17,6 +17,8 @@ to the skill's effect.
 from __future__ import annotations
 
 SKILL_ENHANCE_SCALE = 0.03
+SKILL_LEVEL_SCALE = 0.15
+SKILL_MAX_LEVEL = 5
 
 # ── Definitions ──────────────────────────────────────────────────────
 
@@ -78,6 +80,20 @@ SKILLS: list[dict] = [
      "desc": "短时间内攻防同时大幅提高",
      "effects": {"attack_pct": 0.25, "defense_pct": 0.25},
      "cooldown": 3600, "duration": 600},
+
+    # 丹药 — same timed-buff machinery, consumed from the alchemy bag.
+    {"id": "pill_qi", "name": "聚气丹", "type": "active", "pill": True,
+     "desc": "服用后短时间攻击提高",
+     "effects": {"attack_pct": 0.20},
+     "cooldown": 600, "duration": 600},
+    {"id": "pill_guard", "name": "护体丹", "type": "active", "pill": True,
+     "desc": "服用后短时间防御提高",
+     "effects": {"defense_pct": 0.25},
+     "cooldown": 600, "duration": 600},
+    {"id": "pill_break", "name": "破军丹", "type": "active", "pill": True,
+     "desc": "服用后短时间 Boss 伤害提高",
+     "effects": {"boss_damage": 0.25},
+     "cooldown": 600, "duration": 600},
 ]
 
 _BY_ID = {item["id"]: item for item in SKILLS}
@@ -123,8 +139,10 @@ def loadout_skills(store, catalog, chat_id: str,
     """Every skill granted by the member's *equipped* items.
 
     Duplicate skills from two equipped items are merged by keeping the
-    stronger (higher enhancement) source.
+    stronger (higher enhancement) source.  Skill level multiplies the
+    effect on top of enhancement scaling.
     """
+    levels = _skill_levels(store, chat_id, sender_id)
     best: dict[str, dict] = {}
     for row in store.owned_items(chat_id, sender_id):
         if not row.get("equipped"):
@@ -137,18 +155,40 @@ def loadout_skills(store, catalog, chat_id: str,
             definition = skill_by_id(skill_id)
             if definition is None:
                 continue
+            skill_level = int(levels.get(skill_id, 1) or 1)
             entry = {
                 **definition,
                 "item_id": item["id"],
                 "item_name": item["name"],
                 "enhance_level": level,
-                "scale": 1.0 + SKILL_ENHANCE_SCALE * level,
+                "skill_level": skill_level,
+                "scale": (1.0 + SKILL_ENHANCE_SCALE * level)
+                * (1.0 + SKILL_LEVEL_SCALE * (skill_level - 1)),
             }
             current = best.get(definition["id"])
             if current is None or entry["enhance_level"] > \
                     current["enhance_level"]:
                 best[definition["id"]] = entry
     return list(best.values())
+
+
+def _skill_levels(store, chat_id: str, sender_id: str) -> dict[str, int]:
+    fn = getattr(store, "skill_levels", None)
+    if fn is None:
+        return {}
+    try:
+        return fn(chat_id, sender_id)
+    except Exception:  # noqa: BLE001 - levels are optional
+        return {}
+
+
+def skills_of_item(item: dict) -> list[dict]:
+    """Skill definitions attached to one catalog item."""
+    return [
+        definition for definition in (
+            skill_by_id(skill_id) for skill_id in item.get("skills") or ()
+        ) if definition is not None
+    ]
 
 
 def passive_effects(store, catalog, chat_id: str,
@@ -182,8 +222,17 @@ def active_skill_rows(store, chat_id: str, sender_id: str,
 def active_effects(store, chat_id: str, sender_id: str,
                    now_ts: int) -> dict[str, float]:
     """Aggregate every currently running active buff."""
+    levels = _skill_levels(store, chat_id, sender_id)
     totals: dict[str, float] = {}
     for skill in active_skill_rows(store, chat_id, sender_id, now_ts):
+        level = int(levels.get(skill["id"], 1) or 1)
+        scale = 1.0 + SKILL_LEVEL_SCALE * (level - 1)
         for key, value in skill["effects"].items():
-            totals[key] = totals.get(key, 0.0) + float(value)
+            totals[key] = totals.get(key, 0.0) + float(value) * scale
     return totals
+
+
+def level_scale(level: int) -> float:
+    """Effect multiplier for a skill level (1..5)."""
+    level = max(1, min(SKILL_MAX_LEVEL, int(level or 1)))
+    return 1.0 + SKILL_LEVEL_SCALE * (level - 1)

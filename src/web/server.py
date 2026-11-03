@@ -1887,6 +1887,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
         # ── API: Points / equipment / duels / fishing ─────────────────
         if self.path.startswith("/api/points") or \
                 self.path.startswith("/api/equipment") or \
+                self.path.startswith("/api/expansion") or \
                 self.path.startswith("/api/duels") or \
                 self.path.startswith("/api/fishing"):
             from urllib.parse import urlparse, parse_qs
@@ -1980,6 +1981,9 @@ class _UIHandler(SimpleHTTPRequestHandler):
                                 "skill_attack": power.skill_attack,
                                 "skill_defense": power.skill_defense,
                                 "skill_effects": power.skill_effects,
+                                "expansion_attack": power.expansion_attack,
+                                "expansion_defense": power.expansion_defense,
+                                "expansion_effects": power.expansion_effects,
                                 "items": power.items,
                             },
                         },
@@ -2100,12 +2104,32 @@ class _UIHandler(SimpleHTTPRequestHandler):
                             "skill_attack": power.skill_attack,
                             "skill_defense": power.skill_defense,
                             "skill_effects": power.skill_effects,
+                            "expansion_attack": power.expansion_attack,
+                            "expansion_defense": power.expansion_defense,
+                            "expansion_effects": power.expansion_effects,
                             "items": power.items,
                         },
                         "balance": (
                             store.balance_of(chat_id, sender_id)
                             if sender_id else 0
                         ),
+                    })
+                    return
+
+                # ── GET /api/expansion ───────────────────────────
+                if route == "/api/expansion":
+                    chat_id = params.get("chat_id", "")
+                    sender_id = params.get("sender_id", "")
+                    if not chat_id or not sender_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id and sender_id required"})
+                        return
+                    from src.points.expansion import ExpansionService
+                    expansion = ExpansionService(
+                        store, config, levels, catalog, duels)
+                    self.send_json({
+                        "ok": True,
+                        "expansion": expansion.summary(chat_id, sender_id),
                     })
                     return
 

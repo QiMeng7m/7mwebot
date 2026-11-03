@@ -881,7 +881,7 @@ todo_delete_keywords: list[str] = [
 | `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`，默认 4 槽位、37 件装备） | 见签名 | 见签名 |
 | `equipment.py` | `TIER_TITLES` / `EQUIPMENT_TIER_MAX` / `tier_title(tier)` | 装备品阶表（凡品 ~ 圣品，0~9）与品阶名称 | `tier: int` | `str` |
 | `equipment.py` | `enhance_cost(item, level)` / `effective_power(item, level)` / `effective_stats(item, level)` | 强化费用 / 强化后总武力 / 按槽位拆分攻击与防御（武器攻击、护甲防御、饰品/坐骑拆分） | 见签名 | `int` / `(int, int)` |
-| `skills.py` | `SKILLS` / `skill_by_id(id)` / `skill_by_name(name)` | 装备技能定义（被动 10 个 + 主动 6 个）、按 id/名称查询 | 见签名 | `dict \| None` |
+| `skills.py` | `SKILLS` / `skill_by_id(id)` / `skill_by_name(name)` | 装备技能定义（被动 10 个 + 主动 6 个 + 丹药 3 个）、按 id/名称查询 | 见签名 | `dict \| None` |
 | `skills.py` | `loadout_skills(store, catalog, chat_id, sender_id)` | 汇总当前**已装备**物品提供的技能（含来源、强化等级、效果倍率） | 见签名 | `list[dict]` |
 | `skills.py` | `passive_effects(store, catalog, chat_id, sender_id)` | 汇总被动技能效果（随装备强化等级放大） | 见签名 | `dict[str, float]` |
 | `skills.py` | `active_skill_rows(store, chat_id, sender_id, now_ts)` / `active_effects(store, chat_id, sender_id, now_ts)` | 当前生效中的主动技能 / 主动增益汇总 | 见签名 | `list[dict] / dict[str, float]` |
@@ -982,7 +982,7 @@ todo_delete_keywords: list[str] = [
 
 模块常量：`DEFAULT_LEVELS`（13 级，Lv0 潜水员 ~ Lv12 永恒）、
 `DEFAULT_SLOTS`（4 槽位：武器/护甲/饰品/坐骑）、`DEFAULT_ITEMS`（37 件装备，凡品~圣品，含装备技能）、
-`TIER_TITLES`（10 级品阶：凡品~圣品）、`SKILLS`（16 个装备技能：被动 10 / 主动 6）、
+`TIER_TITLES`（10 级品阶：凡品~圣品）、`SKILLS`（19 个技能条目：被动 10 / 主动 6 / 丹药 3）、
 `DEFAULT_RODS`（7 根鱼竿）、`DEFAULT_BAITS`（5 种鱼饵）、
 `DEFAULT_SPECIES`（25 种鱼，含 3 种神话）、`DEFAULT_DELAYS`（空竿/普通 5s、
 稀有 15s、史诗 30s、传说 60s、神话 90s）、`FISHING_LEVELS`（Lv1 新手 ~
@@ -992,13 +992,52 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 `REALM_TITLES`（凡人 ~ 鸿蒙，20 境）、`REALM_BASE_COST=300`、
 `REALM_POWER_PER_LEVEL=10`、`HIGH_REALM_POWER_PER_LEVEL=20`、
 `HIGH_REALM_COST_GROWTH=1.35`、`TIER_TITLES`（凡品 ~ 圣品）、
-`SKILLS`（16 个装备技能，被动 10 / 主动 6）、`SKILL_ENHANCE_SCALE=0.03`、
+`SKILLS`（19 个技能条目：被动 10 / 主动 6 / 丹药 3）、`SKILL_ENHANCE_SCALE=0.03`、
+`SKILL_LEVEL_SCALE=0.15`、`SKILL_MAX_LEVEL=5`、
 `BOSS_CRIT_CHANCE=0.10`、
 `BOSS_CRIT_MULTIPLIER=2.0`、`ACHIEVEMENTS`（15 个成就/称号）。
 
 命令行：`tools/points_backfill.py --all | --chat <chat_id> --days N
 [--rebuild] [--db <path>]`——按 `messages` 表重放计分；`--rebuild`
 先删除 `category='earn'` 的流水再重算，保留管理员调整/消费/切磋转移。
+
+### 2.38 `src/points/expansion.py` (第二阶段玩法)
+
+| 符号 | 描述 | 参数 | 返回值 |
+|---|---|---|---|
+| `TASKS` | 每日 5 项 + 周常 3 项任务定义（metric/target/reward） | — | `list[dict]` |
+| `AFFIX_POOL` | 词条池：攻击/防御/切磋胜率/Boss 伤害 | — | `list[dict]` |
+| `PET_SPECIES` / `PILLS` / `WEATHERS` / `WORLD_EVENTS` | 宠物、丹药、天气、世界事件定义 | — | `list[dict]` |
+| `world_state(chat_id, now_ts=None)` | 按群/日/小时确定性生成天气与世界事件及效果 | 见签名 | `dict` |
+| `world_fishing_bonuses(chat_id, now_ts=None)` | 天气/事件对钓鱼稀有与价值的加成 | 见签名 | `dict` |
+| `world_boss_bonus(chat_id, now_ts=None)` | 天气/事件对 Boss 伤害的加成 | 见签名 | `float` |
+| `set_bonuses(store, catalog, chat_id, sender_id)` | 汇总当前已装备套装的激活档位效果 | 见签名 | `dict` |
+| `affix_bonuses(store, chat_id, sender_id)` | 汇总已装备装备的词条效果 | 见签名 | `dict` |
+| `guild_bonus(store, chat_id, sender_id)` | 门派等级提供的攻防加成 | 见签名 | `dict` |
+| `pet_bonus(store, chat_id, sender_id)` | 宠物等级提供的攻击/防御/切磋胜率 | 见签名 | `dict` |
+| `rebirth_bonus(store, chat_id, sender_id)` | 轮回世数提供的永久攻防/Boss 加成 | 见签名 | `dict` |
+| `combat_bonuses(store, catalog, chat_id, sender_id)` | 汇总套装/词条/门派/宠物/轮回（不含天气） | 见签名 | `dict` |
+| `ExpansionService(store, config, levels, catalog, duels)` | 第二阶段所有指令的业务入口 | 见签名 | `None` |
+| `.summary(chat_id, sender_id)` | Web 控制台用的紧凑快照（套装/任务/秘境/擂台/门派/宠物/炼丹/天象/转世） | 见签名 | `dict` |
+| `.sets_status/.upgrade_skill/.tasks_status/.claim_task` | 套装、技能升级、任务查看与领取 | 见签名 | `str` |
+| `.dungeon_status/.challenge_dungeon` | 秘境状态与挑战 | 见签名 | `str` |
+| `.roll_affixes/.affix_status` | 洗练词条与查看 | 见签名 | `str` |
+| `.arena_status/.arena_board/.arena_challenge/.arena_claim` | 擂台状态、榜单、挑战与周奖励 | 见签名 | `str/list` |
+| `.guild_status/.guild_create/.guild_join/.guild_leave/.guild_donate` | 门派系统 | 见签名 | `str` |
+| `.market_status/.market_sell/.market_buy/.market_cancel` | 交易行（5% 手续费、7 天过期退回） | 见签名 | `str` |
+| `.pet_status/.pet_adopt/.pet_train/.pet_release` | 宠物系统 | 见签名 | `str` |
+| `.alchemy_status/.gather/.craft_pill/.use_pill` | 采集、炼丹、服用丹药 | 见签名 | `str` |
+| `.rebirth_status/.rebirth` | 转世条件与执行（境界≥10、Lv12、10000 灵石） | 见签名 | `str` |
+| `.world_status/.cross_board` | 天象与世界事件 / 跨群修炼榜 | 见签名 | `str` |
+
+`PointStore` 新增：`lock` 属性、`skill_levels/skill_level_of/set_skill_level`，
+以及 `expansion.py` 直接使用的 13 张第二阶段表。
+
+第二阶段常量：`DUNGEON_DAILY_ATTEMPTS=3`、`DUNGEON_MAX_FLOOR=50`、
+`ARENA_DAILY_ATTEMPTS=3`、`ARENA_WIN_POINTS=10`、`ARENA_LOSS_POINTS=3`、
+`GUILD_CREATE_COST=500`、`GUILD_MAX_LEVEL=10`、`PET_MAX_LEVEL=10`、
+`GATHER_COOLDOWN=1800`、`REBIRTH_COST=10000`、
+`MARKET_FEE_RATIO=0.05`、`MARKET_LIST_DAYS=7`。
 
 ---
 
@@ -2068,6 +2107,7 @@ MessageRouter.handle(msg)
 | `points/levels.py` | `src/points/levels.py` | 等级表（`data/point_levels.json`） |
 | `points/equipment.py` | `src/points/equipment.py` | 装备目录、品阶（凡品~圣品）与装备技能挂载（`data/equipment.json`） |
 | `points/skills.py` | `src/points/skills.py` | 装备主动/被动技能定义、已装备技能汇总与增益结算 |
+| `points/expansion.py` | `src/points/expansion.py` | 第二阶段：套装/技能升级/任务/秘境/词条/擂台/门派/交易行/宠物/炼丹/天象/转世/跨群榜 |
 | `points/store.py` | `src/points/store.py` | 流水/榜单/装备/护盾/切磋持久化 |
 | `points/engine.py` | `src/points/engine.py` | 计分入口与防刷、回溯重建 |
 | `points/duel.py` | `src/points/duel.py` | 武力值、胜率、抢分、切磋结算、段位 |
@@ -2111,6 +2151,19 @@ MessageRouter.handle(msg)
 | `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位；品阶凡品~圣品，含仙品/神品/圣品终局装备；显示装备技能） |
 | `技能` / `我的技能` / `装备技能` | 查看当前已装备装备提供的主动/被动技能、来源、效果与冷却/增益状态 |
 | `施放 技能名` / `施展 技能名` | 施放已装备的主动技能，获得限时增益（被动技能装备即生效） |
+| `升级技能 技能名` | 消耗技能书 + 灵石，把已装备技能升到 Lv5 |
+| `套装` | 查看仙品/鸿蒙/造化套的穿戴进度与激活档位 |
+| `任务` / `周常` / `领取任务奖励 任务名` | 每日/周常进度与奖励领取 |
+| `秘境` / `挑战秘境 [层]` | 秘境进度与爬塔挑战（每日 3 次，最高 50 层） |
+| `洗练 装备名` / `词条 装备名` | 随机生成/查看 1~3 条装备词条 |
+| `擂台` / `擂台挑战` / `擂台榜` / `领取擂台奖励` | 擂台积分、匹配挑战与周奖励 |
+| `创建门派 名称` / `加入门派` / `捐献门派 数量` / `退出门派` | 门派系统，等级提供全员攻防加成 |
+| `交易行` / `上架 名称 价格` / `购买挂单 编号` / `下架挂单 编号` | 装备交易行（5% 手续费、7 天过期退回） |
+| `宠物` / `领养宠物 名称` / `培养宠物` / `放生宠物` | 宠物养成与属性加成 |
+| `丹药` / `采集` / `炼丹 丹药名` / `服用 丹药名` | 草药采集、炼丹与限时增益 |
+| `天象` / `世界事件` | 查看天气、世界事件与当前加成 |
+| `转世` / `转世确认` | 查看转世条件 / 执行转世（境界≥10、Lv12、10000 灵石） |
+| `跨群榜` | 所有群的修炼值总和排行 |
 | `武力值` / `战力榜` | 攻击/防御拆解 + 切磋段位 / 战力排行 |
 | `切磋 @某人` / 引用后 `切磋` | 发起切磋 |
 | `买免战券` / `免战` | 购买 4 小时免战 |
@@ -2310,6 +2363,7 @@ Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠
 | `achievements.py` | `src/points/achievements.py` | 15 个成就定义、判定与称号查询 |
 | `equipment.py` | `src/points/equipment.py` | 品阶表、`enhance_cost()` / `effective_power()` / `effective_stats()`、装备技能挂载 |
 | `skills.py` | `src/points/skills.py` | 装备主动/被动技能定义、被动汇总、主动增益/冷却查询 |
+| `expansion.py` | `src/points/expansion.py` | 第二阶段全部玩法：套装/技能升级/任务/秘境/词条/擂台/门派/交易行/宠物/炼丹/天象/转世/跨群榜 |
 | `techniques.py` | `src/points/techniques.py` | 功法定义、层数进度/突破概率、被动效果汇总 |
 | `duel.py` | `src/points/duel.py` | 攻击/防御拆分、装备/境界/功法/装备技能加成、主动增益结算 |
 | `store.py` | `src/points/store.py` | 强化/突破/Boss/成就/称号/功法/打坐/技能施放持久化 |
@@ -2387,6 +2441,17 @@ PointHandler.handle("成就")
 | `member_profiles` | 每人当前佩戴称号 |
 | `member_realms` | 每人境界等级（0 凡人 ~ 19 鸿蒙） |
 | `skill_casts` | 主键 `(chat_id, sender_id, skill_id)`；`cast_at` / `expires_at` / `cooldown_until` |
+| `skill_levels` | 装备技能等级（1~5），效果按等级放大 |
+| `item_inventory` | 技能书 / 丹药等道具库存（`kind, item_id, quantity`） |
+| `task_progress` | 任务进度与领取状态（按 `task_id + period`） |
+| `dungeon_progress` / `dungeon_state` | 秘境最高层 / 每日挑战次数 |
+| `equipment_affixes` | 装备词条（每件最多 3 条） |
+| `arena_entries` / `arena_claims` | 擂台积分与周奖励领取 |
+| `guilds` / `guild_members` | 门派等级、资金与成员贡献 |
+| `market_listings` | 交易行挂单、状态与过期时间 |
+| `pets` | 每人一只宠物（种类/等级/经验） |
+| `alchemy_state` | 草药库存与采集冷却 |
+| `rebirths` | 轮回世数与永久加成 |
 | `lottery_draws` | 每人每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等 |
 
 #### 关键约定

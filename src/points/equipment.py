@@ -149,6 +149,55 @@ def tier_title(tier: int) -> str:
     return TIER_TITLES[tier]
 
 
+# 套装 — a set bonus activates as pieces of that set are equipped.
+EQUIPMENT_SETS: list[dict] = [
+    {"id": "xian", "name": "仙品套",
+     "pieces": ["immortal_sword", "immortal_robe",
+                "immortal_jade", "crane"],
+     "bonuses": [
+         {"pieces": 2, "effects": {"attack_pct": 0.06},
+          "desc": "2 件：攻击 +6%"},
+         {"pieces": 4, "effects": {"boss_damage": 0.10},
+          "desc": "4 件：Boss 伤害 +10%"},
+     ]},
+    {"id": "chaos", "name": "鸿蒙套",
+     "pieces": ["chaos_sword", "chaos_armor",
+                "chaos_jade", "chaos_qilin"],
+     "bonuses": [
+         {"pieces": 2, "effects": {"attack_pct": 0.08,
+                                   "defense_pct": 0.08},
+          "desc": "2 件：攻防 +8%"},
+         {"pieces": 4, "effects": {"boss_damage": 0.15},
+          "desc": "4 件：Boss 伤害 +15%"},
+     ]},
+    {"id": "creation", "name": "造化套",
+     "pieces": ["creation_sword", "creation_armor",
+                "creation_jade", "creation_dragon"],
+     "bonuses": [
+         {"pieces": 2, "effects": {"attack_pct": 0.10,
+                                   "defense_pct": 0.10},
+          "desc": "2 件：攻防 +10%"},
+         {"pieces": 4, "effects": {"boss_damage": 0.20,
+                                   "duel_win": 0.05},
+          "desc": "4 件：Boss 伤害 +20%，切磋胜率 +5%"},
+     ]},
+]
+
+_SET_BY_ID = {item["id"]: item for item in EQUIPMENT_SETS}
+_SET_BY_ITEM = {
+    item_id: item["id"]
+    for item in EQUIPMENT_SETS for item_id in item["pieces"]
+}
+
+
+def set_by_id(set_id: str) -> dict | None:
+    return _SET_BY_ID.get(str(set_id or ""))
+
+
+def set_id_for_item(item_id: str) -> str:
+    return _SET_BY_ITEM.get(str(item_id or ""), "")
+
+
 DEFAULT_CATALOG_PATH = PROJECT_ROOT / "data/equipment.json"
 
 # 强化（精炼）: every level adds a flat power bonus; cost grows linearly
@@ -276,6 +325,11 @@ def validate_catalog(data: dict) -> dict:
             if skill_id not in skills:
                 skills.append(skill_id)
 
+        set_id = str(item.get("set_id") or set_id_for_item(item_id) or "")
+        if set_id and set_by_id(set_id) is None:
+            raise ValueError(f"装备 {name} 的套装不存在: {set_id}")
+        set_def = set_by_id(set_id) if set_id else None
+
         seen_ids.add(item_id)
         seen_names.add(name)
         items.append({
@@ -286,6 +340,8 @@ def validate_catalog(data: dict) -> dict:
             "skill_names": [
                 skill_by_id(sid)["name"] for sid in skills
             ],
+            "set_id": set_id,
+            "set_name": set_def["name"] if set_def else "",
         })
 
     # Same-slot ladders must be monotonic in price → power.

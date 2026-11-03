@@ -32,6 +32,7 @@ from .equipment import (
     effective_stats,
     enhance_cost,
 )
+from .expansion import ExpansionService
 from .fishing import FishingService, fishing_level, format_weight
 from .fishing_catalog import FishingCatalog, RARITIES, RARITY_LABELS
 from .levels import LevelTable
@@ -138,6 +139,27 @@ EXACT_COMMANDS = {
     "技能": ("skills", ""),
     "我的技能": ("skills", ""),
     "装备技能": ("skills", ""),
+    # ── Phase 2 ──
+    "套装": ("sets", ""),
+    "我的套装": ("sets", ""),
+    "任务": ("tasks", "daily"),
+    "日常任务": ("tasks", "daily"),
+    "周常": ("tasks", "weekly"),
+    "周常任务": ("tasks", "weekly"),
+    "秘境": ("dungeon", ""),
+    "秘境状态": ("dungeon", ""),
+    "擂台": ("arena", ""),
+    "擂台榜": ("arena_board", ""),
+    "门派": ("guild", ""),
+    "交易行": ("market", ""),
+    "宠物": ("pet", ""),
+    "丹药": ("alchemy", ""),
+    "天象": ("world", ""),
+    "世界事件": ("world", ""),
+    "转世": ("rebirth", ""),
+    "轮回": ("rebirth", ""),
+    "转世确认": ("rebirth_do", ""),
+    "跨群榜": ("crossboard", ""),
     # ── Legacy aliases (old 积分/余额 wording) ──
     "积分": ("member_card", ""),
     "我的积分": ("member_card", ""),
@@ -152,6 +174,12 @@ PREFIX_COMMANDS = (
     "强化", "精炼", "佩戴称号", "戴上称号",
     "出售", "卖掉", "卖出", "学习功法", "切换功法",
     "施放", "施展",
+    "升级技能", "技能升级", "挑战秘境", "洗练", "词条",
+    "擂台挑战", "领取擂台奖励",
+    "创建门派", "加入门派", "捐献门派", "退出门派",
+    "上架", "下架挂单", "购买挂单",
+    "领养宠物", "培养宠物", "放生宠物",
+    "采集", "炼丹", "服用", "领取任务奖励",
 )
 
 _BOARD_SCOPES = {
@@ -225,6 +253,8 @@ class PointHandler:
         self._lottery = LotteryService(
             store, config, catalog, fishing_catalog,
         )
+        self._expansion = ExpansionService(
+            store, config, levels, catalog, duels)
         self._fishing_catalog = fishing_catalog
         self._group_nicknames_path = Path(
             group_nicknames_path or _GROUP_NICKNAMES_PATH,
@@ -322,6 +352,66 @@ class PointHandler:
         if head in ("施放", "施展"):
             return self._cast_skill(
                 chat_id, sender_id, sender_name, rest)
+        if head in ("升级技能", "技能升级"):
+            return self._expansion.upgrade_skill(
+                chat_id, sender_id, sender_name, rest)
+        if head == "挑战秘境":
+            return self._expansion.challenge_dungeon(
+                chat_id, sender_id, sender_name, rest)
+        if head == "洗练":
+            return self._expansion.roll_affixes(
+                chat_id, sender_id, sender_name, rest)
+        if head == "词条":
+            return self._expansion.affix_status(
+                chat_id, sender_id, sender_name, rest)
+        if head == "擂台挑战":
+            return self._expansion.arena_challenge(
+                chat_id, sender_id, sender_name)
+        if head == "领取擂台奖励":
+            return self._expansion.arena_claim(
+                chat_id, sender_id, sender_name)
+        if head == "创建门派":
+            return self._expansion.guild_create(
+                chat_id, sender_id, sender_name, rest)
+        if head == "加入门派":
+            return self._expansion.guild_join(
+                chat_id, sender_id, sender_name)
+        if head == "捐献门派":
+            return self._expansion.guild_donate(
+                chat_id, sender_id, sender_name, rest)
+        if head == "退出门派":
+            return self._expansion.guild_leave(
+                chat_id, sender_id, sender_name)
+        if head == "上架":
+            return self._expansion.market_sell(
+                chat_id, sender_id, sender_name, rest)
+        if head == "下架挂单":
+            return self._expansion.market_cancel(
+                chat_id, sender_id, sender_name, rest)
+        if head == "购买挂单":
+            return self._expansion.market_buy(
+                chat_id, sender_id, sender_name, rest)
+        if head == "领养宠物":
+            return self._expansion.pet_adopt(
+                chat_id, sender_id, sender_name, rest)
+        if head == "培养宠物":
+            return self._expansion.pet_train(
+                chat_id, sender_id, sender_name)
+        if head == "放生宠物":
+            return self._expansion.pet_release(
+                chat_id, sender_id, sender_name)
+        if head == "采集":
+            return self._expansion.gather(
+                chat_id, sender_id, sender_name)
+        if head == "炼丹":
+            return self._expansion.craft_pill(
+                chat_id, sender_id, sender_name, rest)
+        if head == "服用":
+            return self._expansion.use_pill(
+                chat_id, sender_id, sender_name, rest)
+        if head == "领取任务奖励":
+            return self._expansion.claim_task(
+                chat_id, sender_id, sender_name, rest)
         if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
 
@@ -411,6 +501,50 @@ class PointHandler:
         if kind == "skills":
             return self._skills_command(
                 chat_id, sender_id, sender_name)
+        if kind == "sets":
+            return self._expansion.sets_status(
+                chat_id, sender_id, sender_name)
+        if kind == "tasks":
+            return self._expansion.tasks_status(
+                chat_id, sender_id, sender_name, arg or "daily")
+        if kind == "dungeon":
+            return self._expansion.dungeon_status(
+                chat_id, sender_id, sender_name)
+        if kind == "arena":
+            return self._expansion.arena_status(
+                chat_id, sender_id, sender_name)
+        if kind == "arena_board":
+            board = self._expansion.arena_board(chat_id, limit=10)
+            if not board:
+                return "本周擂台还没有记录。"
+            lines = ["擂台榜（本周）"]
+            for index, row in enumerate(board, 1):
+                lines.append(
+                    f"{index}. {row['sender_name']} {row['points']} 分"
+                    f"（{row['wins']}胜{row['losses']}负）")
+            return "\n".join(lines)
+        if kind == "guild":
+            return self._expansion.guild_status(
+                chat_id, sender_id, sender_name)
+        if kind == "market":
+            return self._expansion.market_status(
+                chat_id, sender_id, sender_name)
+        if kind == "pet":
+            return self._expansion.pet_status(
+                chat_id, sender_id, sender_name)
+        if kind == "alchemy":
+            return self._expansion.alchemy_status(
+                chat_id, sender_id, sender_name)
+        if kind == "world":
+            return self._expansion.world_status(chat_id, sender_name)
+        if kind == "rebirth":
+            return self._expansion.rebirth_status(
+                chat_id, sender_id, sender_name)
+        if kind == "rebirth_do":
+            return self._expansion.rebirth(
+                chat_id, sender_id, sender_name)
+        if kind == "crossboard":
+            return self._expansion.cross_board(sender_name)
         return None
 
     # ── Identity helpers ──────────────────────────────────────────
@@ -670,7 +804,8 @@ class PointHandler:
             f" + 境界 {power.realm_bonus} + 功法 "
             f"{power.technique_attack + power.technique_defense}"
             f" + 装备技能 "
-            f"{power.skill_attack + power.skill_defense}）"
+            f"{power.skill_attack + power.skill_defense}"
+            f" + 扩展 {power.expansion_attack + power.expansion_defense}）"
             f" · 境界 {realm['title']}",
         ]
         if nxt is not None:
@@ -1017,6 +1152,11 @@ class PointHandler:
         if power.skill_attack or power.skill_defense:
             parts.append(
                 f"装备技能 攻+{power.skill_attack}/防+{power.skill_defense}"
+            )
+        if power.expansion_attack or power.expansion_defense:
+            parts.append(
+                f"扩展加成 攻+{power.expansion_attack}"
+                f"/防+{power.expansion_defense}"
             )
         lines = [
             f"{sender_name} 的武力值：{power.total}"

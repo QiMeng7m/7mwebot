@@ -22,6 +22,7 @@ from .fishing_catalog import RARITY_BONUS_MULT, FishingCatalog
 from .models import FishCatch, FishingResult
 from .store import PointStore
 from .techniques import effects_for
+from .expansion import world_fishing_bonuses
 from .util import is_group_enabled, local_day, local_hour_start
 
 logger = logging.getLogger(__name__)
@@ -283,6 +284,9 @@ class FishingService:
         technique = effects_for(self._store, chat_id, sender_id)
         technique_rare = float(technique.get("fishing_rare", 0) or 0)
         technique_value = float(technique.get("fishing_value", 0) or 0)
+        world = world_fishing_bonuses(chat_id, now)
+        world_rare = float(world.get("rare", 0) or 0)
+        world_value = float(world.get("value", 0) or 0)
         cast_rows: list[FishCatch] = []
         total_value = 0
 
@@ -294,10 +298,12 @@ class FishingService:
             bait_id = bait["id"] if bait else ""
             rare_bonus = float(rod.get("rare_bonus", 0) or 0) + \
                 float(bait.get("rare_bonus", 0) if bait else 0) + \
-                float(proficiency["rare_bonus"]) + technique_rare
+                float(proficiency["rare_bonus"]) + technique_rare + \
+                world_rare
             value_bonus = float(rod.get("value_bonus", 0) or 0) + \
                 float(bait.get("value_bonus", 0) if bait else 0) + \
-                float(proficiency["value_bonus"]) + technique_value
+                float(proficiency["value_bonus"]) + technique_value + \
+                world_value
 
             miss = _roll(rng) < effective_miss_chance(
                 base_miss, float(rod.get("miss_reduction", 0) or 0),
