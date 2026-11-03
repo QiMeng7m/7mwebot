@@ -264,10 +264,13 @@ def _rows(store, sql: str, params=()) -> list:
         return store.conn.execute(sql, params).fetchall()
 
 
+_AFFIX_STAT = {item["id"]: item["stat"] for item in AFFIX_POOL}
+
+
 def affix_bonuses(store, chat_id: str, sender_id: str) -> dict:
     rows = _rows(
         store,
-        """SELECT a.stat, a.value FROM equipment_affixes a
+        """SELECT a.affix_id, a.value FROM equipment_affixes a
            JOIN equipment_owned o
              ON o.chat_id = a.chat_id AND o.sender_id = a.sender_id
             AND o.item_id = a.item_id
@@ -276,8 +279,10 @@ def affix_bonuses(store, chat_id: str, sender_id: str) -> dict:
     )
     totals: dict[str, float] = {}
     for row in rows:
-        totals[str(row[0])] = totals.get(str(row[0]), 0.0) + \
-            float(row[1] or 0)
+        stat = _AFFIX_STAT.get(str(row[0]))
+        if not stat:
+            continue
+        totals[stat] = totals.get(stat, 0.0) + float(row[1] or 0)
     return totals
 
 
