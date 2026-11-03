@@ -411,7 +411,7 @@ todo_delete_keywords: list[str] = [
 | `_send_leave_warning(group_name, talker, member_name, kind="leave")` | 成员退群/被移出后向群里发送固定警告（`kind` 决定文案模板） | `group_name, talker, member_name: str, kind: str` | `None` |
 | `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压；发送者/@提及解析失败时回退群昵称） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
-| `_extract_member_from_links(content, resolve_name=None)` | 从系统消息的 `<link>` 块提取成员（优先 `adder`，其次 `names`/`username`/`member`；跳过 `from`/`revoke`） | `content: str, resolve_name: Callable \| None` | `tuple[str, str]` |
+| `_extract_member_from_links(content, resolve_name=None)` | 从系统消息的 `<link>` 块提取成员，按链接语义排序（`names` > `adder` > `member` > `username`），**不按 XML 文档顺序**；跳过 `from`/`revoke` | `content: str, resolve_name: Callable \| None` | `tuple[str, str]` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_extract_join_member_info(content, resolve_name=None)` | 同 `_extract_join_member`，额外返回新成员 wxid | 同上 | `tuple[str, str]` |
 | `_extract_departure_info(content, resolve_name=None)` | 从退群/移出系统消息提取成员：优先 XML `<link>` 块，纯文本回退；返回 `(name, wxid, kind)`，`kind` 为 `leave`（退出）或 `remove`（被移出） | `content: str, resolve_name: Callable \| None` | `tuple[str, str, str]` |
@@ -633,10 +633,13 @@ todo_delete_keywords: list[str] = [
 
 > 入群事件由 `wcdb_backend._standardize()` 识别：WeChat 4.x 的系统消息是
 > zstd 压缩 XML，先用 `_decode_wcdb_content()` 解压，再由
-> `_extract_join_member()` 提取新成员：优先 `<link name="adder">`，其次
-> `<link name="names"><memberlist><member>`（如 `你邀请"$names$"加入了群聊`），
-> 跳过 `from`（邀请人）和 `revoke`（撤销）链接；模板中的 `$names$` 等
-> 占位符不会被当作成员名。同时兼容纯文本 `"张三"加入了群聊`。当
+> `_extract_join_member()` 提取新成员：按 `<link>` 名称语义取优先级
+> `names` > `adder` > `member` > `username`（如 `"$username$"邀请"$names$"加入了群聊`
+> 中 `username` 是邀请人、`names` 才是新成员；`"$adder$"通过扫描"$from$"分享的二维码加入群聊`
+> 中 `adder` 是扫码入群者），**不能按 XML 文档顺序取第一个**，否则 A 邀请 B
+> 入群时会误欢迎邀请人 A；`from`（分享人/邀请人）和 `revoke`（撤销）链接总是
+> 跳过；模板中的 `$names$` 等占位符不会被当作成员名。同时兼容纯文本
+> `"张三"加入了群聊`。当
 > `WELCOME_ENABLED=true` 或 `INACTIVE_KICK_ENABLED=true` 时保留入群事件，
 > 否则静默丢弃。
 >

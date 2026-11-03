@@ -70,8 +70,21 @@ _PLAIN_JOIN_RE = re.compile(
 _PLACEHOLDER_RE = re.compile(r"^\$[A-Za-z0-9_]+\$$")
 # Links that describe someone other than the new member.
 _NON_MEMBER_LINK_NAMES = ("from", "revoke")
-# Links that hold the new member, in priority order.
-_MEMBER_LINK_NAMES = ("adder", "names", "username", "member")
+# Links that can hold the new member, ranked by reliability.  WeChat's
+# invite template is '"$username$"邀请"$names$"加入了群聊' and lists the
+# inviter's "username" link *before* the invitee's "names" link, so picking
+# the first link in document order would welcome the inviter (A) instead of
+# the new member (B).  Prefer "names" (the invitee list), then "adder"
+# (someone who joined by scanning a QR code), and only fall back to
+# "username" (usually the sender/inviter) when nothing better exists.
+_MEMBER_LINK_PRIORITY = {
+    "names": 0,
+    "adder": 1,
+    "member": 2,
+    "username": 3,
+}
+# Kept for backwards compatibility with callers importing the tuple.
+_MEMBER_LINK_NAMES = tuple(_MEMBER_LINK_PRIORITY)
 
 
 def _decode_wcdb_content(content: str) -> str:
@@ -143,6 +156,9 @@ def _extract_member_from_links(
     WeChat 4.x templates keep placeholders like ``$names$`` in
     ``<template>``; the real values live in ``<link>`` blocks.  Links
     describing the inviter/revoker (``from``/``revoke``) are ignored.
+    Member links are ranked by semantics (see ``_MEMBER_LINK_PRIORITY``),
+    never by document order: an invite message puts the inviter
+    (``username``) before the invitee (``names``).
     The wxid is empty when no ``<member>`` entry is present.
     """
     def _clean(value: str) -> str:
@@ -167,15 +183,9 @@ def _extract_member_from_links(
                 pass
         return (nickname or username), username
 
-    link = _ADDER_LINK_RE.search(content)
-    if link:
-        member, wxid = _member_from_link(link.group(1))
-        if member:
-            return member, wxid
-
-    preferred: list[tuple[str, str]] = []
+    candidates: list[tuple[int, int, tuple[str, str]]] = []
     others: list[tuple[str, str]] = []
-    for raw_attrs, block in _LINK_BLOCK_RE.findall(content):
+    for index, (raw_attrs, block) in enumerate(_LINK_BLOCK_RE.findall(content)):
         attrs = dict(_LINK_ATTR_RE.findall(raw_attrs))
         name = attrs.get("name", "")
         if name in _NON_MEMBER_LINK_NAMES or attrs.get("type") == "link_revoke":
@@ -186,15 +196,26 @@ def _extract_member_from_links(
         member, wxid = _member_from_link(block)
         if not member:
             continue
-        if name in _MEMBER_LINK_NAMES:
-            preferred.append((member, wxid))
+        rank = _MEMBER_LINK_PRIORITY.get(name)
+        if rank is not None:
+            candidates.append((rank, index, (member, wxid)))
         else:
             others.append((member, wxid))
 
-    if preferred:
-        return preferred[0]
+    if candidates:
+        # Rank first; document order only breaks ties within the same link.
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return candidates[0][2]
     if others:
         return others[0]
+
+    # Fallback for an "adder" link that has neither <member> nor
+    # type="link_profile" (the loop above skips those).
+    link = _ADDER_LINK_RE.search(content)
+    if link:
+        member, wxid = _member_from_link(link.group(1))
+        if member:
+            return member, wxid
     return "", ""
 
 

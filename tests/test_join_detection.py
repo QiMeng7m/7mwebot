@@ -83,6 +83,46 @@ SAMPLE_NAMES_XML = """46074645339@chatroom:
 </sysmsg>"""
 
 
+# Real WeChat 4.x invite message: A invited B into the group.  The
+# inviter sits in the "username" link and is listed FIRST; the new member
+# is in the "names" link.  Extraction must not pick the inviter just
+# because its link comes first in the XML.
+SAMPLE_INVITE_XML = """46074645339@chatroom:
+<sysmsg type="sysmsgtemplate">
+\t<sysmsgtemplate>
+\t\t<content_template type="tmpl_type_profilewithrevoke">
+\t\t\t<plain><![CDATA[]]></plain>
+\t\t\t<template><![CDATA["$username$"邀请"$names$"加入了群聊  $revoke$]]></template>
+\t\t\t<link_list>
+\t\t\t\t<link name="username" type="link_profile">
+\t\t\t\t\t<memberlist>
+\t\t\t\t\t\t<member>
+\t\t\t\t\t\t\t<username><![CDATA[wxid_inviter_a]]></username>
+\t\t\t\t\t\t\t<nickname><![CDATA[邀请人A]]></nickname>
+\t\t\t\t\t\t</member>
+\t\t\t\t\t</memberlist>
+\t\t\t\t</link>
+\t\t\t\t<link name="names" type="link_profile">
+\t\t\t\t\t<memberlist>
+\t\t\t\t\t\t<member>
+\t\t\t\t\t\t\t<username><![CDATA[wxid_invitee_b]]></username>
+\t\t\t\t\t\t\t<nickname><![CDATA[新人B]]></nickname>
+\t\t\t\t\t\t</member>
+\t\t\t\t\t</memberlist>
+\t\t\t\t\t<separator><![CDATA[、]]></separator>
+\t\t\t\t</link>
+\t\t\t\t<link name="revoke" type="link_revoke" hidden="1">
+\t\t\t\t\t<title><![CDATA[撤销]]></title>
+\t\t\t\t\t<usernamelist>
+\t\t\t\t\t\t<username><![CDATA[wxid_invitee_b]]></username>
+\t\t\t\t\t</usernamelist>
+\t\t\t\t</link>
+\t\t\t</link_list>
+\t\t</content_template>
+\t</sysmsgtemplate>
+</sysmsg>"""
+
+
 class ExtractJoinMemberTests(unittest.TestCase):
     def test_extracts_adder_from_xml_template(self):
         self.assertEqual(_extract_join_member(SAMPLE_XML), "-")
@@ -116,6 +156,23 @@ class ExtractJoinMemberTests(unittest.TestCase):
             ),
         )
         self.assertEqual(member, "新成员")
+
+    def test_invite_xml_targets_invitee_not_inviter(self):
+        # "username" (inviter A) appears first in the XML; the welcome /
+        # @mention target must still be the new member B from "names".
+        self.assertEqual(_extract_join_member(SAMPLE_INVITE_XML), "新人B")
+        self.assertEqual(
+            _extract_join_member_info(SAMPLE_INVITE_XML),
+            ("新人B", "wxid_invitee_b"),
+        )
+
+    def test_invite_xml_prefers_invitee_over_resolved_inviter(self):
+        names = {"wxid_inviter_a": "邀请人A", "wxid_invitee_b": "新人B"}
+        member, wxid = _extract_join_member_info(
+            SAMPLE_INVITE_XML, resolve_name=names.get,
+        )
+        self.assertEqual(member, "新人B")
+        self.assertEqual(wxid, "wxid_invitee_b")
 
     def test_plain_text_join(self):
         self.assertEqual(_extract_join_member('"张三"加入了群聊'), "张三")
@@ -329,6 +386,17 @@ class StandardizeJoinTests(unittest.TestCase):
         self.assertTrue(result["is_system_join"])
         self.assertEqual(result["new_member_id"], "小柒")
         self.assertEqual(result["new_member_wxid"], "wxid_vvi4cxesb04k22")
+
+    def test_invite_join_welcomes_invitee_not_inviter(self):
+        result = _backend(welcome_enabled=True)._standardize(
+            _join_msg(SAMPLE_INVITE_XML), "想亲想爱一家人",
+            "46074645339@chatroom",
+        )
+        self.assertIsNotNone(result)
+        self.assertTrue(result["is_system_join"])
+        self.assertEqual(result["new_member_id"], "新人B")
+        self.assertEqual(result["new_member_wxid"], "wxid_invitee_b")
+        self.assertNotEqual(result["new_member_id"], "邀请人A")
 
     def test_join_dropped_when_welcome_disabled(self):
         result = _backend(welcome_enabled=False)._standardize(
