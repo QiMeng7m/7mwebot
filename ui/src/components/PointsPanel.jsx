@@ -103,6 +103,10 @@ export default function PointsPanel() {
   const [power, setPower] = useState(null)
   const [shopMember, setShopMember] = useState('')
   const [shopSlot, setShopSlot] = useState('')
+  const [cleanupMembers, setCleanupMembers] = useState([])
+  const [hasMemberSnapshot, setHasMemberSnapshot] = useState(null)
+  const [cleanupConfirm, setCleanupConfirm] = useState(null)
+  const [cleanupBusy, setCleanupBusy] = useState(false)
   const [detail, setDetail] = useState(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -174,6 +178,17 @@ export default function PointsPanel() {
     else setMessage(data.error || '加载扩展玩法失败')
   }, [chatId])
 
+  const loadCleanup = useCallback(async () => {
+    if (!chatId) return
+    const data = await api(`/api/points/members?chat_id=${encodeURIComponent(chatId)}`)
+    if (data.ok) {
+      setCleanupMembers(data.members || [])
+      setHasMemberSnapshot(data.has_snapshot === true)
+    } else {
+      setMessage(data.error || '加载成员失败')
+    }
+  }, [chatId])
+
   useEffect(() => {
     if (!chatId) return
     setLoading(true)
@@ -200,7 +215,8 @@ export default function PointsPanel() {
       if (member && member !== expMember) setExpMember(member)
       loadExpansion(member)
     }
-  }, [view, chatId, shopMember, rows, loadShop, loadDuels, fishMember, loadFishing, expMember, loadExpansion])
+    if (view === 'cleanup') loadCleanup()
+  }, [view, chatId, shopMember, rows, loadShop, loadDuels, fishMember, loadFishing, expMember, loadExpansion, loadCleanup])
 
   async function openMember(senderId) {
     const data = await api(
@@ -216,6 +232,7 @@ export default function PointsPanel() {
     if (view === 'duels') await loadDuels()
     if (view === 'fishing') await loadFishing(fishMember)
     if (view === 'expansion') await loadExpansion(expMember)
+    if (view === 'cleanup') await loadCleanup()
     if (detail) await openMember(detail.sender_id)
   }
 
@@ -385,6 +402,26 @@ export default function PointsPanel() {
     }
   }
 
+  async function purgeMembers(payload) {
+    setCleanupBusy(true)
+    try {
+      const data = await api('/api/points/purge', {
+        method: 'POST',
+        body: JSON.stringify({ chat_id: chatId, ...payload }),
+      })
+      if (data.ok) {
+        const count = data.count ?? Object.keys(data.purged || {}).length
+        setMessage(count ? `已清理 ${count} 名成员的修炼数据` : '没有需要清理的成员')
+        setCleanupConfirm(null)
+        await Promise.all([loadCleanup(), loadBoard(), loadOverview()])
+      } else {
+        setMessage(data.error || '清理失败')
+      }
+    } finally {
+      setCleanupBusy(false)
+    }
+  }
+
   const groupOptions = groups.map(g => ({
     value: g.chat_id,
     label: `${g.group_name}（${g.member_count}人）`,
@@ -449,6 +486,9 @@ export default function PointsPanel() {
         </Pill>
         <Pill active={view === 'overview'} onClick={() => setView('overview')}>
           <ChartBar size={14} className="inline mr-1" />概览
+        </Pill>
+        <Pill active={view === 'cleanup'} onClick={() => setView('cleanup')}>
+          <Broom size={14} className="inline mr-1" />成员清理
         </Pill>
       </div>
 
@@ -1084,6 +1124,127 @@ export default function PointsPanel() {
                           <Bar value={count} max={distributionTotal} />
                         </div>
                       ))}
+                  </div>
+                )}
+              </Card>
+            </div>
+          )}
+
+          {view === 'cleanup' && (
+            <div className="space-y-4">
+              <Card>
+                <SectionTitle hint="清理会删除该成员在本群的修炼值、装备、功法、擂台等游戏数据；聊天记录与切磋日志会保留。">
+                  退群成员清理
+                </SectionTitle>
+                {hasMemberSnapshot === false ? (
+                  <div className="flex items-start gap-2 text-xs text-text-muted bg-bg-raised border border-border-main rounded-xl px-3 py-2.5">
+                    <Warning size={16} className="shrink-0 mt-0.5" />
+                    <span>
+                      还没有群成员快照，无法自动识别退群成员。请先启动微信数据源刷新群成员，
+                      或在下方手动清理指定成员。
+                    </span>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <span className="text-xs font-mono text-text-muted">
+                        共 {cleanupMembers.length} 名成员 · 已退群{' '}
+                        <span className="text-[#d45656]">
+                          {cleanupMembers.filter(m => m.active === false).length}
+                        </span>{' '}
+                        人
+                      </span>
+                      {cleanupConfirm === 'all' ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-[#d45656]">
+                            确认清理全部退群成员？此操作不可撤销。
+                          </span>
+                          <button
+                            disabled={cleanupBusy}
+                            onClick={() => purgeMembers({ all_departed: true })}
+                            className="px-3 py-1.5 rounded-lg bg-[#d45656] text-white text-[12px] font-medium disabled:opacity-50 cursor-pointer"
+                          >
+                            {cleanupBusy ? '清理中…' : '确认清理'}
+                          </button>
+                          <button
+                            disabled={cleanupBusy}
+                            onClick={() => setCleanupConfirm(null)}
+                            className="px-3 py-1.5 rounded-lg bg-bg-raised border border-border-main text-[12px] text-text-muted hover:text-text-main disabled:opacity-50 cursor-pointer"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          disabled={cleanupBusy || !cleanupMembers.some(m => m.active === false)}
+                          onClick={() => setCleanupConfirm('all')}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-raised border border-border-main text-[12px] text-text-muted hover:text-[#d45656] hover:border-[#d45656]/20 hover:bg-[#d45656]/5 transition-colors disabled:opacity-40 cursor-pointer"
+                        >
+                          <Trash size={14} /> 一键清理退群成员
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </Card>
+
+              <Card>
+                <SectionTitle hint="点击右侧按钮可单独清理某个成员">
+                  成员列表
+                </SectionTitle>
+                {cleanupMembers.length === 0 ? (
+                  <p className="text-sm text-text-muted">这个群还没有成员数据。</p>
+                ) : (
+                  <div className="space-y-2">
+                    {cleanupMembers.map(member => {
+                      const status = member.active === false
+                        ? { text: '已退群', cls: 'text-[#d45656] bg-[#d45656]/10 border-[#d45656]/20' }
+                        : member.active === true
+                          ? { text: '在群', cls: 'text-brand-green bg-brand-green-light border-brand-green/20' }
+                          : { text: '未知', cls: 'text-text-muted bg-bg-raised border-border-main' }
+                      const confirming = cleanupConfirm === member.sender_id
+                      return (
+                        <div
+                          key={member.sender_id}
+                          className="flex flex-wrap items-center gap-3 px-3 py-2.5 rounded-xl border border-border-main bg-bg-raised/40"
+                        >
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-[13px] text-text-main truncate">{member.sender_name}</span>
+                            <span className="block text-[11px] text-text-muted font-mono truncate">{member.sender_id}</span>
+                          </span>
+                          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] border ${status.cls}`}>
+                            {status.text}
+                          </span>
+                          {confirming ? (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-[#d45656]">确认清理？</span>
+                              <button
+                                disabled={cleanupBusy}
+                                onClick={() => purgeMembers({ sender_id: member.sender_id })}
+                                className="px-2.5 py-1 rounded-lg bg-[#d45656] text-white text-[11px] font-medium disabled:opacity-50 cursor-pointer"
+                              >
+                                {cleanupBusy ? '清理中…' : '确认'}
+                              </button>
+                              <button
+                                disabled={cleanupBusy}
+                                onClick={() => setCleanupConfirm(null)}
+                                className="px-2.5 py-1 rounded-lg bg-bg-main border border-border-main text-[11px] text-text-muted hover:text-text-main disabled:opacity-50 cursor-pointer"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              disabled={cleanupBusy}
+                              onClick={() => setCleanupConfirm(member.sender_id)}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-bg-main border border-border-main text-[11px] text-text-muted hover:text-[#d45656] hover:border-[#d45656]/20 disabled:opacity-40 cursor-pointer"
+                            >
+                              <Trash size={13} /> 清理
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </Card>

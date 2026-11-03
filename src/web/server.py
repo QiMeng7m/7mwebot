@@ -1219,6 +1219,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                          "/api/lots",
                          "/api/todos/action",
                          "/api/points/adjust", "/api/points/levels",
+                         "/api/points/purge",
                          "/api/equipment/buy", "/api/equipment/equip",
                          "/api/equipment/catalog",
                          "/api/fishing/cast", "/api/fishing/buy_rod",
@@ -2055,6 +2056,79 @@ class _UIHandler(SimpleHTTPRequestHandler):
                         "kind": kind,
                         "earned": earned,
                         "balance": store.balance_of(chat_id, sender_id),
+                    })
+                    return
+
+                # ── GET /api/points/members ──────────────────────
+                if route == "/api/points/members":
+                    chat_id = params.get("chat_id", "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    from src.points.util import load_group_members
+                    current = load_group_members(chat_id)
+                    members = store.known_members(chat_id)
+                    for member in members:
+                        member["active"] = (
+                            None if current is None
+                            else member["sender_id"] in current
+                        )
+                    self.send_json({
+                        "ok": True,
+                        "has_snapshot": current is not None,
+                        "members": members,
+                    })
+                    return
+
+                # ── POST /api/points/purge ───────────────────────
+                if route == "/api/points/purge":
+                    if self.command != "POST":
+                        self.send_json({"ok": False,
+                                        "error": "POST required"})
+                        return
+                    data = _body()
+                    chat_id = str(data.get("chat_id") or "")
+                    if not chat_id:
+                        self.send_json({"ok": False,
+                                        "error": "chat_id required"})
+                        return
+                    if data.get("all_departed"):
+                        from src.points.util import load_group_members
+                        current = load_group_members(chat_id)
+                        if current is None:
+                            self.send_json({
+                                "ok": False,
+                                "error": ("没有群成员快照，无法识别退群成员。"
+                                          "请先启动微信数据源刷新群成员。"),
+                            })
+                            return
+                        targets = [
+                            member["sender_id"]
+                            for member in store.known_members(chat_id)
+                            if member["sender_id"] not in current
+                        ]
+                    else:
+                        sender_id = str(data.get("sender_id") or "")
+                        if not sender_id:
+                            self.send_json({
+                                "ok": False,
+                                "error": "sender_id or all_departed required",
+                            })
+                            return
+                        targets = [sender_id]
+                    if len(targets) > 500:
+                        self.send_json({"ok": False,
+                                        "error": "一次最多清理 500 人"})
+                        return
+                    purged = {
+                        sender_id: store.purge_member(chat_id, sender_id)
+                        for sender_id in targets
+                    }
+                    self.send_json({
+                        "ok": True,
+                        "count": len(purged),
+                        "purged": purged,
                     })
                     return
 

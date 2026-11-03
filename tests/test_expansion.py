@@ -2,6 +2,7 @@
 
 import time
 import unittest
+from unittest.mock import patch
 
 from src.config import BotConfig
 from src.db.schema import initialize_db
@@ -193,6 +194,29 @@ class DungeonArenaTests(ExpansionTestBase):
         entry = self.expansion._arena_entry(
             self.chat, local_week(), "wxid_a")
         self.assertGreaterEqual(entry["wins"] + entry["losses"], 1)
+
+    def test_arena_skips_members_who_left_the_group(self):
+        self.add_member("wxid_a", "张三", 2000)
+        self.add_member("wxid_b", "李四", 2000)   # 已退群
+        self.add_member("wxid_c", "王五", 2000)
+        with patch(
+            "src.points.expansion.load_group_members",
+            return_value={"wxid_a": "张三", "wxid_c": "王五"},
+        ):
+            reply = self.expansion.arena_challenge(
+                self.chat, "wxid_a", "张三", rng=_Rng(0.0, 0.0))
+        self.assertIn("王五", reply)
+        self.assertNotIn("李四", reply)
+
+    def test_arena_keeps_everyone_when_no_member_snapshot(self):
+        self.add_member("wxid_a", "张三", 2000)
+        self.add_member("wxid_b", "李四", 2000)
+        with patch(
+            "src.points.expansion.load_group_members", return_value=None,
+        ):
+            reply = self.expansion.arena_challenge(
+                self.chat, "wxid_a", "张三", rng=_Rng(0.0, 0.0))
+        self.assertIn("李四", reply)
 
 
 class GuildMarketTests(ExpansionTestBase):

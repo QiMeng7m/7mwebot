@@ -42,7 +42,7 @@ from .skills import (
     loadout_skills,
     skill_by_id,
 )
-from .util import local_day, local_season, local_week
+from .util import local_day, local_season, local_week, load_group_members
 
 # ── Definitions ──────────────────────────────────────────────────────
 
@@ -1083,6 +1083,15 @@ class ExpansionService:
             member for member in self._store.members(chat_id)
             if member["sender_id"] != sender_id
         ]
+        # A member who left the group still has a user_last_message row.
+        # When the WeChat backend has a live member snapshot, only match
+        # against people who are currently in the group.
+        active = load_group_members(chat_id)
+        if active is not None:
+            opponents = [
+                member for member in opponents
+                if member["sender_id"] in active
+            ]
         if not opponents:
             return "本群还没有可匹配的对手。"
         opponent = opponents[int(_roll(rng) * len(opponents)) % len(opponents)]

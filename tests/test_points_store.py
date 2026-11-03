@@ -349,5 +349,94 @@ class RebuildTests(PointStoreTestBase):
         self.assertEqual(self.store.balance_of(self.chat, "wxid_a"), -3)
 
 
+class DepartureCleanupTests(PointStoreTestBase):
+    def setUp(self):
+        super().setUp()
+        self.add_member("wxid_a", "张三")
+        self.add_member("wxid_b", "李四")
+        self.store.record_events(self.chat, "m-a", [_award("wxid_a", points=10)])
+        self.store.record_events(self.chat, "m-b", [_award("wxid_b", points=20)])
+        with self.store.lock, self.store.conn:
+            self.conn.execute(
+                """INSERT INTO equipment_owned
+                   (chat_id, sender_id, item_id, purchased_at, equipped)
+                   VALUES (?, 'wxid_a', 'wood_sword', 1, 0)""",
+                (self.chat,),
+            )
+            self.conn.execute(
+                """INSERT INTO arena_entries
+                   (chat_id, season, sender_id, sender_name, points,
+                    wins, losses, updated_at)
+                   VALUES (?, '2026-W01', 'wxid_a', '张三', 10, 1, 0, 1)""",
+                (self.chat,),
+            )
+            self.conn.execute(
+                """INSERT INTO duels
+                   (chat_id, message_id, attacker_id, attacker_name,
+                    defender_id, defender_name, attacker_power,
+                    defender_power, win_prob, attacker_win, points_moved,
+                    shield_blocked, created_at, day)
+                   VALUES (?, 'd1', 'wxid_a', '张三', 'wxid_b', '李四',
+                           1, 1, 0.5, 1, 0, 0, 1, '2026-01-01')""",
+                (self.chat,),
+            )
+
+    def test_known_members_returns_everyone_with_data(self):
+        ids = {m["sender_id"] for m in self.store.known_members(self.chat)}
+        self.assertEqual(ids, {"wxid_a", "wxid_b"})
+
+    def test_purge_member_removes_game_data_but_keeps_messages(self):
+        counts = self.store.purge_member(self.chat, "wxid_a")
+        self.assertEqual(counts["user_last_message"], 1)
+        self.assertEqual(counts["point_events"], 1)
+        self.assertEqual(counts["equipment_owned"], 1)
+        self.assertEqual(counts["arena_entries"], 1)
+        self.assertEqual(counts["duels"], 1)
+        self.assertFalse(self.store.has_member(self.chat, "wxid_a"))
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_a"), 0)
+        self.assertEqual(
+            self.store.known_members(self.chat),
+            [{"sender_id": "wxid_b", "sender_name": "李四"}],
+        )
+        # Chat history is preserved.
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE sender_id = 'wxid_a'"
+            ).fetchone()[0], 1,
+        )
+        # Other members are untouched.
+        self.assertTrue(self.store.has_member(self.chat, "wxid_b"))
+        self.assertEqual(self.store.earned_of(self.chat, "wxid_b"), 20)
+
+    def test_purge_guild_leader_promotes_longest_serving_member(self):
+        with self.store.lock, self.store.conn:
+            self.conn.execute(
+                """INSERT INTO guilds
+                   (chat_id, name, level, exp, funds, created_at)
+                   VALUES (?, '青云门', 1, 0, 0, 1)""",
+                (self.chat,),
+            )
+            self.conn.execute(
+                """INSERT INTO guild_members
+                   (chat_id, sender_id, role, contribution, joined_at)
+                   VALUES (?, 'wxid_a', 'leader', 0, 1)""",
+                (self.chat,),
+            )
+            self.conn.execute(
+                """INSERT INTO guild_members
+                   (chat_id, sender_id, role, contribution, joined_at)
+                   VALUES (?, 'wxid_b', 'member', 0, 2)""",
+                (self.chat,),
+            )
+        counts = self.store.purge_member(self.chat, "wxid_a")
+        self.assertEqual(counts["guild_members"], 1)
+        role = self.conn.execute(
+            """SELECT role FROM guild_members
+               WHERE chat_id = ? AND sender_id = 'wxid_b'""",
+            (self.chat,),
+        ).fetchone()[0]
+        self.assertEqual(role, "leader")
+
+
 if __name__ == "__main__":
     unittest.main()

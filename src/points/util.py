@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import date
+from pathlib import Path
 
 
 def local_day(ts: int | float | None = None) -> str:
@@ -82,3 +84,32 @@ def is_group_enabled(chat_id: str, group_name: str,
     keys = {str(chat_id or "").strip(), str(group_name or "").strip()}
     keys.discard("")
     return any(g in keys for g in groups)
+
+
+def load_group_members(chat_id: str,
+                       path: Path | str | None = None
+                       ) -> dict[str, str] | None:
+    """Return the last known ``{wxid: display_name}`` snapshot for a group.
+
+    The WeChat backend writes ``data/group_members.json`` with the live
+    member list of every chatroom.  ``None`` means "no snapshot for this
+    group" (file missing or group unknown) — callers must not treat that
+    as "everyone left".
+    """
+    file_path = Path(path) if path else Path("data") / "group_members.json"
+    try:
+        if not file_path.exists():
+            return None
+        raw = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    members = raw.get(str(chat_id))
+    if not isinstance(members, dict):
+        return None
+    return {
+        str(wxid): str(name or wxid)
+        for wxid, name in members.items()
+        if str(wxid)
+    }

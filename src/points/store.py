@@ -495,6 +495,127 @@ class PointStore:
             ).fetchone()
         return (row[0] if row and row[0] else str(sender_id))
 
+    # ── Departure cleanup ─────────────────────────────────────────
+
+    # Tables holding per-member state.  “messages” is deliberately left
+    # out: chat history feeds summaries and is not game data.
+    _MEMBER_TABLES: tuple[tuple[str, str, str], ...] = (
+        ("user_last_message", "sender_id", ""),
+        ("fun_draws", "sender_id", ""),
+        ("point_events", "sender_id", ""),
+        ("equipment_owned", "sender_id", ""),
+        ("duel_shields", "sender_id", ""),
+        ("fishing_casts", "sender_id", ""),
+        ("fishing_inventory", "sender_id", ""),
+        ("boss_attacks", "sender_id", ""),
+        ("boss_energy", "sender_id", ""),
+        ("achievements", "sender_id", ""),
+        ("member_profiles", "sender_id", ""),
+        ("member_realms", "sender_id", ""),
+        ("technique_progress", "sender_id", ""),
+        ("technique_state", "sender_id", ""),
+        ("skill_casts", "sender_id", ""),
+        ("lottery_draws", "sender_id", ""),
+        ("skill_levels", "sender_id", ""),
+        ("item_inventory", "sender_id", ""),
+        ("task_progress", "sender_id", ""),
+        ("dungeon_progress", "sender_id", ""),
+        ("dungeon_state", "sender_id", ""),
+        ("equipment_affixes", "sender_id", ""),
+        ("arena_entries", "sender_id", ""),
+        ("arena_claims", "sender_id", ""),
+        # Only open listings leave with the seller; sold/cancelled rows
+        # are kept as market history.
+        ("market_listings", "seller_id", "status = 'open'"),
+        ("pets", "sender_id", ""),
+        ("alchemy_state", "sender_id", ""),
+        ("rebirths", "sender_id", ""),
+    )
+
+    def known_members(self, chat_id: str) -> list[dict]:
+        """Every member id that still has data in this group."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT sender_id, sender_name FROM user_last_message
+                   WHERE chat_id = ?
+                   UNION
+                   SELECT sender_id, sender_name FROM point_events
+                   WHERE chat_id = ?
+                   UNION
+                   SELECT sender_id, sender_name FROM arena_entries
+                   WHERE chat_id = ?""",
+                (str(chat_id), str(chat_id), str(chat_id)),
+            ).fetchall()
+        members: dict[str, str] = {}
+        for row in rows:
+            sid = str(row[0] or "")
+            if not sid:
+                continue
+            name = str(row[1] or "")
+            # Prefer a real display name over a bare wxid.
+            if name and (not members.get(sid) or members[sid] == sid):
+                members[sid] = name
+            else:
+                members.setdefault(sid, sid)
+        return [
+            {"sender_id": sid, "sender_name": members[sid]}
+            for sid in sorted(members)
+        ]
+
+    def purge_member(self, chat_id: str, sender_id: str) -> dict[str, int]:
+        """Delete every trace of a departed member in one group.
+
+        Returns ``{table: deleted_rows}`` for the tables that had data.
+        Chat messages are intentionally preserved.
+        """
+        chat, sid = str(chat_id), str(sender_id)
+        counts: dict[str, int] = {}
+        with self._lock, self.conn:
+            # Hand guild leadership to the longest-serving remaining
+            # member before the leader row goes away.
+            row = self.conn.execute(
+                """SELECT role FROM guild_members
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (chat, sid),
+            ).fetchone()
+            if row and str(row[0]) == "leader":
+                successor = self.conn.execute(
+                    """SELECT sender_id FROM guild_members
+                       WHERE chat_id = ? AND sender_id != ?
+                       ORDER BY joined_at ASC, sender_id ASC LIMIT 1""",
+                    (chat, sid),
+                ).fetchone()
+                if successor:
+                    self.conn.execute(
+                        """UPDATE guild_members SET role = 'leader'
+                           WHERE chat_id = ? AND sender_id = ?""",
+                        (chat, str(successor[0])),
+                    )
+            for table, column, extra in self._MEMBER_TABLES:
+                sql = (f"DELETE FROM {table} "
+                       f"WHERE chat_id = ? AND {column} = ?")
+                if extra:
+                    sql += f" AND {extra}"
+                cur = self.conn.execute(sql, (chat, sid))
+                if cur.rowcount:
+                    counts[table] = cur.rowcount
+            cur = self.conn.execute(
+                """DELETE FROM duels
+                   WHERE chat_id = ?
+                     AND (attacker_id = ? OR defender_id = ?)""",
+                (chat, sid, sid),
+            )
+            if cur.rowcount:
+                counts["duels"] = cur.rowcount
+            cur = self.conn.execute(
+                """DELETE FROM guild_members
+                   WHERE chat_id = ? AND sender_id = ?""",
+                (chat, sid),
+            )
+            if cur.rowcount:
+                counts["guild_members"] = cur.rowcount
+        return counts
+
     # ── Equipment ─────────────────────────────────────────────────
 
     def owned_items(self, chat_id: str, sender_id: str) -> list[dict]:

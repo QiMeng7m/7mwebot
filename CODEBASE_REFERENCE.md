@@ -817,6 +817,12 @@ todo_delete_keywords: list[str] = [
 `GET /api/fishing?chat_id=&sender_id=`、`POST /api/fishing/cast|buy_rod|buy_bait|equip_rod`、
 `GET/POST /api/fishing/catalog`。新增 POST 路径必须加入 `do_POST` 白名单。
 
+退群成员清理：`GET /api/points/members?chat_id=` 返回所有仍有数据的成员及
+`active`（`true` 在群 / `false` 已退群 / `null` 无群成员快照）；
+`POST /api/points/purge` 接受 `{chat_id, sender_id}` 清理单人，或
+`{chat_id, all_departed: true}` 清理全部已退群成员（无
+`data/group_members.json` 快照时拒绝自动识别）。
+
 ### 2.34 前端组件 (`ui/src/components/`)
 
 | 文件 | 组件名 | 描述 |
@@ -827,7 +833,7 @@ todo_delete_keywords: list[str] = [
 | `Dashboard.jsx` | `LiveIndicator` | 实时状态指示灯(脉冲动画) |
 | `Dashboard.jsx` | `KeyExtractionBanner` | 内联密钥提取横幅(单文件内组件) |
 | `LogViewer.jsx` | `LogViewer` | 实时日志查看器(过滤/搜索/高亮) |
-| `PointsPanel.jsx` | `PointsPanel` | 修炼值面板(榜单/装备商店/切磋记录/钓鱼/概览/成员详情/管理员调整)；装备商店按槽位标签切换、单槽位紧凑表格展示属性/技能/售价 |
+| `PointsPanel.jsx` | `PointsPanel` | 修炼值面板(榜单/装备商店/切磋记录/钓鱼/扩展玩法/概览/成员清理/成员详情/管理员调整)；装备商店按槽位标签切换、单槽位紧凑表格展示属性/技能/售价；成员清理页显示在群状态并可单人/批量清理退群成员数据 |
 | `PointsPanel.jsx` | `equipmentStats(item)` | 把装备 `power` 按槽位拆成展示文本（武器→攻击、护甲→防御、饰品偏攻、坐骑偏防） |
 
 ### 2.35 `src/activity.py`
@@ -873,6 +879,7 @@ todo_delete_keywords: list[str] = [
 | `util.py` | `season_end_day(season)` | 赛季最后一天 | `season: str` | `str` |
 | `util.py` | `days_until_season_end(ts=None)` | 距赛季结束天数 | `ts: int \| None` | `int` |
 | `util.py` | `is_group_enabled(chat_id, group_name, groups)` | 群白名单匹配（`*` 全部） | 见签名 | `bool` |
+| `util.py` | `load_group_members(chat_id, path=None)` | 读取 `data/group_members.json` 中某群的 `{wxid: 昵称}` 快照；文件/群条目缺失返回 `None`（区别于“全员退群”） | `chat_id: str, path: Path \| str \| None` | `dict[str, str] \| None` |
 | `rules.py` | `reply_target(content, sender_id=None)` | 从 `<username>:` 回复前缀提取被引用者（前缀等于发送者时视为普通消息前缀） | `content: str, sender_id: str \| None` | `str \| None` |
 | `rules.py` | `strip_reply_prefix(content)` | 去掉消息/回复前缀（`wxid_*` 或自定义微信号） | `content: str` | `str` |
 | `rules.py` | `strip_invisible(text)` | 折叠空白/零宽字符为单个空格 | `text: str` | `str` |
@@ -957,6 +964,8 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `record_duel(...)` | 原子写入切磋记录与修炼值转移 | 见签名 | `bool` |
 | `store.py` | `close_season(chat_id, season)` / `season_winner(...)` | 赛季冠军惰性结算 | 见签名 | `dict \| None` |
 | `store.py` | `daily_series(chat_id, days=14)` | 近 N 天每日修炼值（含 0） | 见签名 | `list[dict]` |
+| `store.py` | `known_members(chat_id)` | 汇总 `user_last_message` / `point_events` / `arena_entries` 中仍有数据的成员（含昵称） | `chat_id: str` | `list[dict]` |
+| `store.py` | `purge_member(chat_id, sender_id)` | 删除某成员在本群的游戏数据（流水/装备/功法/擂台/门派/切磋记录等），仅保留 `messages` 聊天记录；门派掌门退群时自动移交 | `chat_id, sender_id: str` | `dict[str, int]` |
 | `store.py` | `has_earned_on_day(chat_id, sender_id, day)` | 当天是否已有计分 | 见签名 | `bool` |
 | `store.py` | `event_points(chat_id, message_id, reason)` | 查某条消息某个加分项的分数 | 见签名 | `int` |
 | `store.py` | `has_reason_on_day(chat_id, sender_id, reason, day)` | 当天是否已获得某项加分（如 `daily_first`） | 见签名 | `bool` |
@@ -1026,7 +1035,7 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 | `.sets_status/.upgrade_skill/.tasks_status/.claim_task` | 套装、技能升级、任务查看与领取 | 见签名 | `str` |
 | `.dungeon_status/.challenge_dungeon` | 秘境状态与挑战 | 见签名 | `str` |
 | `.roll_affixes/.affix_status` | 洗练词条与查看 | 见签名 | `str` |
-| `.arena_status/.arena_board/.arena_challenge/.arena_claim` | 擂台状态、榜单、挑战与周奖励 | 见签名 | `str/list` |
+| `.arena_status/.arena_board/.arena_challenge/.arena_claim` | 擂台状态、榜单、挑战与周奖励；`arena_challenge` 在有 `group_members.json` 快照时只匹配当前在群成员，避免已退群成员成为对手 | 见签名 | `str/list` |
 | `.guild_status/.guild_create/.guild_join/.guild_leave/.guild_donate` | 门派系统 | 见签名 | `str` |
 | `.market_status/.market_sell/.market_buy/.market_cancel` | 交易行（5% 手续费、7 天过期退回） | 见签名 | `str` |
 | `.pet_status/.pet_adopt/.pet_train/.pet_release` | 宠物系统 | 见签名 | `str` |
@@ -2209,6 +2218,8 @@ Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
 - `daily_first` 只由「签到」指令触发；普通聊天不再自动获得签到分
 - 消息前缀兼容自定义微信号（`zy-519:…`、`canglan1992:…`），不再只识别 `wxid_*`
 - 切磋目标优先使用回复引用 → `mentioned_ids`（@ 的真实用户名）→ 昵称/群昵称精确匹配 → 唯一前后缀匹配；群昵称映射来自 `data/group_nicknames.json`（启动时 + 每 60 秒 + 入群事件时由 `wcdb_get_group_nicknames` 刷新，新入群成员无需重启即可解析）
+- 擂台切磋在有 `data/group_members.json` 成员快照时只匹配当前在群成员，避免已退群成员的 `user_last_message` 记录成为对手
+- 退群成员的历史数据可通过 Web 控制台「成员清理」页删除：`PointStore.purge_member()` 清理该成员在本群的流水/装备/功法/擂台/门派/切磋记录等数据（保留 `messages` 聊天记录）；批量清理依赖成员快照，快照缺失时只能按成员手动清理
 - 回复中的成员名回退链：手动昵称 → 群昵称 → 消息表昵称 → wxid；新成员在通讯录缓存里查不到名字时会显示群昵称，而不是 wxid
 - 切磋只转移灵石，不计入累计获得，避免打架刷榜
 - 购买装备使用「灵石充足才写入」的条件 INSERT，避免并发扣成负数

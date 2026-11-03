@@ -310,6 +310,34 @@ class TestPointsApi:
         assert status == 200
         assert data["ok"] is False
 
+    def test_points_members_lists_known_members(self, server):
+        status, data = _api_get("/api/points/members?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is True
+        assert isinstance(data["members"], list)
+        assert isinstance(data["has_snapshot"], bool)
+
+    def test_points_purge_is_post_only_and_validated(self, server):
+        # GET is rejected (the path is in the POST allowlist, not GET).
+        status, data = _api_get("/api/points/purge?chat_id=test@chatroom")
+        assert status == 200
+        assert data["ok"] is False
+        # POST without chat_id is rejected too.
+        status, data = _api_post("/api/points/purge", {})
+        assert status == 200
+        assert data["ok"] is False
+        # A single-member purge is accepted (no rows for this test member).
+        import uuid
+        fake = f"wxid_purge_{uuid.uuid4().hex}"
+        status, data = _api_post("/api/points/purge", {
+            "chat_id": "test@chatroom",
+            "sender_id": fake,
+        })
+        assert status == 200
+        assert data["ok"] is True
+        assert data["count"] == 1
+        assert data["purged"] == {fake: {}}
+
 
 # ── Playwright browser-level functional tests ───────────────────────────────
 
