@@ -41,6 +41,11 @@ from .realm import (
     REALM_MAX,
     realm_cost,
     realm_info,
+    realm_title,
+)
+from .skills import (
+    format_effects as format_skill_effects,
+    loadout_skills,
 )
 from .techniques import (
     LEARN_COST,
@@ -129,6 +134,10 @@ EXACT_COMMANDS = {
     # ── 功法 / 打坐 ──
     "功法": ("techniques", ""),
     "突破功法": ("technique_breakthrough", ""),
+    # ── 装备技能 ──
+    "技能": ("skills", ""),
+    "我的技能": ("skills", ""),
+    "装备技能": ("skills", ""),
     # ── Legacy aliases (old 积分/余额 wording) ──
     "积分": ("member_card", ""),
     "我的积分": ("member_card", ""),
@@ -142,6 +151,7 @@ PREFIX_COMMANDS = (
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
     "出售", "卖掉", "卖出", "学习功法", "切换功法",
+    "施放", "施展",
 )
 
 _BOARD_SCOPES = {
@@ -309,6 +319,9 @@ class PointHandler:
                 msg, chat_id, sender_id, sender_name, rest)
         if head == "切换功法":
             return self._switch_technique(chat_id, sender_id, rest)
+        if head in ("施放", "施展"):
+            return self._cast_skill(
+                chat_id, sender_id, sender_name, rest)
         if head in ("修炼值重算", "积分重算"):
             return self._rebuild(chat_id, is_admin)
 
@@ -394,6 +407,9 @@ class PointHandler:
                 chat_id, sender_id, sender_name)
         if kind == "technique_breakthrough":
             return self._breakthrough_technique(
+                chat_id, sender_id, sender_name)
+        if kind == "skills":
+            return self._skills_command(
                 chat_id, sender_id, sender_name)
         return None
 
@@ -652,7 +668,9 @@ class PointHandler:
             f"武力值 {power.total}（攻击 {power.attack} · 防御 {power.defense}"
             f"；基础 {power.base} + 装备 {power.equipment}"
             f" + 境界 {power.realm_bonus} + 功法 "
-            f"{power.technique_attack + power.technique_defense}）"
+            f"{power.technique_attack + power.technique_defense}"
+            f" + 装备技能 "
+            f"{power.skill_attack + power.skill_defense}）"
             f" · 境界 {realm['title']}",
         ]
         if nxt is not None:
@@ -775,7 +793,8 @@ class PointHandler:
             for item in items:
                 mark = " ✓" if item["id"] in owned else ""
                 rendered.append(
-                    f"{item['name']} {item['price']}灵石"
+                    f"{item['name']}·{item.get('tier_title', '')} "
+                    f"{item['price']}灵石"
                     f"({self._stat_text(item)}){mark}"
                 )
             lines.append(f"【{slot['name']}】" + " · ".join(rendered))
@@ -951,9 +970,13 @@ class PointHandler:
             level = int(row.get("enhance_level", 0) or 0)
             mark = "（已装备）" if row.get("equipped") else ""
             suffix = f"(+{level})" if level else ""
+            skill_text = ""
+            if item.get("skill_names"):
+                skill_text = f"｜{'/'.join(item['skill_names'])}"
             by_slot.setdefault(item["slot"], []).append(
-                f"{item['name']} {self._stat_text(item, level)}"
-                f"{suffix}{mark}"
+                f"{item['name']}·{item.get('tier_title', '')} "
+                f"{self._stat_text(item, level)}"
+                f"{suffix}{skill_text}{mark}"
             )
 
         lines = [
@@ -990,6 +1013,10 @@ class PointHandler:
         if power.technique_attack or power.technique_defense:
             parts.append(
                 f"功法 攻+{power.technique_attack}/防+{power.technique_defense}"
+            )
+        if power.skill_attack or power.skill_defense:
+            parts.append(
+                f"装备技能 攻+{power.skill_attack}/防+{power.skill_defense}"
             )
         lines = [
             f"{sender_name} 的武力值：{power.total}"
@@ -1922,6 +1949,102 @@ class PointHandler:
             f"连续失败 {result.get('failures', 0)}/5（成功率 {pct}%）。"
         )
 
+    # ── 装备技能 ─────────────────────────────────────────────────
+
+    def _skills_command(self, chat_id: str, sender_id: str,
+                        sender_name: str) -> str:
+        if not getattr(self._config, "equipment_enabled", False):
+            return "装备系统未开启。"
+        skills = loadout_skills(
+            self._store, self._catalog, chat_id, sender_id)
+        if not skills:
+            return (
+                f"{sender_name} 当前装备没有技能。"
+                "部分中高阶装备自带主动/被动技能，发「商店」查看。"
+            )
+
+        now = int(time.time())
+        casts = {
+            row["skill_id"]: row
+            for row in self._store.skill_casts(chat_id, sender_id)
+        }
+        lines = [f"{sender_name} 的装备技能"]
+        for skill in skills:
+            source = f"{skill['item_name']}"
+            if skill["enhance_level"]:
+                source += f"+{skill['enhance_level']}"
+            detail = format_skill_effects(
+                skill["effects"], float(skill["scale"]))
+            kind = "被动" if skill["type"] == "passive" else "主动"
+            if skill["type"] == "passive":
+                status = "已生效"
+            else:
+                row = casts.get(skill["id"])
+                ready_at = int(row.get("cooldown_until", 0) or 0) if row else 0
+                expires_at = int(row.get("expires_at", 0) or 0) if row else 0
+                if expires_at > now:
+                    status = f"生效中（剩余 {self._format_duration(expires_at - now)}）"
+                elif ready_at > now:
+                    status = f"冷却中（{self._format_duration(ready_at - now)}）"
+                else:
+                    status = "可施放"
+            lines.append(
+                f"· {skill['name']}（{kind}·{source}）：{detail} · {status}"
+            )
+        lines.append("主动技能发送「施放 技能名」使用；被动技能装备即生效。")
+        return "\n".join(lines)
+
+    def _cast_skill(self, chat_id: str, sender_id: str,
+                    sender_name: str, raw: str) -> str:
+        if not getattr(self._config, "equipment_enabled", False):
+            return "装备系统未开启。"
+        name = _strip_invisible(raw).strip()
+        if not name:
+            actives = [
+                skill["name"] for skill in loadout_skills(
+                    self._store, self._catalog, chat_id, sender_id)
+                if skill["type"] == "active"
+            ]
+            if not actives:
+                return "你当前装备没有主动技能。"
+            return "用法：施放 技能名（你的主动技能：" + "、".join(actives) + "）"
+
+        skills = loadout_skills(
+            self._store, self._catalog, chat_id, sender_id)
+        skill = next(
+            (item for item in skills
+             if item["name"] == name or item["id"] == name),
+            None,
+        )
+        if skill is None:
+            return (
+                f"你当前装备没有技能「{name}」。"
+                "发「技能」查看已装备技能。"
+            )
+        if skill["type"] != "active":
+            return (
+                f"「{skill['name']}」是被动技能，装备后自动生效，无需施放。"
+            )
+
+        now = int(time.time())
+        ok, code, cooldown_until, expires_at = self._store.cast_skill(
+            chat_id, sender_id, skill["id"],
+            int(skill["cooldown"]), int(skill["duration"]), now,
+        )
+        if not ok:
+            wait = max(0, cooldown_until - now)
+            return (
+                f"「{skill['name']}」还在冷却中，"
+                f"{self._format_duration(wait)}后才能再次施放。"
+            )
+
+        detail = format_skill_effects(skill["effects"])
+        return (
+            f"{sender_name} 施放《{skill['name']}》，{detail}，"
+            f"持续 {self._format_duration(skill['duration'])}。"
+            f"冷却 {self._format_duration(skill['cooldown'])}。"
+        )
+
     # ── Endgame: enhance / realm / boss / achievements ────────────
 
     def _enhance(self, msg: dict, chat_id: str, sender_id: str,
@@ -1992,14 +2115,14 @@ class PointHandler:
             )
             lines.append("发送「突破」即可尝试。")
         else:
-            lines.append("已达最高境界：渡劫。")
+            lines.append(f"已达最高境界：{realm_title(REALM_MAX)}。")
         return "\n".join(lines)
 
     def _breakthrough(self, msg: dict, chat_id: str, sender_id: str,
                       sender_name: str) -> str:
         realm = self._store.realm_of(chat_id, sender_id)
         if realm >= REALM_MAX:
-            return "你已经达到最高境界：渡劫。"
+            return f"你已经达到最高境界：{realm_title(REALM_MAX)}。"
         required = realm_cost(realm)
         points = self._store.earned_of(chat_id, sender_id)
         if points < required:
@@ -2012,7 +2135,7 @@ class PointHandler:
             f"realm:{msg.get('message_id') or ''}",
         )
         if code == "max":
-            return "你已经达到最高境界：渡劫。"
+            return f"你已经达到最高境界：{realm_title(REALM_MAX)}。"
         if code == "duplicate":
             return "这次突破已经记录过了，请稍后再试。"
         if not ok:

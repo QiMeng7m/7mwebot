@@ -315,6 +315,19 @@ CREATE TABLE IF NOT EXISTS technique_state (
     PRIMARY KEY (chat_id, sender_id)
 );
 
+-- 装备主动技能: last cast time, buff expiry and next available time.
+-- One row per member/skill; re-casting refreshes the row.  ``cooldown_until``
+-- blocks casting, ``expires_at`` is when the buff stops applying.
+CREATE TABLE IF NOT EXISTS skill_casts (
+    chat_id       TEXT    NOT NULL,
+    sender_id     TEXT    NOT NULL,
+    skill_id      TEXT    NOT NULL,
+    cast_at       INTEGER NOT NULL,
+    expires_at    INTEGER NOT NULL,
+    cooldown_until INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, skill_id)
+);
+
 -- Daily lottery: one row per paid draw.  UNIQUE(chat_id, message_id)
 -- makes command replay safe; the day column enforces the daily limit.
 CREATE TABLE IF NOT EXISTS lottery_draws (

@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import random
 
+from .skills import active_effects
 from .util import (
     days_until_week_end,
     is_group_enabled,
@@ -232,6 +233,9 @@ class BossService:
         )
         boss_bonus = float(
             power.technique_effects.get("boss_damage", 0) or 0)
+        boss_bonus += float(power.skill_effects.get("boss_damage", 0) or 0)
+        boss_bonus += float(active_effects(
+            self._store, chat_id, sender_id, now).get("boss_damage", 0) or 0)
         if boss_bonus > 0:
             damage = max(1, int(round(damage * (1 + boss_bonus))))
         inserted, hp_left, damage = self._store.boss_attack(

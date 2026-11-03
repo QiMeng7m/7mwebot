@@ -594,7 +594,12 @@ export default function PointsPanel() {
                         return (
                           <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl border border-border-main bg-bg-raised/40">
                             <div className="flex-1 min-w-0">
-                              <p className="text-[14px] text-text-main truncate">{item.name}</p>
+                              <p className="text-[14px] text-text-main truncate">
+                                {item.name}
+                                {item.tier_title && (
+                                  <span className="ml-2 text-[11px] text-text-muted">{item.tier_title}</span>
+                                )}
+                              </p>
                               <p className="text-[11px] text-text-muted font-mono">
                                 {item.slot === 'weapon'
                                   ? `攻击 +${item.power}`
@@ -604,6 +609,11 @@ export default function PointsPanel() {
                                 {' · '}{item.price} 灵石
                                 {mine?.equipped ? ' · 已装备' : ''}
                               </p>
+                              {item.skill_names?.length > 0 && (
+                                <p className="text-[11px] text-brand-green-hover dark:text-brand-green truncate">
+                                  技能：{item.skill_names.join(' / ')}
+                                </p>
+                              )}
                             </div>
                             {mine ? (
                               <button

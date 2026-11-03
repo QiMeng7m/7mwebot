@@ -878,12 +878,18 @@ todo_delete_keywords: list[str] = [
 | `rules.py` | `distinct_char_count(text)` | 去重字符数 | `text: str` | `int` |
 | `rules.py` | `score_components(content, msg_type, **rules)` | 计算单条消息的加分项（已封顶） | 见签名 | `list[tuple[str, int]]` |
 | `levels.py` | `LevelTable(path=None).load()/save(levels)/for_points(points)/next_for(points)/label(points)` | 等级表读写与查询（`data/point_levels.json`，默认 Lv0~Lv12） | 见签名 | 见签名 |
-| `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`，默认 4 槽位） | 见签名 | 见签名 |
+| `equipment.py` | `EquipmentCatalog(path=None).load()/save(catalog)/items()/slots()/find(key)/by_id(id)/slot_name(id)/same_slot_ids(item)` | 装备目录读写（`data/equipment.json`，默认 4 槽位、37 件装备） | 见签名 | 见签名 |
+| `equipment.py` | `TIER_TITLES` / `EQUIPMENT_TIER_MAX` / `tier_title(tier)` | 装备品阶表（凡品 ~ 圣品，0~9）与品阶名称 | `tier: int` | `str` |
 | `equipment.py` | `enhance_cost(item, level)` / `effective_power(item, level)` / `effective_stats(item, level)` | 强化费用 / 强化后总武力 / 按槽位拆分攻击与防御（武器攻击、护甲防御、饰品/坐骑拆分） | 见签名 | `int` / `(int, int)` |
+| `skills.py` | `SKILLS` / `skill_by_id(id)` / `skill_by_name(name)` | 装备技能定义（被动 10 个 + 主动 6 个）、按 id/名称查询 | 见签名 | `dict \| None` |
+| `skills.py` | `loadout_skills(store, catalog, chat_id, sender_id)` | 汇总当前**已装备**物品提供的技能（含来源、强化等级、效果倍率） | 见签名 | `list[dict]` |
+| `skills.py` | `passive_effects(store, catalog, chat_id, sender_id)` | 汇总被动技能效果（随装备强化等级放大） | 见签名 | `dict[str, float]` |
+| `skills.py` | `active_skill_rows(store, chat_id, sender_id, now_ts)` / `active_effects(store, chat_id, sender_id, now_ts)` | 当前生效中的主动技能 / 主动增益汇总 | 见签名 | `list[dict] / dict[str, float]` |
+| `skills.py` | `format_effects(effects, scale=1.0)` | 把技能效果格式化为「攻击 +8%」文案 | 见签名 | `str` |
 | `techniques.py` | `required_progress(layer)` / `breakthrough_chance(layer)` | 功法每层所需进度 / 突破成功率（逐层下降，最低 30%） | `layer: int` | `int/float` |
 | `techniques.py` | `aggregate_effects(rows)` / `effects_for(store, chat_id, sender_id)` | 汇总所有已学功法的攻击/防御/钓鱼/Boss/打坐等被动加成 | 见签名 | `dict` |
 | `techniques.py` | `format_effects(effects, layer=1)` | 把功法效果格式化为群回复文案 | 见签名 | `str` |
-| `realm.py` | `realm_title(realm)/realm_cost(realm)/realm_power_bonus(realm)/realm_info(realm)` | 境界称号、突破费用、武力加成与下一境界信息（凡人 → 渡劫） | `realm: int` | `str/int/dict` |
+| `realm.py` | `realm_title(realm)/realm_cost(realm)/realm_power_bonus(realm)/realm_info(realm)` | 境界称号、突破费用、武力加成与下一境界信息（凡人 → 渡劫 → 散仙 → … → 鸿蒙，共 20 境） | `realm: int` | `str/int/dict` |
 | `fishing_catalog.py` | `validate_catalog(data)` | 校验鱼竿/鱼饵/鱼种/延迟目录（唯一 id、默认竿、6 种稀有度、重量、0~300 秒） | `data: dict` | `dict` |
 | `fishing_catalog.py` | `FishingCatalog(path=None).load()/save(catalog)/rods()/baits()/species()/find_rod(key)/by_rod_id(id)/find_bait(key)/by_bait_id(id)/by_species_id(id)/default_rod()/delay_for(rarity)` | 钓鱼目录读写与查询（`data/fishing.json`，失败回退内置默认值） | 见签名 | 见签名 |
 | `fishing.py` | `fishing_level(catches)` | 钓鱼熟练度：按累计条数返回等级、称号、稀有/价值加成与下一级差 | `catches: int` | `dict` |
@@ -917,6 +923,8 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `_enhance(msg, chat_id, sender_id, sender_name, raw)` | 「强化/精炼 装备名」：查拥有、算费用、扣灵石、+1 强化等级 | 见签名 | `str` |
 | `handler.py` | `_meditate(msg, chat_id, sender_id, sender_name, raw)` | 「打坐 / 打坐 5 / 打坐5」：解析分钟、检查冷却、发放修炼值与当前功法进度 | 见签名 | `str` |
 | `handler.py` | `_techniques_command/_learn_technique/_switch_technique/_breakthrough_technique` | 「功法」「学习功法」「切换功法」「突破功法」 | 见签名 | `str` |
+| `handler.py` | `_skills_command(chat_id, sender_id, sender_name)` | 「技能」：列出生效中的被动技能、主动技能冷却/增益状态与来源装备 | 见签名 | `str` |
+| `handler.py` | `_cast_skill(chat_id, sender_id, sender_name, raw)` | 「施放/施展 技能名」：校验已装备主动技能、检查冷却、写入限时增益 | 见签名 | `str` |
 | `handler.py` | `_sell(chat_id, sender_id, sender_name, raw)` | 「出售/卖掉/卖出 名称」：优先装备、其次鱼竿，按原价 50% 返还灵石 | 见签名 | `str` |
 | `handler.py` | `_realm_command(...)` / `_breakthrough(...)` | 「境界」进度与「突破」：累计修炼值门槛校验（不扣修炼值）、境界 +1 | 见签名 | `str` |
 | `handler.py` | `_boss_attack/_boss_status/_boss_board` | 「Boss / 挑战Boss」「Boss状态」「Boss榜」文案 | 见签名 | `str` |
@@ -953,13 +961,15 @@ todo_delete_keywords: list[str] = [
 | `store.py` | `techniques_of/technique_state/set_current_technique` | 已学功法、当前功法与打坐冷却查询/切换 | 见签名 | 见签名 |
 | `store.py` | `learn_technique(...)` / `meditate(...)` | 扣灵石学功法（首次自动设为当前）/ 单事务发放修炼值+功法进度+冷却 | 见签名 | 见签名 |
 | `store.py` | `attempt_technique_breakthrough(...)` | 按传入的成功/失败结果更新层数、进度、连续失败次数（5 次掉层） | 见签名 | `dict` |
+| `store.py` | `skill_casts(chat_id, sender_id)` | 查询成员全部主动技能施放记录（施放时间/增益到期/冷却到期） | 见签名 | `list[dict]` |
+| `store.py` | `cast_skill(chat_id, sender_id, skill_id, cooldown, duration, now_ts=None)` | 冷却校验并写入/刷新主动技能增益（一个技能一行） | 见签名 | `(bool, code, cooldown_until, expires_at)` |
 | `engine.py` | `PointEngine.award_for_message(msg, allow_stale=False)` | 计分入口（防刷/封顶/回复奖励）；仅正文为「签到」时加 `daily_first` | 见签名 | `int`（本人得分） |
 | `engine.py` | `PointEngine.check_in(chat_id, sender_id, sender_name, message_id, now_ts=None)` | 显式「签到」补发当天 `daily_first`（已签返回 0） | 见签名 | `int` |
 | `engine.py` | `PointEngine.rebuild(chat_id, days=90)` | 从 messages 表重算获得分（保留调整/消费/转移） | 见签名 | `dict` |
 | `duel.py` | `win_probability(a, d, k=1.15, min_prob=0.08, max_prob=0.92)` | 胜率公式（tanh 曲线，上下限夹取） | 见签名 | `float` |
 | `duel.py` | `steal_amount(a, d, defender_balance, ...)` | 抢分公式（差距越大抢得越少） | 见签名 | `int` |
 | `duel.py` | `duel_rank(wins)` | 生涯胜场 → 段位（青铜/白银/黄金/铂金/钻石/王者/战神）及升级差 | `wins: int` | `dict` |
-| `duel.py` | `DuelService.power(chat_id, sender_id)` | 拆分为攻击/防御：基础攻 5+等级×2、防 5+等级×3，加装备（按槽位）、境界（各半）、功法；`total=攻+防` | 见签名 | `PowerBreakdown` |
+| `duel.py` | `DuelService.power(chat_id, sender_id)` | 拆分为攻击/防御：基础攻 5+等级×2、防 5+等级×3，加装备（按槽位）、境界（各半）、功法、装备被动技能；`total=攻+防` | 见签名 | `PowerBreakdown` |
 | `duel.py` | `DuelService.record(chat_id, sender_id)` | 生涯战绩 + 当前段位 | 见签名 | `dict` |
 | `duel.py` | `DuelService.leaderboard(chat_id, limit=10)` | 战神榜行，附带段位 | 见签名 | `list[dict]` |
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None, defender_name="")` | 执行切磋（护盾/冷却/次数/新手保护/结算）；`defender_name` 为调用方解析好的群昵称 | 见签名 | `DuelResult` |
@@ -971,15 +981,19 @@ todo_delete_keywords: list[str] = [
 | `handler.py` | `PointHandler._checkin(chat_id, sender_id, sender_name, msg)` | 「签到」指令：按消息时间确认/补发当天 `daily_first`，回复 `@成员 签到成功，修炼值+N` | 见签名 | `str` |
 
 模块常量：`DEFAULT_LEVELS`（13 级，Lv0 潜水员 ~ Lv12 永恒）、
-`DEFAULT_SLOTS`（4 槽位：武器/护甲/饰品/坐骑）、`DEFAULT_ITEMS`（25 件装备）、
+`DEFAULT_SLOTS`（4 槽位：武器/护甲/饰品/坐骑）、`DEFAULT_ITEMS`（37 件装备，凡品~圣品，含装备技能）、
+`TIER_TITLES`（10 级品阶：凡品~圣品）、`SKILLS`（16 个装备技能：被动 10 / 主动 6）、
 `DEFAULT_RODS`（7 根鱼竿）、`DEFAULT_BAITS`（5 种鱼饵）、
 `DEFAULT_SPECIES`（25 种鱼，含 3 种神话）、`DEFAULT_DELAYS`（空竿/普通 5s、
 稀有 15s、史诗 30s、传说 60s、神话 90s）、`FISHING_LEVELS`（Lv1 新手 ~
 Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 `POWER_PER_LEVEL=5`。终局常量：`ENHANCE_MAX=15`、
 `ENHANCE_POWER_PER_LEVEL=2`、`ENHANCE_COST_RATIO=0.10`、
-`REALM_TITLES`（凡人 ~ 渡劫）、`REALM_BASE_COST=300`、
-`REALM_POWER_PER_LEVEL=10`、`BOSS_CRIT_CHANCE=0.10`、
+`REALM_TITLES`（凡人 ~ 鸿蒙，20 境）、`REALM_BASE_COST=300`、
+`REALM_POWER_PER_LEVEL=10`、`HIGH_REALM_POWER_PER_LEVEL=20`、
+`HIGH_REALM_COST_GROWTH=1.35`、`TIER_TITLES`（凡品 ~ 圣品）、
+`SKILLS`（16 个装备技能，被动 10 / 主动 6）、`SKILL_ENHANCE_SCALE=0.03`、
+`BOSS_CRIT_CHANCE=0.10`、
 `BOSS_CRIT_MULTIPLIER=2.0`、`ACHIEVEMENTS`（15 个成就/称号）。
 
 命令行：`tools/points_backfill.py --all | --chat <chat_id> --days N
@@ -1178,11 +1192,12 @@ AbstractSummarizer (base.py)
          │            ├─ 修炼值 / 我的信息 / 查询 名字
          │            ├─ 修炼榜 / 月榜 / 今日榜 / 修炼规则
          │            ├─ 商店 / 购买 / 装备 / 卸下 / 武力值 / 战力榜
+         │            ├─ 技能 / 施放 技能名（装备主动/被动技能）
          │            ├─ 切磋 @某人 / 引用后切磋 / 买免战券
          │            ├─ 钓鱼 / 钓鱼 N / 鱼竿 / 买鱼竿 / 换鱼竿
          │            ├─ 鱼饵 / 买鱼饵 / 鱼篓 / 图鉴 / 钓鱼榜 / 钓鱼记录
          │            └─ PointStore / DuelService / FishingService
-         │                  / LevelTable / EquipmentCatalog
+         │                  / LevelTable / EquipmentCatalog / skills
          │
          │      [钓鱼延迟播报]
          │        PointHandler._fish() → DelayedReply(text, delay_sec, ack_text)
@@ -2051,7 +2066,8 @@ MessageRouter.handle(msg)
 | `points/models.py` | `src/points/models.py` | `PointAward`/`Command`/`PowerBreakdown`/`MemberStats`/`DuelResult` |
 | `points/rules.py` | `src/points/rules.py` | 纯计分规则（无 I/O） |
 | `points/levels.py` | `src/points/levels.py` | 等级表（`data/point_levels.json`） |
-| `points/equipment.py` | `src/points/equipment.py` | 装备目录（`data/equipment.json`） |
+| `points/equipment.py` | `src/points/equipment.py` | 装备目录、品阶（凡品~圣品）与装备技能挂载（`data/equipment.json`） |
+| `points/skills.py` | `src/points/skills.py` | 装备主动/被动技能定义、已装备技能汇总与增益结算 |
 | `points/store.py` | `src/points/store.py` | 流水/榜单/装备/护盾/切磋持久化 |
 | `points/engine.py` | `src/points/engine.py` | 计分入口与防刷、回溯重建 |
 | `points/duel.py` | `src/points/duel.py` | 武力值、胜率、抢分、切磋结算、段位 |
@@ -2060,7 +2076,7 @@ MessageRouter.handle(msg)
 | `points/achievements.py` | `src/points/achievements.py` | 成就定义、判定与称号 |
 | `points/lottery.py` | `src/points/lottery.py` | 每日抽奖奖池、权重抽取与结算 |
 | `points/handler.py` | `src/points/handler.py` | 群内指令解析与文案 |
-| `schema.py` | `src/db/schema.py` | `point_events`/`equipment_owned`/`boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms` 等 |
+| `schema.py` | `src/db/schema.py` | `point_events`/`equipment_owned`/`boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms`/`technique_progress`/`skill_casts` 等 |
 | `router.py` | `src/router.py` | 入库后计分 + 裸指令分流 |
 | `server.py` | `src/web/server.py` | `/api/points*`、`/api/equipment*`、`/api/duels` |
 
@@ -2078,7 +2094,8 @@ MessageRouter.handle(msg)
 | `boss_energy` | 每群每周每人的挑战次数池：`attempts` 与下次恢复时间 `regen_at` |
 | `achievements` | 已解锁成就；每行一次性发放灵石奖励 |
 | `member_profiles` | 每人佩戴的显示称号 |
-| `member_realms` | 每人境界等级（0 凡人 ~ 9 渡劫） |
+| `member_realms` | 每人境界等级（0 凡人 ~ 19 鸿蒙；10 境渡劫之后为散仙~鸿蒙） |
+| `skill_casts` | 每人每个主动技能的施放时间、增益到期 `expires_at` 与冷却到期 `cooldown_until` |
 | `lottery_draws` | 每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等，`day` 用于每日次数限制 |
 
 #### 指令
@@ -2091,7 +2108,9 @@ MessageRouter.handle(msg)
 | `查询 名字` / `查询 我` | 一行查询他人：修炼值 / 灵石 / 武力值（无需 @；匹配不到成员时保持沉默） |
 | `修炼榜` / `月榜` / `修炼榜 今日` | 总榜 / 赛季榜 / 今日榜 |
 | `修炼规则` | 规则摘要 |
-| `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位，含 Lv7+ 进阶装备） |
+| `商店` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位；品阶凡品~圣品，含仙品/神品/圣品终局装备；显示装备技能） |
+| `技能` / `我的技能` / `装备技能` | 查看当前已装备装备提供的主动/被动技能、来源、效果与冷却/增益状态 |
+| `施放 技能名` / `施展 技能名` | 施放已装备的主动技能，获得限时增益（被动技能装备即生效） |
 | `武力值` / `战力榜` | 攻击/防御拆解 + 切磋段位 / 战力排行 |
 | `切磋 @某人` / 引用后 `切磋` | 发起切磋 |
 | `买免战券` / `免战` | 购买 4 小时免战 |
@@ -2100,7 +2119,7 @@ MessageRouter.handle(msg)
 | `战神榜` | 本群生涯胜场排行 |
 | `强化 装备名` / `精炼 装备名` | 花费灵石强化已拥有装备，最高 +15（每级 +2 攻防，按槽位分配） |
 | `出售 名称` / `卖掉 名称` / `卖出 名称` | 按原价 50% 回收已拥有的装备或鱼竿（默认竹竿不可出售） |
-| `境界` / `突破` | 查看境界进度 / 累计修炼值达到门槛即可突破（不扣修炼值，每重 +5 攻 / +5 防） |
+| `境界` / `突破` | 查看境界进度 / 累计修炼值达到门槛即可突破（不扣修炼值；前 10 境每重 +10 武力，渡劫后每重 +20 武力） |
 | `打坐` / `打坐 5` / `打坐5` | 打坐 10 分钟（可指定 1~60 分钟），获得修炼值与当前功法进度 |
 | `功法` / `学习功法 名称` / `切换功法 名称` / `突破功法` | 功法列表、学习（500 灵石）、切换打坐目标、进度满后突破 |
 | `Boss` / `挑战Boss` / `打Boss` | 挑战本周群 Boss（每 30 分钟恢复 1 次，最多存 3 次，按战力造成伤害） |
@@ -2116,13 +2135,14 @@ MessageRouter.handle(msg)
 基础抢分  = clamp(round(对方灵石 × 0.08), 2, 20)
 差距衰减  = clamp(1/(1+1.2·max(0, ln(A/D))), 0.2, 1.0)
 实际抢分  = clamp(round(基础抢分 × 衰减), 1, min(对方灵石, 20))
-攻击      = 5 + 等级×2 + Σ装备攻击 + 境界×5 + 功法攻击
-防御      = 5 + 等级×3 + Σ装备防御 + 境界×5 + 功法防御
+攻击      = 5 + 等级×2 + Σ装备攻击 + 境界×5/10 + 功法攻击 + 被动技能攻击
+防御      = 5 + 等级×3 + Σ装备防御 + 境界×5/10 + 功法防御 + 被动技能防御
 战力      = 攻击 + 防御
-切磋      = 攻击 对 对方防御；功法可加胜率
-Boss 伤害 = roll_damage(攻击) × (1 + 功法 Boss 加成)，10% 概率 ×2 暴击
+切磋      = (攻击 × (1 + 主动攻击增益)) 对 (对方防御 × (1 + 主动防御增益))；功法与装备技能可加胜率
+Boss 伤害 = roll_damage(攻击) × (1 + 功法 Boss 加成 + 被动技能 Boss 加成 + 主动技能 Boss 加成)，10% 概率 ×2 暴击
 Boss HP   = clamp(群成员数 × BOSS_HP_PER_MEMBER, BOSS_MIN_HP, BOSS_MAX_HP)
-突破门槛  = 300 × (当前境界 + 1) 累计修炼值，不扣修炼值、无等级限制
+突破门槛  = 300 × (当前境界 + 1)（渡劫后每境再 ×1.35），累计修炼值，不扣修炼值、无等级限制
+技能缩放  = 被动技能效果 × (1 + 0.03 × 来源装备强化等级)
 ```
 
 #### 关键约定
@@ -2288,20 +2308,26 @@ Lv1~Lv7），每级额外提供稀有与价值加成，和鱼竿/鱼饵加成叠
 | `realm.py` | `src/points/realm.py` | 境界称号、突破费用、武力加成 |
 | `boss.py` | `src/points/boss.py` | 周 Boss 伤害公式、状态查询与奖励结算 |
 | `achievements.py` | `src/points/achievements.py` | 15 个成就定义、判定与称号查询 |
-| `equipment.py` | `src/points/equipment.py` | `enhance_cost()` / `effective_power()` / `effective_stats()` |
+| `equipment.py` | `src/points/equipment.py` | 品阶表、`enhance_cost()` / `effective_power()` / `effective_stats()`、装备技能挂载 |
+| `skills.py` | `src/points/skills.py` | 装备主动/被动技能定义、被动汇总、主动增益/冷却查询 |
 | `techniques.py` | `src/points/techniques.py` | 功法定义、层数进度/突破概率、被动效果汇总 |
-| `duel.py` | `src/points/duel.py` | 攻击/防御拆分、装备/境界/功法加成 |
-| `store.py` | `src/points/store.py` | 强化/突破/Boss/成就/称号/功法/打坐持久化 |
+| `duel.py` | `src/points/duel.py` | 攻击/防御拆分、装备/境界/功法/装备技能加成、主动增益结算 |
+| `store.py` | `src/points/store.py` | 强化/突破/Boss/成就/称号/功法/打坐/技能施放持久化 |
 | `handler.py` | `src/points/handler.py` | 指令解析与文案 |
-| `schema.py` | `src/db/schema.py` | `boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms`/`technique_progress`/`technique_state`；`equipment_owned.enhance_level` 迁移 |
+| `schema.py` | `src/db/schema.py` | `boss_state`/`boss_attacks`/`boss_energy`/`achievements`/`member_profiles`/`member_realms`/`technique_progress`/`technique_state`/`skill_casts`；`equipment_owned.enhance_level` 迁移 |
 
 #### 经济语义
 
 - **强化**：`INSERT OR IGNORE point_events(category='spend', reason='enhance')`，
   条件扣款；`equipment_owned.enhance_level` +1，最高 15。
-- **境界**：`member_realms.realm` +1，最高 9（渡劫）。累计修炼值达到
-  `300 × (当前境界 + 1)` 即可突破；不扣修炼值、不扣灵石，只写一条
-  `points=0, category='spend', reason='breakthrough'` 的幂等流水。
+- **境界**：`member_realms.realm` +1，最高 19（鸿蒙）。累计修炼值达到
+  `300 × (当前境界 + 1)`（渡劫之后每境再 ×1.35）即可突破；不扣修炼值、
+  不扣灵石，只写一条 `points=0, category='spend', reason='breakthrough'`
+  的幂等流水。前 10 境每重 +10 武力，渡劫之后每重 +20 武力。
+- **装备技能**：装备目录中的 `skills` 只在装备穿戴时生效；被动技能按
+  `1 + 0.03 × 强化等级` 放大后计入攻击/防御/胜率/Boss 伤害；主动技能由
+  `skill_casts` 记录 `expires_at`（增益到期）与 `cooldown_until`（可再次施放），
+  增益在持续时间内参与切磋与 Boss 伤害结算。
 - **Boss 奖励**：`category='boss', reason='boss_reward'`，只加灵石，
   不计入 `earned_of()` / 等级 / 榜单；按本周伤害占比分配。
 - **成就奖励**：`category='achievement', reason='achievement'`，一次性灵石奖励；
@@ -2329,9 +2355,20 @@ PointHandler.handle("突破")
 PointHandler.handle("Boss")
   └── BossService.attack(msg)
         ├── BossService._state() → PointStore.ensure_boss_state()
-        ├── roll_damage(DuelService.power().attack, rng)（再乘功法 Boss 加成）
+        ├── roll_damage(DuelService.power().attack, rng)
+        │     └── × (1 + 功法/被动技能 Boss 加成 + 主动技能增益)
         ├── PointStore.boss_attack()（UNIQUE(chat_id, message_id)）
         └── 血量归零 → boss_kill() + boss_distribute_rewards()
+
+PointHandler.handle("技能")
+  └── _skills_command()
+        ├── skills.loadout_skills() → PointStore.owned_items() + EquipmentCatalog.by_id()
+        └── PointStore.skill_casts()（冷却/增益状态）
+
+PointHandler.handle("施放 烈焰斩")
+  └── _cast_skill()
+        ├── loadout_skills()（必须由已装备装备提供）
+        └── PointStore.cast_skill()（冷却校验 + UPSERT skill_casts）
 
 PointHandler.handle("成就")
   └── AchievementService.evaluate()
@@ -2348,7 +2385,8 @@ PointHandler.handle("成就")
 | `boss_energy` | 主键 `(chat_id, season, sender_id)`；`attempts` + `regen_at` |
 | `achievements` | 主键 `(chat_id, sender_id, achievement_id)` |
 | `member_profiles` | 每人当前佩戴称号 |
-| `member_realms` | 每人境界等级 |
+| `member_realms` | 每人境界等级（0 凡人 ~ 19 鸿蒙） |
+| `skill_casts` | 主键 `(chat_id, sender_id, skill_id)`；`cast_at` / `expires_at` / `cooldown_until` |
 | `lottery_draws` | 每人每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等 |
 
 #### 关键约定
@@ -2361,6 +2399,9 @@ PointHandler.handle("成就")
 - Boss 名称通过 `sum(ord(ch))` 稳定选曲，不依赖 Python 字符串 hash。
 - 成就判定在「成就」「修炼值」「我的信息」「突破」「Boss」等指令触发；
   称号只影响展示，不额外加属性。
+- 装备技能只由**当前已装备**的物品提供；同一技能被多件装备同时提供时取
+  强化等级最高的一件。被动技能立即生效，主动技能施放后持续
+  `duration` 秒、冷却 `cooldown` 秒，状态保存在 `skill_casts`。
 
 ---
 

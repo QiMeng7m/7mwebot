@@ -85,6 +85,9 @@ class PowerBreakdown:
     technique_attack: int = 0
     technique_defense: int = 0
     technique_effects: dict = field(default_factory=dict)
+    skill_attack: int = 0
+    skill_defense: int = 0
+    skill_effects: dict = field(default_factory=dict)
     items: list[dict] = field(default_factory=list)
 
 

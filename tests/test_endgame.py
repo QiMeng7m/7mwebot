@@ -23,6 +23,7 @@ from src.points.duel import DuelService
 from src.points.engine import PointEngine
 from src.points.equipment import (
     ENHANCE_MAX,
+    EQUIPMENT_TIER_MAX,
     EquipmentCatalog,
     effective_power,
     enhance_cost,
@@ -31,10 +32,17 @@ from src.points.handler import PointHandler
 from src.points.levels import LevelTable
 from src.points.models import PointAward
 from src.points.realm import (
+    LEGACY_REALM_MAX,
     REALM_MAX,
     realm_cost,
     realm_info,
     realm_title,
+)
+from src.points.skills import (
+    SKILLS,
+    active_effects,
+    loadout_skills,
+    passive_effects,
 )
 from src.points.store import PointStore
 from src.points.util import days_until_week_end, local_week
@@ -59,12 +67,43 @@ class RealmFormulaTests(unittest.TestCase):
     def test_titles_and_costs(self):
         self.assertEqual(realm_title(0), "凡人")
         self.assertEqual(realm_title(1), "炼气")
-        self.assertEqual(realm_title(REALM_MAX), "渡劫")
+        self.assertEqual(realm_title(LEGACY_REALM_MAX), "渡劫")
+        self.assertEqual(realm_title(REALM_MAX), "鸿蒙")
+        self.assertEqual(REALM_MAX, 19)
         self.assertEqual(realm_cost(0), 300)
         self.assertEqual(realm_cost(1), 600)
         self.assertEqual(realm_cost(REALM_MAX), 0)
         self.assertEqual(realm_info(2)["power_bonus"], 20)
         self.assertEqual(realm_info(2)["next"], 3)
+
+    def test_extended_realm_ladder_grows(self):
+        self.assertEqual(realm_title(10), "散仙")
+        self.assertGreater(realm_info(10)["power_bonus"],
+                           realm_info(LEGACY_REALM_MAX)["power_bonus"])
+        self.assertGreater(realm_cost(10), realm_cost(LEGACY_REALM_MAX))
+        self.assertGreater(realm_cost(18), realm_cost(10))
+        self.assertIsNone(realm_info(REALM_MAX)["next"])
+
+
+class EquipmentTierTests(unittest.TestCase):
+    def test_catalog_reaches_tier_cap(self):
+        catalog = EquipmentCatalog(None).load()
+        self.assertEqual(max(i["tier"] for i in catalog["items"]),
+                         EQUIPMENT_TIER_MAX)
+        for item in catalog["items"]:
+            self.assertIn("tier_title", item)
+            self.assertIsInstance(item["skills"], list)
+
+
+class SkillDefinitionTests(unittest.TestCase):
+    def test_both_skill_types_exist(self):
+        kinds = {item["type"] for item in SKILLS}
+        self.assertEqual(kinds, {"passive", "active"})
+        for skill in SKILLS:
+            self.assertTrue(skill["effects"])
+            if skill["type"] == "active":
+                self.assertGreater(skill["cooldown"], 0)
+                self.assertGreater(skill["duration"], 0)
 
 
 class EnhanceFormulaTests(unittest.TestCase):
@@ -296,6 +335,78 @@ class EnhanceTests(EndgameTestBase):
         self.assertIn("木剑 +1", reply)
         power = self.duels.power(self.chat, "wxid_a")
         self.assertEqual(power.total, base_power + 2)
+
+
+class EquipmentSkillTests(EndgameTestBase):
+    def _buy(self, name, earned=20_000):
+        self.add_member(earned=earned)
+        item = self.catalog.find(name)
+        ok, code, _, equipped = self.store.buy_item(
+            self.chat, "wxid_a", "张三", item,
+            self.catalog.same_slot_ids(item),
+        )
+        self.assertTrue(ok, code)
+        self.assertTrue(equipped)
+        return item
+
+    def test_passive_skill_raises_power(self):
+        # 星陨剑 alone vs. 木剑: both weapons, but 星陨剑 grants 剑意.
+        self.add_member(earned=20_000)
+        base_power = self.duels.power(self.chat, "wxid_a")
+        item = self.catalog.find("星陨剑")
+        self.store.buy_item(
+            self.chat, "wxid_a", "张三", item,
+            self.catalog.same_slot_ids(item),
+        )
+        power = self.duels.power(self.chat, "wxid_a")
+        self.assertGreater(power.skill_attack, 0)
+        self.assertGreater(power.total, base_power.total)
+        self.assertGreater(power.skill_effects.get("attack_pct", 0), 0)
+        self.assertTrue(loadout_skills(
+            self.store, self.catalog, self.chat, "wxid_a"))
+
+    def test_active_skill_cast_and_cooldown(self):
+        self._buy("太初剑")
+        reply = self.run_cmd("技能")
+        self.assertIn("天崩地裂", reply)
+        self.assertIn("主动", reply)
+
+        cast = self.run_cmd("施放 天崩地裂")
+        self.assertIn("施放", cast)
+        self.assertIn("攻击", cast)
+        buffs = active_effects(
+            self.store, self.chat, "wxid_a", int(time.time()))
+        self.assertGreater(buffs.get("attack_pct", 0), 0)
+
+        again = self.run_cmd("施放 天崩地裂")
+        self.assertIn("冷却", again)
+
+    def test_passive_skill_cannot_be_cast(self):
+        self._buy("星陨剑")
+        reply = self.run_cmd("施放 剑意")
+        self.assertIn("被动", reply)
+
+    def test_skill_command_without_gear(self):
+        self.add_member(earned=100)
+        reply = self.run_cmd("技能")
+        self.assertIn("没有技能", reply)
+
+    def test_active_skill_boosts_boss_damage(self):
+        self._buy("诛仙剑")
+        self.config.boss_enabled = True
+        self.config.boss_groups = ["*"]
+        self.config.boss_min_hp = 100_000
+        self.config.boss_max_hp = 100_000
+        self.config.boss_hp_per_member = 100_000
+        self.config.boss_max_attempts = 5
+        before = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW, rng=_Rng(0.5, 0.99))
+        self.store.cast_skill(
+            self.chat, "wxid_a", "flame_slash", 1800, 600, now_ts=NOW,
+        )
+        after = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW + 1, rng=_Rng(0.5, 0.99))
+        self.assertGreater(after["damage"], before["damage"])
 
 
 class BossServiceTests(EndgameTestBase):

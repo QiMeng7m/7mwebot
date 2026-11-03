@@ -11,6 +11,7 @@ from .equipment import EquipmentCatalog, effective_stats
 from .levels import LevelTable
 from .models import DuelResult, PowerBreakdown
 from .realm import realm_info
+from .skills import active_effects, passive_effects
 from .store import PointStore
 from .techniques import effects_for
 from .util import is_group_enabled, local_day
@@ -152,10 +153,23 @@ class DuelService:
         technique_attack = int(round(technique_effects.get("attack", 0)))
         technique_defense = int(round(technique_effects.get("defense", 0)))
 
+        # Passive equipment skills scale attack/defense by a percentage.
+        skill_effects = passive_effects(
+            self._store, self._catalog, chat_id, sender_id)
+        skill_attack = int(round(
+            (base_attack + equipment_attack + realm_attack + technique_attack)
+            * float(skill_effects.get("attack_pct", 0) or 0)
+        ))
+        skill_defense = int(round(
+            (base_defense + equipment_defense + realm_defense
+             + technique_defense)
+            * float(skill_effects.get("defense_pct", 0) or 0)
+        ))
+
         attack = base_attack + equipment_attack + realm_attack + \
-            technique_attack
+            technique_attack + skill_attack
         defense = base_defense + equipment_defense + realm_defense + \
-            technique_defense
+            technique_defense + skill_defense
         base = base_attack + base_defense
         equipment = equipment_attack + equipment_defense
 
@@ -178,6 +192,9 @@ class DuelService:
             technique_attack=technique_attack,
             technique_defense=technique_defense,
             technique_effects=technique_effects,
+            skill_attack=skill_attack,
+            skill_defense=skill_defense,
+            skill_effects=skill_effects,
             items=items,
         )
 
@@ -336,16 +353,31 @@ class DuelService:
 
         attacker = self.power(chat_id, attacker_id)
         defender = self.power(chat_id, target_id)
+        # Active equipment skills are timed buffs: the attacker's cast
+        # raises their attack, the defender's cast raises their defense.
+        attacker_buffs = active_effects(
+            self._store, chat_id, attacker_id, now)
+        defender_buffs = active_effects(
+            self._store, chat_id, target_id, now)
+        attacker_attack = int(round(
+            attacker.attack * (1 + float(
+                attacker_buffs.get("attack_pct", 0) or 0))))
+        defender_defense = int(round(
+            defender.defense * (1 + float(
+                defender_buffs.get("defense_pct", 0) or 0))))
         prob = win_probability(
-            attacker.attack, defender.defense,
+            attacker_attack, defender_defense,
             k=float(getattr(cfg, "duel_prob_k", 1.15)),
             min_prob=float(getattr(cfg, "duel_min_prob", 0.08)),
             max_prob=float(getattr(cfg, "duel_max_prob", 0.92)),
         )
-        # 功法 can add a small flat win-rate bonus.
+        # 功法 and equipment skills (passive + active) add win rate.
         prob = min(
             float(getattr(cfg, "duel_max_prob", 0.92)),
-            prob + float(attacker.technique_effects.get("duel_win", 0)),
+            prob
+            + float(attacker.technique_effects.get("duel_win", 0))
+            + float(attacker.skill_effects.get("duel_win", 0))
+            + float(attacker_buffs.get("duel_win", 0)),
         )
 
         roll = self._roll(rng)
@@ -354,7 +386,7 @@ class DuelService:
         moved = 0
         if attacker_win:
             moved = steal_amount(
-                attacker.attack, defender.defense, defender_balance,
+                attacker_attack, defender_defense, defender_balance,
                 ratio=float(getattr(cfg, "duel_base_steal_ratio", 0.08)),
                 reward_k=float(getattr(cfg, "duel_reward_k", 1.2)),
                 per_fight_cap=int(getattr(cfg, "duel_per_fight_cap", 20)),
@@ -363,14 +395,14 @@ class DuelService:
 
         self._store.record_duel(
             chat_id, message_id, attacker_id, attacker_name,
-            target_id, defender_name, attacker.attack, defender.defense,
+            target_id, defender_name, attacker_attack, defender_defense,
             prob, attacker_win, moved, now_ts=now,
         )
 
         return DuelResult(
             True, "win" if attacker_win else "lose", "",
-            attacker_power=attacker.attack,
-            defender_power=defender.defense,
+            attacker_power=attacker_attack,
+            defender_power=defender_defense,
             win_prob=prob,
             attacker_win=attacker_win,
             points_moved=moved,

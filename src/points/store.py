@@ -2028,6 +2028,56 @@ class PointStore:
                 "progress": progress, "failures": failures,
                 "dropped": dropped}
 
+    # ── 装备技能 (equipment skills) ──────────────────────────────
+
+    def skill_casts(self, chat_id: str, sender_id: str) -> list[dict]:
+        """Every recorded active-skill cast for one member."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT skill_id, cast_at, expires_at, cooldown_until
+                   FROM skill_casts
+                   WHERE chat_id = ? AND sender_id = ?
+                   ORDER BY cast_at DESC""",
+                (str(chat_id), str(sender_id)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def cast_skill(self, chat_id: str, sender_id: str, skill_id: str,
+                   cooldown: int, duration: int,
+                   now_ts: int | None = None) -> tuple[bool, str, int, int]:
+        """Cast an active skill, refreshing its buff.
+
+        Returns ``(ok, code, cooldown_until, expires_at)``.  When the
+        skill is still cooling down, ``code`` is ``"cooldown"`` and the
+        returned times describe the existing row.
+        """
+        now = int(time.time()) if now_ts is None else int(now_ts)
+        cooldown = max(0, int(cooldown))
+        duration = max(1, int(duration))
+        with self._lock, self.conn:
+            row = self.conn.execute(
+                """SELECT expires_at, cooldown_until FROM skill_casts
+                   WHERE chat_id = ? AND sender_id = ? AND skill_id = ?""",
+                (str(chat_id), str(sender_id), str(skill_id)),
+            ).fetchone()
+            if row and int(row[1] or 0) > now:
+                return False, "cooldown", int(row[1]), int(row[0])
+            ready_at = now + cooldown
+            expires_at = now + duration
+            self.conn.execute(
+                """INSERT INTO skill_casts
+                   (chat_id, sender_id, skill_id, cast_at,
+                    expires_at, cooldown_until)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(chat_id, sender_id, skill_id) DO UPDATE SET
+                     cast_at = excluded.cast_at,
+                     expires_at = excluded.expires_at,
+                     cooldown_until = excluded.cooldown_until""",
+                (str(chat_id), str(sender_id), str(skill_id), now,
+                 expires_at, ready_at),
+            )
+        return True, "ok", ready_at, expires_at
+
     # ── Daily lottery ─────────────────────────────────────────────
 
     def lottery_draws_today(self, chat_id: str, sender_id: str,
