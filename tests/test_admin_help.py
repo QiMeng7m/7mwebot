@@ -67,6 +67,16 @@ class AdminHelpTests(unittest.TestCase):
         # Only the requested section is shown.
         self.assertNotIn("【修炼】", reply)
 
+    def test_help_mentions_endgame_gear_and_realm(self):
+        gear = self._help(make_config(), text="帮助 装备")
+        self.assertIn("凡品~圣品十阶", gear)
+        self.assertIn("被动随装备生效", gear)
+        self.assertIn("持续 10 分钟", gear)
+
+        challenge = self._help(make_config(), text="帮助 挑战")
+        self.assertIn("共 20 境", challenge)
+        self.assertIn("技能增益有效", challenge)
+
     def test_help_section_uses_configured_limits(self):
         config = make_config(
             duel_daily_attempts=7,
