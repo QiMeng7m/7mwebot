@@ -92,6 +92,7 @@ class LookLikeCommandTests(unittest.TestCase):
     def test_prefix_commands(self):
         self.assertTrue(looks_like_command("查询 张三"))
         self.assertTrue(looks_like_command("购买 木剑"))
+        self.assertTrue(looks_like_command("商店 武器"))
         self.assertTrue(looks_like_command("切磋 @张三"))
         self.assertTrue(looks_like_command("@张三 切磋"))
 
@@ -248,11 +249,50 @@ class ShopTests(HandlerTestBase):
         super().setUp()
         self.add_member("wxid_a", "张三", earned=200)
 
-    def test_shop_lists_items(self):
+    def test_shop_overview_lists_slots(self):
         reply = self.run_cmd("商店")
         self.assertIn("装备商店", reply)
-        self.assertIn("木剑", reply)
         self.assertIn("灵石 200", reply)
+        self.assertIn("【武器】10件", reply)
+        self.assertIn("【护甲】10件", reply)
+        self.assertIn("【饰品】10件", reply)
+        self.assertIn("【坐骑】7件", reply)
+        # 默认概览不再把 37 件装备全部铺开，避免群消息刷屏。
+        self.assertNotIn("木剑", reply)
+        self.assertLessEqual(len(reply.splitlines()), 7)
+
+    def test_shop_slot_detail_keeps_stats_and_price(self):
+        reply = self.run_cmd("商店 武器")
+        self.assertIn("装备商店 · 武器", reply)
+        self.assertIn("木剑", reply)
+        self.assertIn("攻击 +4", reply)
+        self.assertIn("30灵石", reply)
+        self.assertIn("造化神剑", reply)
+        self.assertIn("16000灵石", reply)
+        # 单个槽位一件一行，便于扫读。
+        self.assertEqual(
+            len([line for line in reply.splitlines() if "灵石" in line
+                 and "·" in line and not line.startswith("装备商店")]),
+            10,
+        )
+
+    def test_shop_slot_alias(self):
+        reply = self.run_cmd("商店 防具")
+        self.assertIn("装备商店 · 护甲", reply)
+        self.assertIn("布衣", reply)
+        self.assertIn("防御 +3", reply)
+
+    def test_shop_all_lists_every_slot(self):
+        reply = self.run_cmd("商店 全部")
+        for name in ("【武器】", "【护甲】", "【饰品】", "【坐骑】"):
+            self.assertIn(name, reply)
+        for item in ("木剑", "布衣", "草绳", "枣红马"):
+            self.assertIn(item, reply)
+
+    def test_shop_unknown_slot_shows_usage(self):
+        reply = self.run_cmd("商店 不存在")
+        self.assertIn("用法：商店", reply)
+        self.assertIn("武器", reply)
 
     def test_buy_and_auto_equip(self):
         reply = self.run_cmd("购买 木剑")

@@ -169,7 +169,7 @@ EXACT_COMMANDS = {
 }
 
 PREFIX_COMMANDS = (
-    "购买", "装备", "卸下", "查询", "切磋", "修炼值重算", "积分重算",
+    "商店", "购买", "装备", "卸下", "查询", "切磋", "修炼值重算", "积分重算",
     "钓鱼", "买鱼竿", "买鱼饵", "换鱼竿",
     "强化", "精炼", "佩戴称号", "戴上称号",
     "出售", "卖掉", "卖出", "学习功法", "切换功法",
@@ -186,6 +186,14 @@ _BOARD_SCOPES = {
     "总": "total", "总榜": "total",
     "月": "season", "月榜": "season", "本月": "season",
     "今日": "day", "今日榜": "day", "今天": "day",
+}
+
+# 槽位的常见叫法，商店/卸下 都接受。
+_SLOT_ALIASES = {
+    "兵器": "武器",
+    "防具": "护甲", "装甲": "护甲", "衣服": "护甲",
+    "首饰": "饰品", "法宝": "饰品",
+    "马": "坐骑",
 }
 
 _FISH_BOARD_SCOPES = {
@@ -318,6 +326,8 @@ class PointHandler:
         head = parts[0]
         rest = parts[1].strip() if len(parts) > 1 else ""
 
+        if head == "商店":
+            return self._shop(chat_id, sender_id, rest)
         if head == "购买":
             return self._buy(chat_id, sender_id, sender_name, rest)
         if head == "装备":
@@ -911,29 +921,61 @@ class PointHandler:
 
     # ── Shop / equipment ──────────────────────────────────────────
 
-    def _shop(self, chat_id: str, sender_id: str) -> str:
+    def _shop(self, chat_id: str, sender_id: str, raw: str = "") -> str:
         if not getattr(self._config, "equipment_enabled", False):
             return "装备系统未开启。"
         catalog = self._catalog.load()
         owned = {item["item_id"] for item in
                  self._store.owned_items(chat_id, sender_id)}
         balance = self._store.balance_of(chat_id, sender_id)
+        slots = [slot for slot in catalog["slots"]
+                 if any(i["slot"] == slot["id"] for i in catalog["items"])]
 
-        lines = [f"装备商店 · 灵石 {balance}"]
-        for slot in catalog["slots"]:
-            items = [i for i in catalog["items"] if i["slot"] == slot["id"]]
-            if not items:
-                continue
-            rendered = []
+        raw = _strip_invisible(raw).strip()
+        slot = self._find_slot(raw) if raw else None
+        if not raw:
+            # 默认只给全局概览，避免 37 件装备一次刷屏。
+            lines = [f"装备商店 · 灵石 {balance}"]
+            for entry in slots:
+                items = [i for i in catalog["items"] if i["slot"] == entry["id"]]
+                prices = [i["price"] for i in items]
+                owned_count = sum(1 for i in items if i["id"] in owned)
+                owned_hint = f" · 已拥有{owned_count}" if owned_count else ""
+                lines.append(
+                    f"【{entry['name']}】{len(items)}件 · "
+                    f"{min(prices)}~{max(prices)}灵石{owned_hint}"
+                )
+            lines.append(
+                "发「商店 武器」查看属性与价格，「购买 名称」直接购买。")
+            return "\n".join(lines)
+
+        if slot is None and raw not in ("全部", "所有"):
+            names = "|".join(entry["name"] for entry in slots)
+            return f"用法：商店 [{names}] / 商店 全部"
+
+        # 指定槽位（或全部）时逐件列出：名称 · 品阶 · 属性 · 售价。
+        show_all = slot is None
+        targets = slots if show_all else [slot]
+        header = "全部装备" if show_all else slot["name"]
+        lines = [f"装备商店 · {header} · 灵石 {balance}"]
+        for entry in targets:
+            items = sorted(
+                (i for i in catalog["items"] if i["slot"] == entry["id"]),
+                key=lambda i: i["price"],
+            )
+            if show_all:
+                lines.append(f"【{entry['name']}】")
             for item in items:
                 mark = " ✓" if item["id"] in owned else ""
-                rendered.append(
+                lines.append(
                     f"{item['name']}·{item.get('tier_title', '')} "
-                    f"{item['price']}灵石"
-                    f"({self._stat_text(item)}){mark}"
+                    f"{self._stat_text(item)} · {item['price']}灵石{mark}"
                 )
-            lines.append(f"【{slot['name']}】" + " · ".join(rendered))
-        lines.append("发送「购买 名称」即可；「我的装备」查看背包。")
+        if show_all:
+            lines.append("✓ 已拥有；发「商店 武器」可只看单个槽位。")
+        else:
+            lines.append(
+                "✓ 已拥有；「商店 全部」看所有装备，「购买 名称」直接买。")
         return "\n".join(lines)
 
     def _buy(self, chat_id: str, sender_id: str, sender_name: str,
@@ -1024,6 +1066,7 @@ class PointHandler:
 
     def _find_slot(self, raw: str) -> dict | None:
         key = _strip_invisible(raw)
+        key = _SLOT_ALIASES.get(key, key)
         for slot in self._catalog.slots():
             if key in (slot["id"], slot["name"]):
                 return slot

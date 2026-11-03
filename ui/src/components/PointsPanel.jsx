@@ -1254,7 +1254,7 @@ export default function PointsPanel() {
       </AnimatePresence>
 
       <p className="text-[11px] text-text-muted font-mono">
-        群内指令：修炼值 · 我的信息 · 查询 名字 · 修炼榜 · 月榜 · 商店 · 购买 · 战力 · 打坐 · 功法 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
+        群内指令：修炼值 · 我的信息 · 查询 名字 · 修炼榜 · 月榜 · 商店 [槽位] · 购买 · 战力 · 打坐 · 功法 · 切磋 @某人 · 买免战券 · 钓鱼 · 鱼竿 · 鱼饵 · 鱼篓 · 图鉴 · 钓鱼榜
       </p>
     </div>
   )
