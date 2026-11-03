@@ -228,14 +228,19 @@ class BossService:
         used = self._store.boss_attempts(chat_id, season, sender_id, day)
 
         power = self._duels.power(chat_id, sender_id)
+        # Active attack buffs (e.g. 天崩地裂) apply to Boss damage just as
+        # they do to duels; separate boss_damage buffs multiply on top.
+        buffs = active_effects(self._store, chat_id, sender_id, now)
+        boss_attack = int(round(
+            power.attack * (1 + float(buffs.get("attack_pct", 0) or 0))
+        ))
         damage, crit = roll_damage(
-            power.attack, _roll(rng), _roll(rng),
+            boss_attack, _roll(rng), _roll(rng),
         )
         boss_bonus = float(
             power.technique_effects.get("boss_damage", 0) or 0)
         boss_bonus += float(power.skill_effects.get("boss_damage", 0) or 0)
-        boss_bonus += float(active_effects(
-            self._store, chat_id, sender_id, now).get("boss_damage", 0) or 0)
+        boss_bonus += float(buffs.get("boss_damage", 0) or 0)
         if boss_bonus > 0:
             damage = max(1, int(round(damage * (1 + boss_bonus))))
         inserted, hp_left, damage = self._store.boss_attack(
@@ -271,7 +276,7 @@ class BossService:
             "hp_total": int(state["hp_total"]),
             "hp_left": hp_left,
             "killed": killed,
-            "power": power.attack,
+            "power": boss_attack,
             "attempts_used": used + 1,
             "attempts_left": attempts,
             "attempts_max": cap,

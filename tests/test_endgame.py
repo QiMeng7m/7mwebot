@@ -409,6 +409,24 @@ class EquipmentSkillTests(EndgameTestBase):
         self.assertGreater(after["damage"], before["damage"])
 
 
+    def test_active_attack_skill_boosts_boss_damage(self):
+        self._buy("太初剑")
+        self.config.boss_enabled = True
+        self.config.boss_groups = ["*"]
+        self.config.boss_min_hp = 100_000
+        self.config.boss_max_hp = 100_000
+        self.config.boss_hp_per_member = 100_000
+        self.config.boss_max_attempts = 5
+        before = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW, rng=_Rng(0.5, 0.99))
+        self.store.cast_skill(
+            self.chat, "wxid_a", "heaven_break", 3600, 600, now_ts=NOW,
+        )
+        after = self.boss.attack(
+            self.msg("Boss"), now_ts=NOW + 1, rng=_Rng(0.5, 0.99))
+        self.assertGreater(after["damage"], before["damage"])
+
+
 class BossServiceTests(EndgameTestBase):
     def setUp(self):
         super().setUp()
