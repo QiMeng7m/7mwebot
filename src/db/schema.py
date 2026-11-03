@@ -455,6 +455,7 @@ CREATE TABLE IF NOT EXISTS market_listings (
     price       INTEGER NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'open',
     buyer_id    TEXT    NOT NULL DEFAULT '',
+    enhance_level INTEGER NOT NULL DEFAULT 0,
     created_at  INTEGER NOT NULL,
     expires_at  INTEGER NOT NULL
 );
@@ -523,6 +524,9 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
         "interpreted_at": "interpreted_at INTEGER NOT NULL DEFAULT 0",
     })
     _ensure_columns(conn, "equipment_owned", {
+        "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
+    })
+    _ensure_columns(conn, "market_listings", {
         "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
     })
 

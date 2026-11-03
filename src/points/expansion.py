@@ -1339,14 +1339,15 @@ class ExpansionService:
         now = _now()
         rows = _rows(
             self._store,
-            """SELECT id, seller_id, item_id FROM market_listings
+            """SELECT id, seller_id, item_id, enhance_level
+               FROM market_listings
                WHERE chat_id = ? AND status = 'open' AND expires_at <= ?""",
             (str(chat_id), now),
         )
         if not rows:
             return
         with self._store.lock, self._store.conn:
-            for listing_id, seller_id, item_id in rows:
+            for listing_id, seller_id, item_id, enhance_level in rows:
                 self._store.conn.execute(
                     """UPDATE market_listings SET status = 'expired'
                        WHERE id = ?""",
@@ -1356,8 +1357,9 @@ class ExpansionService:
                     """INSERT OR IGNORE INTO equipment_owned
                        (chat_id, sender_id, item_id, purchased_at, equipped,
                         enhance_level)
-                       VALUES (?, ?, ?, ?, 0, 0)""",
-                    (str(chat_id), str(seller_id), str(item_id), now),
+                       VALUES (?, ?, ?, ?, 0, ?)""",
+                    (str(chat_id), str(seller_id), str(item_id), now,
+                     int(enhance_level or 0)),
                 )
 
     def market_status(self, chat_id: str, sender_id: str,
@@ -1423,11 +1425,12 @@ class ExpansionService:
             self._store.conn.execute(
                 """INSERT INTO market_listings
                    (chat_id, seller_id, seller_name, item_id, price,
-                    status, created_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, 'open', ?, ?)""",
+                    status, enhance_level, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?)""",
                 (str(chat_id), str(sender_id), str(sender_name or ""),
-                 item["id"], price, now,
-                 now + MARKET_LIST_DAYS * 86400),
+                 item["id"], price,
+                 int(owned.get("enhance_level", 0) or 0) if owned else 0,
+                 now, now + MARKET_LIST_DAYS * 86400),
             )
         return f"已上架 {item['name']}，价格 {price} 灵石。"
 
@@ -1440,7 +1443,7 @@ class ExpansionService:
         self._expire_listings(chat_id)
         rows = _rows(
             self._store,
-            """SELECT seller_id, seller_name, item_id, price
+            """SELECT seller_id, seller_name, item_id, price, enhance_level
                FROM market_listings
                WHERE id = ? AND chat_id = ? AND status = 'open'""",
             (listing_id, str(chat_id)),
@@ -1450,6 +1453,7 @@ class ExpansionService:
         seller_id, seller_name, item_id, price = (
             str(rows[0][0]), str(rows[0][1]), str(rows[0][2]),
             int(rows[0][3]))
+        enhance_level = int(rows[0][4] or 0)
         if seller_id == sender_id:
             return "不能购买自己的挂单。"
         if self._store.owns(chat_id, sender_id, item_id):
@@ -1498,8 +1502,9 @@ class ExpansionService:
                 """INSERT INTO equipment_owned
                    (chat_id, sender_id, item_id, purchased_at, equipped,
                     enhance_level)
-                   VALUES (?, ?, ?, ?, 0, 0)""",
-                (str(chat_id), str(sender_id), item_id, _now()),
+                   VALUES (?, ?, ?, ?, 0, ?)""",
+                (str(chat_id), str(sender_id), item_id, _now(),
+                 enhance_level),
             )
         item = self._catalog.by_id(item_id)
         name = item["name"] if item else item_id
@@ -1517,7 +1522,7 @@ class ExpansionService:
             return "用法：下架挂单 编号"
         rows = _rows(
             self._store,
-            """SELECT item_id FROM market_listings
+            """SELECT item_id, enhance_level FROM market_listings
                WHERE id = ? AND chat_id = ? AND seller_id = ?
                  AND status = 'open'""",
             (listing_id, str(chat_id), str(sender_id)),
@@ -1525,6 +1530,7 @@ class ExpansionService:
         if not rows:
             return "没有找到你的这个挂单。"
         item_id = str(rows[0][0])
+        enhance_level = int(rows[0][1] or 0)
         with self._store.lock, self._store.conn:
             self._store.conn.execute(
                 """UPDATE market_listings SET status = 'cancelled'
@@ -1533,8 +1539,9 @@ class ExpansionService:
                 """INSERT OR IGNORE INTO equipment_owned
                    (chat_id, sender_id, item_id, purchased_at, equipped,
                     enhance_level)
-                   VALUES (?, ?, ?, ?, 0, 0)""",
-                (str(chat_id), str(sender_id), item_id, _now()),
+                   VALUES (?, ?, ?, ?, 0, ?)""",
+                (str(chat_id), str(sender_id), item_id, _now(),
+                 enhance_level),
             )
         item = self._catalog.by_id(item_id)
         return f"已下架 {item['name'] if item else item_id}，装备已退回背包。"
