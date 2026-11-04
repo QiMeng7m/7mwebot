@@ -2140,9 +2140,10 @@ class PointHandler:
             return "装备系统未开启。"
         skills = loadout_skills(
             self._store, self._catalog, chat_id, sender_id)
+        books = self._expansion.books_of(chat_id, sender_id)
         if not skills:
             return (
-                f"{sender_name} 当前装备没有技能。"
+                f"{sender_name} 当前装备没有技能，技能书 ×{books}。"
                 "部分中高阶装备自带主动/被动技能，发「商店」查看。"
             )
 
@@ -2174,6 +2175,8 @@ class PointHandler:
             lines.append(
                 f"· {skill['name']}（{kind}·{source}）：{detail} · {status}"
             )
+        lines.append(
+            f"技能书 ×{books}：发送「升级技能 技能名」消耗 1 本 + 灵石升级。")
         lines.append("主动技能发送「施放 技能名」使用；被动技能装备即生效。")
         return "\n".join(lines)
 

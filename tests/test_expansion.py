@@ -11,6 +11,8 @@ from src.points.duel import DuelService
 from src.points.equipment import EquipmentCatalog
 from src.points.expansion import (
     ExpansionService,
+    GATHER_CHARGE_MAX,
+    GATHER_CHARGE_SECONDS,
     affix_bonuses,
     combat_bonuses,
     set_bonuses,
@@ -271,6 +273,45 @@ class PetAlchemyTests(ExpansionTestBase):
         used = self.expansion.use_pill(
             self.chat, "wxid_a", "张三", "聚气丹")
         self.assertIn("服用", used)
+
+    def test_gather_stamina_spends_and_regens(self):
+        self.add_member(earned=5000)
+        clock = [1_700_000_000]
+        with patch("src.points.expansion._now", lambda: clock[0]):
+            for _ in range(GATHER_CHARGE_MAX):
+                reply = self.expansion.gather(
+                    self.chat, "wxid_a", "张三", rng=_Rng(0))
+                self.assertIn("采集到", reply)
+                self.assertIn("体力", reply)
+            blocked = self.expansion.gather(
+                self.chat, "wxid_a", "张三", rng=_Rng(0))
+            self.assertIn("体力不足", blocked)
+            clock[0] += GATHER_CHARGE_SECONDS
+            recovered = self.expansion.gather(
+                self.chat, "wxid_a", "张三", rng=_Rng(0))
+            self.assertIn("采集到", recovered)
+
+    def test_alchemy_status_shows_stamina_and_books(self):
+        self.add_member(earned=5000)
+        self.expansion._add_item(
+            self.chat, "wxid_a", "book", "skill_book", 2)
+        status = self.expansion.alchemy_status(
+            self.chat, "wxid_a", "张三")
+        self.assertIn(f"体力 {GATHER_CHARGE_MAX}/{GATHER_CHARGE_MAX}", status)
+        self.assertIn("技能书 ×2", status)
+
+    def test_upgrade_skill_reports_book_count(self):
+        self.buy("星陨剑")
+        reply = self.expansion.upgrade_skill(
+            self.chat, "wxid_a", "张三", "剑意")
+        self.assertIn("你有 0 本", reply)
+
+    def test_skills_command_shows_books(self):
+        self.buy("星陨剑")
+        self.expansion._add_item(
+            self.chat, "wxid_a", "book", "skill_book", 1)
+        reply = self.run_cmd("技能")
+        self.assertIn("技能书 ×1", reply)
 
 
 class WorldRebirthTests(ExpansionTestBase):

@@ -123,7 +123,8 @@ PILLS: list[dict] = [
     {"id": "pill_guard", "name": "护体丹", "herbs": 4, "price": 80},
     {"id": "pill_break", "name": "破军丹", "herbs": 5, "price": 100},
 ]
-GATHER_COOLDOWN = 1800
+GATHER_CHARGE_MAX = 6
+GATHER_CHARGE_SECONDS = 600
 GATHER_MAX_HERBS = 99
 
 WEATHERS: list[dict] = [
@@ -483,6 +484,10 @@ class ExpansionService:
     def _books(self, chat_id: str, sender_id: str) -> int:
         return self._item_count(chat_id, sender_id, "book", BOOK_ITEM)
 
+    def books_of(self, chat_id: str, sender_id: str) -> int:
+        """Public accessor for the skill-book count shown in group replies."""
+        return self._books(chat_id, sender_id)
+
     # ── Sets ─────────────────────────────────────────────────────
 
     def summary(self, chat_id: str, sender_id: str,
@@ -631,7 +636,10 @@ class ExpansionService:
         books = self._books(chat_id, sender_id)
         cost = 200 * level
         if books < 1:
-            return f"技能书不足：升级「{skill['name']}」需要 1 本技能书。"
+            return (
+                f"技能书不足：升级「{skill['name']}」需要 1 本，"
+                f"你有 {books} 本。"
+            )
         balance = self._balance(chat_id, sender_id)
         if balance < cost:
             return (
@@ -639,7 +647,7 @@ class ExpansionService:
                 f"你只有 {balance}。"
             )
         if not self._consume_item(chat_id, sender_id, "book", BOOK_ITEM):
-            return "技能书不足。"
+            return f"技能书不足（你有 {self._books(chat_id, sender_id)} 本）。"
         if not self._spend(chat_id, sender_id, sender_name, cost,
                            f"skill_upgrade:{skill['id']}"):
             # refund the book if the balance changed concurrently
@@ -1677,23 +1685,56 @@ class ExpansionService:
     def _alchemy(self, chat_id: str, sender_id: str) -> dict:
         rows = _rows(
             self._store,
-            """SELECT herbs, last_gather FROM alchemy_state
+            """SELECT herbs, last_gather, gather_charges
+               FROM alchemy_state
                WHERE chat_id = ? AND sender_id = ?""",
             (str(chat_id), str(sender_id)),
         )
         if not rows:
-            return {"herbs": 0, "last_gather": 0}
+            return {"herbs": 0, "last_gather": 0,
+                    "charges": GATHER_CHARGE_MAX}
         return {"herbs": int(rows[0][0] or 0),
-                "last_gather": int(rows[0][1] or 0)}
+                "last_gather": int(rows[0][1] or 0),
+                "charges": int(rows[0][2] if rows[0][2] is not None
+                               else GATHER_CHARGE_MAX)}
+
+    @staticmethod
+    def _regen_charges(charges: int, anchor: int,
+                       now: int) -> tuple[int, int]:
+        """Return ``(charges, anchor)`` after time-based regeneration.
+
+        *anchor* is the timestamp the current charge started regenerating.
+        While charges are at the cap the timer stays frozen at *now*.
+        """
+        charges = max(0, min(GATHER_CHARGE_MAX, int(charges)))
+        if anchor <= 0 or charges >= GATHER_CHARGE_MAX:
+            return GATHER_CHARGE_MAX, now
+        regen = max(0, now - anchor) // GATHER_CHARGE_SECONDS
+        if regen:
+            charges = min(GATHER_CHARGE_MAX, charges + regen)
+            anchor += regen * GATHER_CHARGE_SECONDS
+        if charges >= GATHER_CHARGE_MAX:
+            anchor = now
+        return charges, anchor
 
     def alchemy_status(self, chat_id: str, sender_id: str,
                        sender_name: str) -> str:
         state = self._alchemy(chat_id, sender_id)
         now = _now()
-        wait = max(0, GATHER_COOLDOWN - (now - state["last_gather"]))
+        charges, anchor = self._regen_charges(
+            state["charges"], state["last_gather"], now)
+        if charges >= GATHER_CHARGE_MAX:
+            stamina = f"体力 {charges}/{GATHER_CHARGE_MAX}（已满）"
+        else:
+            wait = max(1, GATHER_CHARGE_SECONDS - (now - anchor))
+            stamina = (
+                f"体力 {charges}/{GATHER_CHARGE_MAX}"
+                f"（{wait // 60 or 1} 分钟后 +1）"
+            )
         lines = [
             f"{sender_name} 的炼丹炉：草药 {state['herbs']} 株",
-            ("可采集" if wait == 0 else f"{wait // 60} 分钟后可采集"),
+            stamina,
+            f"技能书 ×{self._books(chat_id, sender_id)}",
         ]
         for pill in PILLS:
             definition = skill_by_id(pill["id"])
@@ -1710,23 +1751,35 @@ class ExpansionService:
                sender_name: str, rng=None) -> str:
         state = self._alchemy(chat_id, sender_id)
         now = _now()
-        wait = GATHER_COOLDOWN - (now - state["last_gather"])
-        if state["last_gather"] and wait > 0:
-            return f"采集冷却中，{wait // 60} 分钟后可再次采集。"
+        charges, anchor = self._regen_charges(
+            state["charges"], state["last_gather"], now)
+        if charges < 1:
+            wait = max(1, GATHER_CHARGE_SECONDS - (now - anchor))
+            return (
+                f"采药体力不足（0/{GATHER_CHARGE_MAX}），"
+                f"{wait // 60 or 1} 分钟后恢复 1 点。"
+            )
         amount = 1 + int(_roll(rng) * 3)
         herbs = min(GATHER_MAX_HERBS, state["herbs"] + amount)
+        charges -= 1
         with self._store.lock, self._store.conn:
             self._store.conn.execute(
                 """INSERT INTO alchemy_state
-                   (chat_id, sender_id, herbs, last_gather, updated_at)
-                   VALUES (?, ?, ?, ?, ?)
+                   (chat_id, sender_id, herbs, last_gather,
+                    gather_charges, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
                    ON CONFLICT(chat_id, sender_id) DO UPDATE SET
                      herbs = excluded.herbs,
                      last_gather = excluded.last_gather,
+                     gather_charges = excluded.gather_charges,
                      updated_at = excluded.updated_at""",
-                (str(chat_id), str(sender_id), herbs, now, now),
+                (str(chat_id), str(sender_id), herbs, anchor, charges,
+                 now),
             )
-        return f"采集到 {amount} 株草药，当前 {herbs} 株。"
+        return (
+            f"采集到 {amount} 株草药，当前 {herbs} 株"
+            f"（体力 {charges}/{GATHER_CHARGE_MAX}）。"
+        )
 
     def craft_pill(self, chat_id: str, sender_id: str,
                    sender_name: str, raw: str) -> str:

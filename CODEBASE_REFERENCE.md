@@ -1039,7 +1039,8 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 | `.guild_status/.guild_create/.guild_join/.guild_leave/.guild_donate` | 门派系统 | 见签名 | `str` |
 | `.market_status/.market_sell/.market_buy/.market_cancel` | 交易行（5% 手续费、7 天过期退回） | 见签名 | `str` |
 | `.pet_status/.pet_adopt/.pet_train/.pet_release` | 宠物系统 | 见签名 | `str` |
-| `.alchemy_status/.gather/.craft_pill/.use_pill` | 采集、炼丹、服用丹药 | 见签名 | `str` |
+| `.alchemy_status/.gather/.craft_pill/.use_pill` | 采药体力、采集、炼丹、服用丹药 | 见签名 | `str` |
+| `.books_of(chat_id, sender_id)` | 技能书数量（群指令展示用） | 见签名 | `int` |
 | `.rebirth_status/.rebirth` | 转世条件与执行（境界≥10、Lv12、10000 灵石） | 见签名 | `str` |
 | `.world_status/.cross_board` | 天象与世界事件 / 跨群修炼榜 | 见签名 | `str` |
 
@@ -1049,7 +1050,7 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 第二阶段常量：`DUNGEON_DAILY_ATTEMPTS=3`、`DUNGEON_MAX_FLOOR=50`、
 `ARENA_DAILY_ATTEMPTS=3`、`ARENA_WIN_POINTS=10`、`ARENA_LOSS_POINTS=3`、
 `GUILD_CREATE_COST=500`、`GUILD_MAX_LEVEL=10`、`PET_MAX_LEVEL=10`、
-`GATHER_COOLDOWN=1800`、`REBIRTH_COST=10000`、
+`GATHER_CHARGE_MAX=6`、`GATHER_CHARGE_SECONDS=600`（每 10 分钟恢复 1 点采药体力）、`GATHER_MAX_HERBS=99`、`REBIRTH_COST=10000`、
 `MARKET_FEE_RATIO=0.05`、`MARKET_LIST_DAYS=7`。
 
 ---
@@ -2162,7 +2163,7 @@ MessageRouter.handle(msg)
 | `修炼榜` / `月榜` / `修炼榜 今日` | 总榜 / 赛季榜 / 今日榜 |
 | `修炼规则` | 规则摘要 |
 | `商店` / `商店 武器` / `商店 全部` / `购买 名称` / `装备 名称` / `卸下 槽位` / `我的装备` | 装备系统（武器/护甲/饰品/坐骑 4 槽位；品阶凡品~圣品，含仙品/神品/圣品终局装备；显示装备技能）。`商店` 仅给各槽位件数与价格区间，`商店 槽位` 逐件列出名称·品阶·属性·售价，`商店 全部` 一次列全；槽位支持 兵器/防具/首饰/马 等别名 |
-| `技能` / `我的技能` / `装备技能` | 查看当前已装备装备提供的主动/被动技能、来源、效果与冷却/增益状态 |
+| `技能` / `我的技能` / `装备技能` | 查看当前已装备装备提供的主动/被动技能、来源、效果、冷却/增益状态与技能书数量 |
 | `施放 技能名` / `施展 技能名` | 施放已装备的主动技能，获得限时增益（被动技能装备即生效） |
 | `升级技能 技能名` | 消耗技能书 + 灵石，把已装备技能升到 Lv5 |
 | `套装` | 查看仙品/鸿蒙/造化套的穿戴进度与激活档位 |
@@ -2173,7 +2174,7 @@ MessageRouter.handle(msg)
 | `创建门派 名称` / `加入门派` / `捐献门派 数量` / `退出门派` | 门派系统，等级提供全员攻防加成 |
 | `交易行` / `上架 名称 价格` / `购买挂单 编号` / `下架挂单 编号` | 装备交易行（5% 手续费、7 天过期退回） |
 | `宠物` / `领养宠物 名称` / `培养宠物` / `放生宠物` | 宠物养成与属性加成 |
-| `丹药` / `采集` / `炼丹 丹药名` / `服用 丹药名` | 草药采集、炼丹与限时增益 |
+| `丹药` / `采集` / `炼丹 丹药名` / `服用 丹药名` | 草药采集（消耗 1 点体力，体力每 10 分钟恢复 1 点、上限 6 点）、炼丹与限时增益 |
 | `天象` / `世界事件` | 查看天气、世界事件与当前加成 |
 | `转世` / `转世确认` | 查看转世条件 / 执行转世（境界≥10、Lv12、10000 灵石） |
 | `跨群榜` | 所有群的修炼值总和排行 |
@@ -2465,7 +2466,7 @@ PointHandler.handle("成就")
 | `guilds` / `guild_members` | 门派等级、资金与成员贡献 |
 | `market_listings` | 交易行挂单、状态、强化等级与过期时间 |
 | `pets` | 每人一只宠物（种类/等级/经验） |
-| `alchemy_state` | 草药库存与采集冷却 |
+| `alchemy_state` | 草药库存与采药体力（每 10 分钟恢复 1 点，上限 6 点） |
 | `rebirths` | 轮回世数与永久加成 |
 | `lottery_draws` | 每人每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等 |
 

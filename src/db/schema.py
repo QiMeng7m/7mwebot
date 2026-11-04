@@ -478,6 +478,7 @@ CREATE TABLE IF NOT EXISTS alchemy_state (
     sender_id   TEXT    NOT NULL,
     herbs       INTEGER NOT NULL DEFAULT 0,
     last_gather INTEGER NOT NULL DEFAULT 0,
+    gather_charges INTEGER NOT NULL DEFAULT 6,
     updated_at  INTEGER NOT NULL,
     PRIMARY KEY (chat_id, sender_id)
 );
@@ -528,6 +529,9 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
     })
     _ensure_columns(conn, "market_listings", {
         "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
+    })
+    _ensure_columns(conn, "alchemy_state", {
+        "gather_charges": "gather_charges INTEGER NOT NULL DEFAULT 6",
     })
 
     conn.commit()
