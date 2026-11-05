@@ -987,7 +987,10 @@ todo_delete_keywords: list[str] = [
 | `duel.py` | `DuelService.leaderboard(chat_id, limit=10)` | 战神榜行，附带段位 | 见签名 | `list[dict]` |
 | `duel.py` | `DuelService.challenge(msg, target_id, rng=None, defender_name="")` | 执行切磋（护盾/冷却/次数/新手保护/结算）；`defender_name` 为调用方解析好的群昵称 | 见签名 | `DuelResult` |
 | `handler.py` | `looks_like_command(text)` | 路由层廉价语法判断 | `text: str` | `bool` |
-| `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有修炼值指令；弱指令不匹配返回 `None` | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler.handle(content, msg)` | 解析并执行所有修炼值指令；弱指令不匹配返回 `None`。回复统一加 `群昵称：` 前缀（纯文本，不触发真实 @） | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler._handle_command(content, msg)` | 指令解析与分发的实际实现（不含称呼前缀） | 见签名 | `str \| None` |
+| `handler.py` | `PointHandler._label_reply(reply, msg)` | 给回复加 `群昵称：` 前缀；首行已含昵称或 `@昵称` 时跳过，`DelayedReply` 同时处理 ack 文本 | `reply: str, msg: dict` | `str \| DelayedReply` |
+| `handler.py` | `PointHandler._reply_label_name(chat_id, sender_id, fallback="")` | 称呼回退链：群昵称 → 手动昵称 → fallback → 消息表昵称；等于 wxid 时返回空 | 见签名 | `str` |
 | `handler.py` | `PointHandler._candidate_map(chat_id)` | 姓名候选表：消息表昵称 + 全局昵称 + 群昵称 + 原始 wxid（data/group_nicknames.json） | `chat_id: str` | `dict[str, list[str]]` |
 | `handler.py` | `PointHandler._load_group_nicknames(chat_id)` | 读取某群的 `{wxid: 群昵称}`（按路径+mtime 缓存） | `chat_id: str` | `dict[str, str]` |
 | `handler.py` | `PointHandler._display_name(chat_id, sender_id, fallback="")` | 显示名回退链：手动昵称 → fallback → 群昵称 → 消息表昵称 → wxid | `chat_id: str, sender_id: str, fallback: str` | `str` |
@@ -2153,6 +2156,9 @@ MessageRouter.handle(msg)
 | `lottery_draws` | 每日抽奖记录；`UNIQUE(chat_id, message_id)` 幂等，`day` 用于每日次数限制 |
 
 #### 指令
+
+除「签到」等首行已带 `@昵称` 的回复外，所有指令回复都会在首行前加
+`群昵称：`（纯文本前缀，不触发真实 @mention），便于群里辨认回复对象。
 
 | 输入 | 行为 |
 |---|---|

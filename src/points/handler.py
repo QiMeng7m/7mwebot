@@ -273,7 +273,56 @@ class PointHandler:
     # ── Entry ─────────────────────────────────────────────────────
 
     def handle(self, content: str, msg: dict) -> str | None:
-        """Return reply text, or None when this is not a point command."""
+        """Return reply text, or None when this is not a point command.
+
+        Every reply is labelled with the sender's group nickname so the
+        group can tell whom a terse command reply belongs to.
+        """
+        reply = self._handle_command(content, msg)
+        return self._label_reply(reply, msg)
+
+    def _label_reply(self, reply, msg: dict):
+        """Prefix *reply* with ``群昵称：`` unless it already names them.
+
+        The label is plain text (no real @mention), so it does not
+        trigger WeChat's member picker.  Delayed replies keep their
+        delay and get the same label on both the ack and final text.
+        """
+        if not isinstance(reply, str) or not reply:
+            return reply
+        chat_id = str(msg.get("chat_id") or "")
+        sender_id = str(msg.get("sender_id") or "")
+        name = self._reply_label_name(
+            chat_id, sender_id, str(msg.get("sender_name") or ""))
+        if not name:
+            return reply
+
+        def labelled(text: str) -> str:
+            if not text:
+                return text
+            first_line = text.split("\n", 1)[0]
+            if first_line.startswith(name) or f"@{name}" in first_line:
+                return text
+            return f"{name}：{text}"
+
+        if hasattr(reply, "delay_sec"):
+            return DelayedReply(
+                labelled(str(reply)),
+                getattr(reply, "delay_sec", 0),
+                ack_text=labelled(getattr(reply, "ack_text", "")),
+            )
+        return labelled(str(reply))
+
+    def _reply_label_name(self, chat_id: str, sender_id: str,
+                          fallback: str = "") -> str:
+        """Group nickname first, then the usual display-name fallbacks."""
+        group_nick = self._load_group_nicknames(chat_id).get(sender_id)
+        if group_nick:
+            return group_nick
+        name = self._display_name(chat_id, sender_id, fallback)
+        return "" if name == sender_id else name
+
+    def _handle_command(self, content: str, msg: dict) -> str | None:
         cfg = self._config
         if not getattr(cfg, "points_enabled", False):
             return None

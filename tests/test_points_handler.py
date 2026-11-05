@@ -244,6 +244,41 @@ class CheckinTests(HandlerTestBase):
         )
 
 
+class ReplyLabellingTests(HandlerTestBase):
+    def test_plain_reply_is_prefixed_with_sender_name(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        reply = self.run_cmd("采集", sender_id="wxid_a", name="张三")
+        self.assertTrue(reply.startswith("张三："), reply)
+
+    def test_reply_already_naming_sender_is_not_doubled(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        reply = self.run_cmd("背包", sender_id="wxid_a", name="张三")
+        self.assertTrue(reply.startswith("张三"), reply)
+        self.assertNotIn("张三：张三", reply)
+
+    def test_mention_reply_is_not_relabelled(self):
+        self.add_member("wxid_a", "张三", earned=0)
+        self.assertEqual(
+            self.run_cmd("签到", sender_id="wxid_a", name="张三"),
+            "@张三 签到成功，修炼值+10",
+        )
+
+    def test_group_nickname_wins_over_contact_name(self):
+        self.add_member("wxid_a", "微信昵称", earned=0)
+        path = Path(tempfile.mkdtemp()) / "group_nicknames.json"
+        path.write_text(json.dumps({
+            self.chat: {"wxid_a": "西湖-张三"},
+        }), encoding="utf-8")
+        handler = PointHandler(
+            self.store, self.config, self.levels, self.catalog,
+            self.duels, engine=self.engine, nickname_service=self.nicks,
+            group_nicknames_path=path,
+        )
+        msg = self.msg("采集", "wxid_a", "微信昵称")
+        reply = handler.handle("采集", msg)
+        self.assertTrue(reply.startswith("西湖-张三："), reply)
+
+
 class ShopTests(HandlerTestBase):
     def setUp(self):
         super().setUp()
@@ -272,7 +307,7 @@ class ShopTests(HandlerTestBase):
         # 单个槽位一件一行，便于扫读。
         self.assertEqual(
             len([line for line in reply.splitlines() if "灵石" in line
-                 and "·" in line and not line.startswith("装备商店")]),
+                 and "·" in line and "装备商店" not in line]),
             10,
         )
 
