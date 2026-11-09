@@ -14,6 +14,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -70,6 +71,32 @@ _PLAIN_JOIN_RE = re.compile(
 _PLACEHOLDER_RE = re.compile(r"^\$[A-Za-z0-9_]+\$$")
 # Links that describe someone other than the new member.
 _NON_MEMBER_LINK_NAMES = ("from", "revoke")
+
+
+def _normalize_group_name(name: str) -> str:
+    """Normalize a group name for matching.
+
+    ``NFKC`` folds full-width punctuation (（）：、) to its ASCII form, so a
+    name copied from .env matches WeChat's display name even when one side
+    used a Chinese IME variant.  Whitespace and zero-width characters are
+    dropped because session.db occasionally carries them.
+    """
+    text = unicodedata.normalize("NFKC", str(name or ""))
+    text = re.sub(r"[\s​-‏⁠﻿]+", "", text)
+    return text.casefold()
+
+
+def _group_name_matches(configured: str, display: str) -> bool:
+    """True when two group names identify the same chat.
+
+    Exact (normalized) equality is a stronger signal than a substring, but
+    substring matching is kept so a short configured alias still works.
+    """
+    left = _normalize_group_name(configured)
+    right = _normalize_group_name(display)
+    if not left or not right:
+        return False
+    return left in right or right in left
 # Links that can hold the new member, ranked by reliability.  WeChat's
 # invite template is '"$username$"邀请"$names$"加入了群聊' and lists the
 # inviter's "username" link *before* the invitee's "names" link, so picking
@@ -326,6 +353,7 @@ class WcdbBackend(AbstractWeChatBackend):
         self._client: Optional[WcdbNativeClient] = None
         self._window = WeChatWindowController()
         self._talker_ids: dict[str, str] = {}
+        self._resolve_retry_at = 0.0
         self._known_ids = DedupSet(max_size=MAX_DEDUP_SIZE)
         # Thread safety: WCDB DLL (ctypes) may not be thread-safe internally.
         # All _client calls are serialized through this lock.
@@ -602,27 +630,52 @@ class WcdbBackend(AbstractWeChatBackend):
             self._groups = list(self._talker_ids.keys())
 
         else:
-            # Manual mode: match configured names against resolved display names
+            # Manual mode: match configured names against resolved display
+            # names.  Two passes so an exact match always wins over a short
+            # alias that happens to be a substring of another group's name.
             for group_name in self._groups:
                 found = None
+                target = _normalize_group_name(group_name)
                 for username, info in all_chatrooms.items():
-                    display = info["name"]
-                    if group_name.lower() in display.lower() or display.lower() in group_name.lower():
+                    if target and _normalize_group_name(info["name"]) == target:
                         found = username
                         break
+                if not found:
+                    for username, info in all_chatrooms.items():
+                        if _group_name_matches(group_name, info["name"]):
+                            found = username
+                            break
                 if found:
                     self._talker_ids[group_name] = found
-                    logger.info("Resolved '%s' -> %s (display='%s')", group_name, found, all_chatrooms[found]["name"])
+                    logger.info(
+                        "Resolved '%s' -> %s (display='%s')",
+                        group_name, found, all_chatrooms[found]["name"],
+                    )
                 else:
-                    # Direct lookup: maybe group_name IS a username like 20968749111@chatroom
+                    # Direct lookup: maybe group_name IS a username like
+                    # 20968749111@chatroom, or a chat_id copied from the UI.
                     if group_name in all_chatrooms:
                         self._talker_ids[group_name] = group_name
-                        logger.info("Resolved '%s' as direct username", group_name)
+                        logger.info(
+                            "Resolved '%s' as direct username", group_name)
                     else:
+                        available = ", ".join(
+                            f"'{info['name']}' ({username})"
+                            for username, info in all_chatrooms.items()
+                        )
                         logger.warning(
                             "Could not resolve group '%s'. Available: %s",
-                            group_name, list(all_chatrooms.keys()),
+                            group_name, available,
                         )
+
+            if not self._talker_ids:
+                logger.error(
+                    "None of the configured WECHAT_GROUPS matched a group. "
+                    "The bot will not receive any group messages until this "
+                    "is fixed. Copy an exact name from the list above, use "
+                    "the chatroom id, or set WECHAT_GROUPS=* to monitor all "
+                    "groups.",
+                )
 
         # Persist chat_id -> display_name so the web UI can show
         # human-readable group names in the nickname dropdown.
@@ -803,6 +856,16 @@ class WcdbBackend(AbstractWeChatBackend):
     # ── Message polling ──────────────────────────────────────────────
 
     def _poll_cycle(self, callback: MessageCallback) -> None:
+        # If startup could not match any configured group, retry
+        # periodically — WeChat may not have synced a rename yet, or the
+        # user may have just re-created the group.
+        if not self._talker_ids and time.time() >= self._resolve_retry_at:
+            self._resolve_retry_at = time.time() + 300
+            logger.info("No groups resolved yet; retrying group resolution...")
+            try:
+                self._resolve_groups()
+            except Exception:
+                logger.exception("Retrying group resolution failed")
         for group_name in list(self._groups):
             if not self._running:
                 break

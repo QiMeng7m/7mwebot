@@ -98,7 +98,7 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `OPENAI_BASE_URL` | `str` | `"https://api.openai.com/v1"` | `src/config.py` | `src/summarize/openai_backend.py` |
 | `OPENAI_MODEL` | `str` | `"gpt-4o-mini"` | `src/config.py` | `src/summarize/openai_backend.py`, `src/bot.py:_log_banner()` |
 | `WECHAT_BACKEND` | `str` | `"wcdb"` | `src/config.py` | `src/bot.py:_create_wechat_backend()` |
-| `WECHAT_GROUPS` | `str` | `"*"` | `src/config.py` (经 `_decode_wechat_groups` URL解码) | `src/bot.py:_create_wechat_backend()`, `src/wechat/wcdb_backend.py:_resolve_groups()` |
+| `WECHAT_GROUPS` | `str` | `"*"` | `src/config.py` (经 `_decode_wechat_groups` URL解码) | `src/bot.py:_create_wechat_backend()`, `src/wechat/wcdb_backend.py:_resolve_groups()`（NFKC 归一化后精确匹配，再子串回退；也接受 `xxx@chatroom`） |
 | `WECHAT_DATA_DIR` | `str` | `""` | `src/config.py` | `src/wechat/wcdb_client.py`, `src/voice/file_locator.py`, `src/web/server.py` |
 | `BOT_DISPLAY_NAME` | `str` | `"群聊小助手"` | `src/config.py` (经 `_sanitize_display_name` 清洗) | `src/router.py:handle()` (多处), `src/bot.py:_log_banner()` |
 | `BOT_ALIASES` | `list[str]` | `[]` | `src/config.py` (`_parse_bot_aliases`，逗号分隔) | `wcdb_backend._standardize()` (@ 检测)、`router._is_bot_sender()`/`clean_command_text()` |
@@ -398,7 +398,9 @@ todo_delete_keywords: list[str] = [
 | `send_text(chat_id, content)` | 发送文本消息 | `chat_id: str, content: str` | `bool` |
 | `stop()` | 停止监听 | 无 | `None` |
 | `_reinitialize()` | 关闭并重开 WCDB(故障恢复) | 无 | `None` |
-| `_resolve_groups()` | 解析群组名称到 talker ID，并缓存/持久化群昵称 | 无 | `None` |
+| `_resolve_groups()` | 解析群组名称到 talker ID，并缓存/持久化群昵称；名称匹配先做 NFKC 归一化精确匹配，再做子串回退；全部配置都匹配不上时拒绝静默失败并输出可用群名与 chat_id | 无 | `None` |
+| `_normalize_group_name(name)` | 群名归一化：NFKC（全角括号→半角）、去空白/零宽字符、casefold | `name: str` | `str` |
+| `_group_name_matches(configured, display)` | 归一化后判断配置名与 WCDB 显示名是否互相包含 | `configured: str, display: str` | `bool` |
 | `_save_group_names(chatrooms)` | 持久化群名映射(静态) | `chatrooms: dict` | `None` |
 | `_save_group_members(chat_members)` | 持久化群成员列表(静态) | `chat_members: dict` | `None` |
 | `_save_group_nicknames(chat_nicks, path=None)` | 合并写入 `chat_id → {wxid: 群昵称}`（静态；保留未参与本轮的群） | `chat_nicks: dict, path: Path \| str \| None` | `None` |

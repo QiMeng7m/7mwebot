@@ -201,6 +201,17 @@ class DecodeWeChatGroupsTests(unittest.TestCase):
         result = _decode_wechat_groups("  Group1  ,  Group2  ")
         self.assertEqual(result, "Group1,Group2")
 
+    def test_encoded_chinese_name_with_fullwidth_parens(self):
+        """The full-width parenthesis suffix survives URL-decoding."""
+        from src.config import _decode_wechat_groups
+
+        encoded = (
+            "%E6%83%B3%E4%BA%B2%E6%83%B3%E7%88%B1%E4%B8%80%E5%AE%B6"
+            "%E4%BA%BA%EF%BC%88%E5%AE%A1%E6%A0%B8%E7%BE%A4%EF%BC%89"
+        )
+        self.assertEqual(
+            _decode_wechat_groups(encoded), "想亲想爱一家人（审核群）")
+
 
 # ---------------------------------------------------------------------------
 # find_env_file
