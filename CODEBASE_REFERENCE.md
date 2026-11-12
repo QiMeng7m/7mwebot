@@ -490,15 +490,20 @@ todo_delete_keywords: list[str] = [
 | `_cancel_removal(window)` | 点击选择器的「取消」 | `window: Control` | `None` |
 | `_click_relative(hwnd, dx, dy)` | 相对窗口右上角点击（仅用于打开聊天信息/移出入口） | `hwnd: int, dx: int, dy: int` | `None` |
 | `send_to_chat(group_name, text, max_retries=2, mention_name=None)` | 完整发送管道(主入口；`mention_name` 存在时走真实 @) | `group_name: str, text: str, max_retries: int, mention_name: str \| None` | `bool` |
-| `grab_red_packet(group_name, title="")` | 自动抢红包主入口：激活→导航群→定位红包气泡→点击→点「拆开」→确认结果窗口→关闭 | `group_name: str, title: str` | `bool` |
+| `grab_red_packet(group_name, title="")` | 自动抢红包主入口：激活→导航群→定位红包气泡→在气泡左半区点击→点「拆开」→确认结果窗口→关闭；失败时输出 Red packet diag 诊断日志 | `group_name: str, title: str` | `bool` |
 | `_find_message_list(hwnd)` | UIA 定位聊天消息列表（`mmui::RecyclerListView`，优先 Name=消息） | `hwnd: int` | `Control \| None` |
-| `_find_red_packet_item(hwnd, title="")` | 倒序匹配红包气泡：Name 含「红包」/红包祝福语，或类名含 RedEnvelope/RedPacket/Hongbao | `hwnd: int, title: str` | `Control \| None` |
-| `_wait_red_packet_item(hwnd, title="", timeout=1.5)` | 轮询等待消息列表渲染出红包气泡 | `hwnd: int, title: str, timeout: float` | `Control \| None` |
-| `_claim_red_packet(hwnd, pid)` | 在 `mmui::PayRedEnvelopeInfoView` 内点「拆开」；无该视图时仅在主窗口匹配明确按钮名 | `hwnd: int, pid: int \| None` | `bool` |
+| `_find_red_packet_item(hwnd, title="")` | 倒序匹配红包气泡：Name 含「红包」/红包祝福语，或类名含 RedEnvelope/RedPacket/Hongbao；最后回退到最新 `ChatBubbleItemView`，且必须通过橙色像素校验 | `hwnd: int, title: str` | `Control \| None` |
+| `_looks_like_red_packet(item)` | 截取消息项左侧 60% 区域，检测微信红包橙/红像素占比 ≥5%，防止把链接卡片当红包 | `item: Control` | `bool` |
+| `_open_red_packet_overlay(hwnd, pid, item)` | 在气泡左半区两个 x 坐标依次点击（避免点中行中心空白），等待 `PayRedEnvelopeInfoView` 出现 | `hwnd: int, pid: int \| None, item: Control` | `Control \| None` |
+| `_wait_red_packet_item(hwnd, title="", timeout=2.5)` | 轮询等待消息列表渲染出红包气泡 | `hwnd: int, title: str, timeout: float` | `Control \| None` |
+| `_claim_red_packet(hwnd, pid, info_view=None)` | 在 `mmui::PayRedEnvelopeInfoView` 内点「拆开」；无该视图时仅在主窗口匹配明确按钮名 | `hwnd: int, pid: int \| None, info_view: Control \| None` | `bool` |
 | `_click_open_button(root, allow_short=True)` | 遍历 UIA 子树点击「拆开/领取红包」（`allow_short=True` 时也接受「开」） | `root: Control, allow_short: bool` | `bool` |
+| `_all_wechat_hwnds()` | 枚举所有可见的微信进程窗口（WeChat 多进程，红包弹窗可能不在主进程） | 无 | `list[int]` |
 | `_find_wechat_control(pid, class_name)` | 在所有可见微信窗口中按类名查找控件 | `pid: int \| None, class_name: str` | `Control \| None` |
 | `_wait_red_packet_detail(pid)` | 等待领红包结果窗口 `mmui::PayRedEnvelopDetailWindow` | `pid: int \| None` | `Control \| None` |
-| `_close_red_packet_windows(hwnd, pid)` | 关闭结果窗口（关闭按钮→WM_CLOSE）；残留弹层用 Esc 关闭 | `hwnd: int, pid: int \| None` | `None` |
+| `_dump_chat_items(hwnd)` | 气泡匹配失败时把最近 10 条消息项的类型/Name/Rect 写入日志 | `hwnd: int` | `None` |
+| `_dump_red_packet_windows(pid=None)` | 领红包失败时把所有微信窗口类名与按钮名写入日志 | `pid: int \| None` | `None` |
+| `_close_red_packet_windows(hwnd, pid=None)` | 关闭结果窗口（关闭按钮→WM_CLOSE）；残留弹层用 Esc 关闭 | `hwnd: int, pid: int \| None` | `None` |
 | `_score_window(hwnd)` | 给窗口打分(模块级) | `hwnd: int` | `WindowCandidate` |
 | `_get_process_name(pid)` | 获取进程名(模块级) | `pid: int` | `str` |
 | `get_foreground_info()` | 获取前台窗口诊断信息 | 无 | `str` |
@@ -737,14 +742,23 @@ todo_delete_keywords: list[str] = [
 > 1. `WeChatWindowController.grab_red_packet()`：激活微信 → 键盘导航到群
 > 2. `_find_message_list()` 定位 `mmui::RecyclerListView`（Name=消息），
 >    `_find_red_packet_item()` 倒序匹配红包气泡（Name 含「红包」或红包
->    祝福语，或类名含 RedEnvelope/RedPacket/Hongbao），**匹配不到就放弃**，
->    绝不盲点最后一条消息
-> 3. 点击气泡 → `_claim_red_packet()` 在
->    `mmui::PayRedEnvelopeInfoView` 中点击「拆开」（兼容「领取红包」、「开」）
-> 4. `_wait_red_packet_detail()` 等待 `mmui::PayRedEnvelopDetailWindow`
->    出现，出现才算成功
-> 5. `finally` 中 `_close_red_packet_windows()` 关闭结果窗口/残留弹层，
+>    祝福语，或类名含 RedEnvelope/RedPacket/Hongbao）；都没有时仅当最新
+>    一项是 `mmui::ChatBubbleItemView` 且通过 `_looks_like_red_packet()`
+>    的橙/红像素校验才使用，绝不盲点最后一条消息
+> 3. `_open_red_packet_overlay()` 在气泡**左半区**依次点击两个 x 坐标
+>    （消息行中心可能落在窄气泡外），等待
+>    `mmui::PayRedEnvelopeInfoView` 出现
+> 4. `_claim_red_packet()` 在该视图中点击「拆开」（兼容「领取红包」、「开」）
+> 5. `_wait_red_packet_detail()` 等待 `mmui::PayRedEnvelopDetailWindow`
+>    出现（3 秒），出现才算成功
+> 6. `finally` 中 `_close_red_packet_windows()` 关闭结果窗口/残留弹层，
 >    保证后续发送能正常进行
+>
+> 失败时会在 WARNING 日志后输出 `Red packet diag:` 诊断块：最近 10 条
+> 消息项的 `类名 | Name | Rect`，以及所有微信窗口的类名和按钮名。微信
+> 4.x 是多进程架构，`_all_wechat_hwnds()` 会扫描所有 Weixin.exe 窗口，
+> 避免红包弹窗不在主进程时找不到。若丢失前台/权限不足，日志会提示
+> “微信以管理员身份运行，本程序也需管理员身份启动”。
 >
 > 启动回放最近 50 条消息时，超过 `RED_PACKET_MAX_AGE_SEC` 的历史红包
 > 会被跳过，不会重复点击已领完的红包。注意：抢红包依赖微信窗口可用

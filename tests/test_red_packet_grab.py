@@ -87,10 +87,108 @@ class RedPacketItemPickerTests(unittest.TestCase):
         items = [_FakeItem("普通聊天"), _FakeItem("图片", "mmui::ChatImageItemView")]
         self.assertIsNone(_controller_with(items)._find_red_packet_item(1, ""))
 
+    def test_falls_back_to_newest_generic_bubble(self):
+        items = [
+            _FakeItem("普通聊天"),
+            _FakeItem("恭喜发财，大吉大利", "mmui::ChatBubbleItemView"),
+        ]
+        ctrl = _controller_with(items)
+        ctrl._looks_like_red_packet = lambda _item: True
+        picked = ctrl._find_red_packet_item(1, "")
+        self.assertIs(picked, items[1])
+
+    def test_generic_bubble_rejected_without_orange(self):
+        items = [_FakeItem("一篇文章", "mmui::ChatBubbleItemView")]
+        ctrl = _controller_with(items)
+        ctrl._looks_like_red_packet = lambda _item: False
+        self.assertIsNone(ctrl._find_red_packet_item(1, ""))
+
+    def test_does_not_fall_back_to_sticker_bubble(self):
+        items = [
+            _FakeItem("动画表情", "mmui::ChatBubbleReferItemView"),
+        ]
+        self.assertIsNone(_controller_with(items)._find_red_packet_item(1, ""))
+
     def test_returns_none_without_message_list(self):
         ctrl = WeChatWindowController()
         ctrl._find_message_list = lambda _hwnd: None
         self.assertIsNone(ctrl._find_red_packet_item(1, "恭喜发财"))
+
+
+class _Rect:
+    left, top, right, bottom = 100, 100, 600, 180
+
+
+class _ClickableItem:
+    def __init__(self):
+        self.BoundingRectangle = _Rect()
+        self.clicks: list[tuple[int, int]] = []
+
+    def Click(self, x, y):
+        self.clicks.append((x, y))
+
+
+class ColorCheckTests(unittest.TestCase):
+    def _check(self, color):
+        from PIL import Image
+        item = _ClickableItem()
+        image = Image.new("RGB", (100, 40), color)
+        with mock.patch(
+            "src.wechat.window_controller.ImageGrab.grab",
+            return_value=image,
+        ):
+            return WeChatWindowController()._looks_like_red_packet(item)
+
+    def test_wechat_orange_detected(self):
+        self.assertTrue(self._check((250, 157, 59)))
+
+    def test_custom_red_cover_detected(self):
+        self.assertTrue(self._check((220, 70, 60)))
+
+    def test_gray_rejected(self):
+        self.assertFalse(self._check((120, 120, 120)))
+
+    def test_screenshot_error_rejected(self):
+        item = _ClickableItem()
+        with mock.patch(
+            "src.wechat.window_controller.ImageGrab.grab",
+            side_effect=OSError("no screen"),
+        ):
+            self.assertFalse(
+                WeChatWindowController()._looks_like_red_packet(item)
+            )
+
+
+class OverlayOpenTests(unittest.TestCase):
+    def test_clicks_inside_left_bubble_not_row_center(self):
+        ctrl = WeChatWindowController()
+        item = _ClickableItem()
+        sentinel = object()
+        ctrl._find_wechat_control = lambda _pid, _cls: sentinel
+        info = ctrl._open_red_packet_overlay(1, 1, item)
+        self.assertIs(info, sentinel)
+        self.assertEqual(len(item.clicks), 1)
+        dx, dy = item.clicks[0]
+        # Row is 500 px wide; the bubble starts near the left edge.
+        self.assertLess(dx, 200)
+        self.assertEqual(dy, 40)
+
+    def test_retries_second_point_when_overlay_missing(self):
+        ctrl = WeChatWindowController()
+        item = _ClickableItem()
+        ctrl.RED_PACKET_POPUP_DELAY = 0.15
+        calls = {"n": 0}
+        sentinel = object()
+
+        def fake_find(_pid, _cls):
+            calls["n"] += 1
+            return sentinel if calls["n"] >= 2 else None
+
+        ctrl._find_wechat_control = fake_find
+        info = ctrl._open_red_packet_overlay(1, 1, item)
+        self.assertIs(info, sentinel)
+        self.assertEqual(len(item.clicks), 2)
+        self.assertLess(item.clicks[1][0], item.clicks[0][0])
 
 
 class ClaimButtonTests(unittest.TestCase):
