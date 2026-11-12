@@ -15,6 +15,7 @@ import re
 import threading
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 
@@ -135,6 +136,167 @@ def _decode_wcdb_content(content: str) -> str:
     except Exception:
         logger.debug("Failed to decode compressed WCDB content", exc_info=True)
         return text
+
+
+# ── Message type normalization ────────────────────────────────────────
+# WeChat 4.x packs the app-message subtype into the upper 32 bits of
+# ``local_type``: a red packet is ``(2001 << 32) | 49``.  Split it before
+# any type comparisons, otherwise ``local_type`` is a huge unusable value.
+_LOCAL_TYPE_MASK = 0xFFFFFFFF
+
+# App messages (local_type=49) rendered as a human-readable placeholder.
+# The AI prompt and command matcher then see "[红包]" instead of raw XML.
+_APP_MSG_LABELS = {
+    "2000": "[转账]",
+    "2001": "[红包]",
+    "6": "[文件]",
+    "8": "[表情]",
+    "19": "[合并转发]",
+    "57": "[引用]",
+}
+
+# Media rows carry zstd-compressed XML with no readable text.  Replace the
+# binary payload with the same placeholders the other backends use.
+_MEDIA_TYPE_LABELS = {
+    3: "[图片]",
+    42: "[名片]",
+    43: "[视频]",
+    47: "[表情]",
+    48: "[位置]",
+    50: "[语音通话]",
+}
+
+_APPMSG_TYPE_RE = re.compile(
+    r"<appmsg\b.*?<type>\s*(?:<!\[CDATA\[)?\s*(\d+)", re.S,
+)
+_APPMSG_TITLE_RE = re.compile(
+    r"<title>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</title>", re.S,
+)
+_APPMSG_URL_RE = re.compile(
+    r"<url>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</url>", re.S,
+)
+
+
+def _split_local_type(local_type: object) -> tuple[int, int]:
+    """Split a packed WCDB type into ``(base_type, app_subtype)``."""
+    try:
+        value = int(local_type)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 1, 0
+    return value & _LOCAL_TYPE_MASK, value >> 32
+
+
+def _extract_xml_payload(content: str) -> str:
+    """Return the XML part of a group message row.
+
+    Group rows are prefixed with ``wxid_xxx:`` (or a custom WeChat ID)
+    before the actual payload.  Strip the prefix only when XML follows,
+    so ordinary text is never altered.
+    """
+    text = str(content or "")
+    index = text.find("<")
+    if index == 0:
+        return text
+    if index < 0:
+        return ""
+    prefix = text[:index].rstrip()
+    if not prefix.endswith(":"):
+        return ""
+    return text[index:]
+
+
+def _child_text(element, tag: str) -> str:
+    child = element.find(tag)
+    if child is None:
+        return ""
+    return str(child.text or "").strip()
+
+
+def _parse_app_message(content: str) -> dict:
+    """Parse a ``local_type=49`` app message (red packet, link, file…).
+
+    Returns ``{}`` when *content* is not appmsg XML; otherwise a dict with
+    ``app_type``, ``title``, ``url`` and ``is_red_packet``.
+    """
+    xml_text = _extract_xml_payload(content)
+    if not xml_text:
+        return {}
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return _parse_app_message_regex(xml_text)
+    appmsg = root.find(".//appmsg")
+    if appmsg is None:
+        return {}
+    title = _child_text(appmsg, "title")
+    url = _child_text(appmsg, "url")
+    app_type = _child_text(appmsg, "type")
+    return {
+        "app_type": app_type,
+        "title": title,
+        "url": url,
+        "is_red_packet": (
+            app_type == "2001"
+            or appmsg.find("wcpayinfo") is not None
+            or "wxhb_personalreceive" in url
+            or "weixinhongbao" in url
+        ),
+    }
+
+
+def _parse_app_message_regex(xml_text: str) -> dict:
+    """Lenient fallback for appmsg payloads ElementTree rejects."""
+    type_match = _APPMSG_TYPE_RE.search(xml_text)
+    if not type_match:
+        return {}
+    title_match = _APPMSG_TITLE_RE.search(xml_text)
+    url_match = _APPMSG_URL_RE.search(xml_text)
+    title = title_match.group(1).strip() if title_match else ""
+    url = url_match.group(1).strip() if url_match else ""
+    app_type = type_match.group(1)
+    return {
+        "app_type": app_type,
+        "title": title,
+        "url": url,
+        "is_red_packet": (
+            app_type == "2001"
+            or "<wcpayinfo" in xml_text
+            or "wxhb_personalreceive" in url
+            or "weixinhongbao" in url
+        ),
+    }
+
+
+def _is_red_packet(app_info: dict, app_subtype: int) -> bool:
+    """True when an app message is a WeChat red packet.
+
+    Three independent signals are accepted: the appmsg ``<type>2001</type>``,
+    a packed subtype of 2001, or the tenpay/hongbao URL markers — WeChat
+    versions differ in which one they populate.  Transfers (type 2000) also
+    carry ``<wcpayinfo>``, so they are excluded explicitly.
+    """
+    if str(app_info.get("app_type") or "") == "2000" or app_subtype == 2000:
+        return False
+    return bool(
+        app_info.get("is_red_packet")
+        or str(app_info.get("app_type") or "") == "2001"
+        or app_subtype == 2001
+    )
+
+
+def _app_message_label(app_info: dict, app_subtype: int) -> str:
+    """Placeholder text for an app message (``[红包]``, ``[链接]``…)."""
+    if _is_red_packet(app_info, app_subtype):
+        title = str(app_info.get("title") or "").strip()
+        # "微信红包" is the generic title; the group bubble shows the
+        # sender's greeting instead, so omit the generic text.
+        if title and title != "微信红包":
+            return f"[红包] {title[:30]}"
+        return "[红包]"
+    label = _APP_MSG_LABELS.get(str(app_info.get("app_type") or ""))
+    if label:
+        return label
+    return "[链接]" if app_info.get("url") else "[消息]"
 
 
 def _mention_name_for(reply: str, standardized: dict) -> str | None:
@@ -906,6 +1068,14 @@ class WcdbBackend(AbstractWeChatBackend):
                 continue
             self._known_ids.add(msg_id)
 
+            if standardized.get("is_red_packet"):
+                logger.info(
+                    "Red packet detected: group='%s' sender='%s' title='%s'",
+                    group_name,
+                    standardized.get("sender_name", "?"),
+                    standardized.get("red_packet_title", ""),
+                )
+
             # Log only for newly seen messages — _standardize runs on every
             # poll for the same rows, so logging there flooded the console.
             if standardized.get("is_system_join"):
@@ -1195,13 +1365,17 @@ class WcdbBackend(AbstractWeChatBackend):
         # WCDB message fields: sender_username, message_content, local_type, create_time
         sender = str(msg.get("sender_username", msg.get("senderUsername", msg.get("sender", ""))))
         content = str(msg.get("message_content", msg.get("content", ""))).strip()
-        local_type = int(msg.get(
+        local_type, app_subtype = _split_local_type(msg.get(
             "local_type", msg.get("localType", msg.get("msg_type", 1)),
         ))
 
-        # System messages are often zstd-compressed XML in WeChat 4.x.
-        if local_type == 10000:
-            content = _decode_wcdb_content(content)
+        # WeChat 4.x returns zstd frames as hex for non-text payloads:
+        # system events, media, and app messages (red packets, links…).
+        content = _decode_wcdb_content(content)
+
+        app_info: dict = {}
+        is_red_packet = False
+        red_packet_title = ""
 
         # ── Voice recognition ──────────────────────────────────────
         # Voice messages (localType=34) have empty message_content;
@@ -1212,6 +1386,16 @@ class WcdbBackend(AbstractWeChatBackend):
                 content = f"[语音] {voice_text}"
             else:
                 content = "[语音]"
+        elif local_type == 49:
+            # App message: red packet, transfer, file, link…  Keep a
+            # readable placeholder so summaries/commands never see XML.
+            app_info = _parse_app_message(content)
+            is_red_packet = _is_red_packet(app_info, app_subtype)
+            if is_red_packet:
+                red_packet_title = str(app_info.get("title") or "").strip()
+            content = _app_message_label(app_info, app_subtype)
+        elif local_type in _MEDIA_TYPE_LABELS:
+            content = _MEDIA_TYPE_LABELS[local_type]
         elif not content:
             return None
 
@@ -1370,6 +1554,10 @@ class WcdbBackend(AbstractWeChatBackend):
             "content": resolved_content,
             "mentioned_ids": mention_ids,
             "msg_type": local_type,
+            "app_subtype": app_subtype,
+            "app_type": str(app_info.get("app_type") or ""),
+            "is_red_packet": is_red_packet,
+            "red_packet_title": red_packet_title,
             "timestamp": ts,
             "is_at_mentioned": is_at,
             "is_group": True,

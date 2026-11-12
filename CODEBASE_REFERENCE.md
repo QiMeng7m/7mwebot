@@ -205,6 +205,9 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `MAX_DEDUP_SIZE` | `int` | `5000` | `src/wechat/wcdb_backend.py` | 去重集合最大容量 |
 | `MAX_CONSECUTIVE_ERRORS` | `int` | `5` | `src/wechat/wcdb_backend.py` | 连续错误触发重初始化阈值 |
 | `GROUP_NICKNAME_REFRESH_SEC` | `int` | `60` | `src/wechat/wcdb_backend.py` | 群昵称快照刷新间隔（秒）；新入群成员靠它补进 `data/group_nicknames.json` |
+| `_LOCAL_TYPE_MASK` | `int` | `0xFFFFFFFF` | `src/wechat/wcdb_backend.py` | 拆分 WeChat 4.x 打包的 `local_type`（高 32 位为 app 子类型） |
+| `_APP_MSG_LABELS` | `dict[str, str]` | `{"2000": "[转账]", "2001": "[红包]", ...}` | `src/wechat/wcdb_backend.py` | app 消息（`local_type=49`）子类型 → 占位符 |
+| `_MEDIA_TYPE_LABELS` | `dict[int, str]` | `{3: "[图片]", 43: "[视频]", ...}` | `src/wechat/wcdb_backend.py` | 媒体消息类型 → 占位符（避免 zstd hex 进入 AI 上下文） |
 | `WECHAT_PROCESS_NAMES` | `set` | `{"wechat.exe", "weixin.exe"}` | `src/wechat/window_controller.py` | 微信进程名集合 |
 | `MIN_WINDOW_WIDTH` / `MIN_WINDOW_HEIGHT` | `int` | `200` | `src/wechat/window_controller.py` | 窗口最小尺寸验证 |
 | `MSG_TYPE_MAP` | `dict` | 见代码 | `src/wechat/helpers.py` | 消息类型映射表 |
@@ -411,8 +414,14 @@ todo_delete_keywords: list[str] = [
 | `_poll_group(group_name, talker, callback)` | 轮询单个群聊消息；入群事件立即刷新该群昵称 | `group_name, talker, callback` | `None` |
 | `_handle_message(group_name, talker, standardized, callback)` | 处理单条消息(线程池) | `group_name, talker, standardized, callback` | `None` |
 | `_send_leave_warning(group_name, talker, member_name, kind="leave")` | 成员退群/被移出后向群里发送固定警告（`kind` 决定文案模板） | `group_name, talker, member_name: str, kind: str` | `None` |
-| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（读取 `local_type`；系统消息先 zstd 解压；发送者/@提及解析失败时回退群昵称） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
+| `_standardize(msg, group_name, talker)` | 标准化WCDB原始消息（拆分打包的 `local_type`；所有 zstd hex 内容先解压；`local_type=49` 解析 appmsg → `[红包]/[转账]/[引用]` 等占位符；媒体类型转 `[图片]` 等；发送者/@提及解析失败时回退群昵称） | `msg: dict, group_name: str, talker: str` | `dict \| None` |
 | `_decode_wcdb_content(content)` | 解码 WCDB 返回的 zstd 十六进制内容 | `content: str` | `str` |
+| `_split_local_type(local_type)` | 拆分打包类型为 `(base_type, app_subtype)`：`(2001<<32)\|49` → `(49, 2001)` | `local_type: object` | `tuple[int, int]` |
+| `_extract_xml_payload(content)` | 去掉群消息的 `wxid_xxx:` 前缀并返回 XML 部分；非 XML 内容返回空串或原文 | `content: str` | `str` |
+| `_parse_app_message(content)` | 解析 `local_type=49` 的 appmsg XML，返回 `app_type/title/url/is_red_packet`；ElementTree 失败时走正则回退 | `content: str` | `dict` |
+| `_parse_app_message_regex(xml_text)` | appmsg XML 的正则兜底解析（type/title/url + 红包标记） | `xml_text: str` | `dict` |
+| `_is_red_packet(app_info, app_subtype)` | 判断是否微信红包：`<type>2001</type>`、打包子类型 2001、tenpay 红包 URL；显式排除转账（2000） | `app_info: dict, app_subtype: int` | `bool` |
+| `_app_message_label(app_info, app_subtype)` | app 消息占位符：红包附自定义祝福语（`[红包] 恭喜发财`），通用标题「微信红包」省略；转账/文件/表情/引用/链接等映射 | `app_info: dict, app_subtype: int` | `str` |
 | `_extract_member_from_links(content, resolve_name=None)` | 从系统消息的 `<link>` 块提取成员，按链接语义排序（`names` > `adder` > `member` > `username`），**不按 XML 文档顺序**；跳过 `from`/`revoke` | `content: str, resolve_name: Callable \| None` | `tuple[str, str]` |
 | `_extract_join_member(content, resolve_name=None)` | 从入群系统消息（XML/纯文本）提取新成员；支持 `<link name="names">` 的 `<memberlist>`，跳过 `from`/`revoke` 链接，拒绝 `$names$` 等未解析占位符 | `content: str, resolve_name: Callable \| None` | `str` |
 | `_extract_join_member_info(content, resolve_name=None)` | 同 `_extract_join_member`，额外返回新成员 wxid | 同上 | `tuple[str, str]` |
@@ -684,6 +693,27 @@ todo_delete_keywords: list[str] = [
 >    查找**精确同名**的 `CheckBoxControl` → 校验“已选择1个联系人” →
 >    点「移出」。必须精确匹配，找不到/重名则放弃并取消
 > 5. 移出失败最多重试 3 次，之后放弃并记录错误日志
+>
+> **红包 / app 消息识别**（固定启用，无配置项）：
+> WeChat 4.x 的 app 消息把子类型打包进 `local_type` 高 32 位（红包 =
+> `(2001 << 32) | 49 = 8594229559345`），且 `message_content` 是 zstd hex。
+> `_standardize()` 的处理链：
+> 1. `_split_local_type()` 拆出 `(base_type, app_subtype)`，红包 → `(49, 2001)`，
+>    `msg_type` 统一为 49
+> 2. 所有类型先 `_decode_wcdb_content()` 解压（不再只限 `local_type=10000`）
+> 3. `local_type=49` 交给 `_parse_app_message()` 解析 appmsg XML
+> 4. `_is_red_packet()` 用三个独立信号识别红包：`<type>2001</type>`、
+>    打包子类型 2001、`wxhb_personalreceive`/`weixinhongbao` URL；
+>    转账（type 2000）同样带 `<wcpayinfo>`，被显式排除
+> 5. `_app_message_label()` 生成占位符：红包附自定义祝福语
+>    （`[红包] 恭喜发财`），通用标题「微信红包」省略；转账/文件/表情/
+>    引用/链接同样映射
+>
+> 输出新增 `app_subtype`、`app_type`、`is_red_packet`、`red_packet_title`
+> 字段。`_poll_group()` 去重后对红包打一次 INFO 日志
+> （`Red packet detected: group=... sender=... title=...`）。
+> 图片/视频/表情/位置等媒体消息也统一转成占位符，避免 zstd hex
+> 进入 AI 总结和积分计算。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -1406,8 +1436,12 @@ WcdbBackend.start(callback)
     "group_name": str,      # 群显示名
     "sender_id": str,       # 微信号（wxid_xxx 或自定义 ID，如 zy-519）
     "sender_name": str,     # 解析后的显示名
-    "content": str,         # 消息文本 ("[图片]", "[语音]" 等占位符)
-    "msg_type": int,        # 1=text, 3=image, 34=voice, 47=emoji, 49=link
+    "content": str,         # 消息文本 ("[图片]", "[语音]", "[红包]", "[引用]" 等占位符)
+    "msg_type": int,        # 1=text, 3=image, 34=voice, 47=emoji, 49=app(红包/链接), 10000=system
+    "app_subtype": int,     # 打包的高 32 位 app 子类型（红包=2001，非 app 消息=0）
+    "app_type": str,        # appmsg <type> 原文（如 "2001"/"2000"/"57"），非 app 消息=""
+    "is_red_packet": bool,  # 是否微信红包
+    "red_packet_title": str, # 红包祝福语（如 "恭喜发财"；通用标题 "微信红包" 保留原值）
     "timestamp": int,       # Unix 秒
     "is_at_mentioned": bool, # 是否 @机器人（含 BOT_ALIASES 中的别名）
     "mentioned_ids": list[str], # 正文中 @ 到的成员用户名（已排除机器人）
