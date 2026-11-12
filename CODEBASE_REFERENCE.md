@@ -117,6 +117,8 @@ grep "文件名" CODEBASE_REFERENCE.md
 | `WELCOME_ENABLED` | `bool` | `False` | `src/config.py` | `src/router.py:handle()` |
 | `INACTIVE_KICK_ENABLED` | `bool` | `False` | `src/config.py` | `src/wechat/wcdb_backend.py:_inactive_kick_enabled()` |
 | `INACTIVE_KICK_MINUTES` | `int` | `10` | `src/config.py` | `src/wechat/wcdb_backend.py:_kick_loop()` |
+| `RED_PACKET_AUTO_GRAB_ENABLED` | `bool` | `True` | `src/config.py` | `src/wechat/wcdb_backend.py:_red_packet_grab_enabled()` |
+| `RED_PACKET_MAX_AGE_SEC` | `int` | `120` | `src/config.py` | `src/wechat/wcdb_backend.py:_red_packet_max_age()` |
 | `STICKY_MENTION_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:MessageRouter.__init__()` |
 | `STICKY_MENTION_TTL_SEC` | `int` | `60` | `src/config.py` | `src/proactive/sticky.py:StickyMentionTracker.__init__()` |
 | `TODO_ENABLED` | `bool` | `True` | `src/config.py` | `src/router.py:MessageRouter.__init__()` |
@@ -431,6 +433,10 @@ todo_delete_keywords: list[str] = [
 | `_mention_name_for(reply, standardized)` | 决定回复中要真实 @ 的成员：入群事件→新成员，其他回复→文本中包含 `@发送者` 时用发送者 | `reply: str, standardized: dict` | `str \| None` |
 | `_inactive_kick_enabled()` | 读取 `INACTIVE_KICK_ENABLED` 配置 | 无 | `bool` |
 | `_inactive_kick_minutes()` | 读取 `INACTIVE_KICK_MINUTES`（默认 10） | 无 | `int` |
+| `_red_packet_grab_enabled()` | 读取 `RED_PACKET_AUTO_GRAB_ENABLED`（默认 True） | 无 | `bool` |
+| `_red_packet_max_age()` | 读取 `RED_PACKET_MAX_AGE_SEC`（默认 120） | 无 | `int` |
+| `_grab_red_packet(group_name, standardized)` | 线程池任务：在 `_window_lock` 内调用 `window.grab_red_packet()` 并记录成功/失败 | `group_name: str, standardized: dict` | `None` |
+| `_is_recent_within(msg, max_age_sec, now=None)` | 判断消息是否在指定时间窗口内（模块级，红包年龄过滤） | `msg: dict, max_age_sec: int, now: float \| None` | `bool` |
 | `_kick_loop()` | 后台线程：每 5 秒检查到期条目 | 无 | `None` |
 | `_process_due_kicks()` | 对到期且未发言的新成员执行移出（最多重试 3 次） | 无 | `None` |
 | `_member_spoke_since(chat_id, wxid, since_ts)` | 踢人前二次确认（tracker + messages 表），查不到时按“已发言”处理 | `chat_id, wxid: str, since_ts: int` | `bool` |
@@ -484,6 +490,15 @@ todo_delete_keywords: list[str] = [
 | `_cancel_removal(window)` | 点击选择器的「取消」 | `window: Control` | `None` |
 | `_click_relative(hwnd, dx, dy)` | 相对窗口右上角点击（仅用于打开聊天信息/移出入口） | `hwnd: int, dx: int, dy: int` | `None` |
 | `send_to_chat(group_name, text, max_retries=2, mention_name=None)` | 完整发送管道(主入口；`mention_name` 存在时走真实 @) | `group_name: str, text: str, max_retries: int, mention_name: str \| None` | `bool` |
+| `grab_red_packet(group_name, title="")` | 自动抢红包主入口：激活→导航群→定位红包气泡→点击→点「拆开」→确认结果窗口→关闭 | `group_name: str, title: str` | `bool` |
+| `_find_message_list(hwnd)` | UIA 定位聊天消息列表（`mmui::RecyclerListView`，优先 Name=消息） | `hwnd: int` | `Control \| None` |
+| `_find_red_packet_item(hwnd, title="")` | 倒序匹配红包气泡：Name 含「红包」/红包祝福语，或类名含 RedEnvelope/RedPacket/Hongbao | `hwnd: int, title: str` | `Control \| None` |
+| `_wait_red_packet_item(hwnd, title="", timeout=1.5)` | 轮询等待消息列表渲染出红包气泡 | `hwnd: int, title: str, timeout: float` | `Control \| None` |
+| `_claim_red_packet(hwnd, pid)` | 在 `mmui::PayRedEnvelopeInfoView` 内点「拆开」；无该视图时仅在主窗口匹配明确按钮名 | `hwnd: int, pid: int \| None` | `bool` |
+| `_click_open_button(root, allow_short=True)` | 遍历 UIA 子树点击「拆开/领取红包」（`allow_short=True` 时也接受「开」） | `root: Control, allow_short: bool` | `bool` |
+| `_find_wechat_control(pid, class_name)` | 在所有可见微信窗口中按类名查找控件 | `pid: int \| None, class_name: str` | `Control \| None` |
+| `_wait_red_packet_detail(pid)` | 等待领红包结果窗口 `mmui::PayRedEnvelopDetailWindow` | `pid: int \| None` | `Control \| None` |
+| `_close_red_packet_windows(hwnd, pid)` | 关闭结果窗口（关闭按钮→WM_CLOSE）；残留弹层用 Esc 关闭 | `hwnd: int, pid: int \| None` | `None` |
 | `_score_window(hwnd)` | 给窗口打分(模块级) | `hwnd: int` | `WindowCandidate` |
 | `_get_process_name(pid)` | 获取进程名(模块级) | `pid: int` | `str` |
 | `get_foreground_info()` | 获取前台窗口诊断信息 | 无 | `str` |
@@ -714,6 +729,26 @@ todo_delete_keywords: list[str] = [
 > （`Red packet detected: group=... sender=... title=...`）。
 > 图片/视频/表情/位置等媒体消息也统一转成占位符，避免 zstd hex
 > 进入 AI 总结和积分计算。
+>
+> **自动抢红包**（`RED_PACKET_AUTO_GRAB_ENABLED=true`，默认开启）：
+> `_poll_group()` 去重后，仅当红包时间戳在 `RED_PACKET_MAX_AGE_SEC`
+> （默认 120 秒）内、且发送者不是机器人自己时，把任务提交到线程池；
+> 任务在 `_window_lock` 内串行执行，避免与发送/移人操作交叉：
+> 1. `WeChatWindowController.grab_red_packet()`：激活微信 → 键盘导航到群
+> 2. `_find_message_list()` 定位 `mmui::RecyclerListView`（Name=消息），
+>    `_find_red_packet_item()` 倒序匹配红包气泡（Name 含「红包」或红包
+>    祝福语，或类名含 RedEnvelope/RedPacket/Hongbao），**匹配不到就放弃**，
+>    绝不盲点最后一条消息
+> 3. 点击气泡 → `_claim_red_packet()` 在
+>    `mmui::PayRedEnvelopeInfoView` 中点击「拆开」（兼容「领取红包」、「开」）
+> 4. `_wait_red_packet_detail()` 等待 `mmui::PayRedEnvelopDetailWindow`
+>    出现，出现才算成功
+> 5. `finally` 中 `_close_red_packet_windows()` 关闭结果窗口/残留弹层，
+>    保证后续发送能正常进行
+>
+> 启动回放最近 50 条消息时，超过 `RED_PACKET_MAX_AGE_SEC` 的历史红包
+> 会被跳过，不会重复点击已领完的红包。注意：抢红包依赖微信窗口可用
+> （可被最小化到任务栏，但需能激活）；需要人工用真实群红包验证一次。
 
 ### 2.24 `src/admin.py` (AdminCommandHandler)
 
@@ -2713,6 +2748,10 @@ PROACTIVE_RATE_BURST=8.5
 WELCOME_ENABLED=false
 INACTIVE_KICK_ENABLED=false
 INACTIVE_KICK_MINUTES=10
+
+# === 自动抢红包 ===
+RED_PACKET_AUTO_GRAB_ENABLED=true
+RED_PACKET_MAX_AGE_SEC=120
 
 # === 粘性 @mention ===
 STICKY_MENTION_ENABLED=true

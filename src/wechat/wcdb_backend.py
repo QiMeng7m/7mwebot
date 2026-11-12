@@ -318,13 +318,19 @@ def _mention_name_for(reply: str, standardized: dict) -> str | None:
 
 def _is_recent_event(msg: dict, now: float | None = None) -> bool:
     """Return True when a system event is fresh enough to act on."""
+    return _is_recent_within(msg, MAX_JOIN_AGE_SEC, now)
+
+
+def _is_recent_within(msg: dict, max_age_sec: int,
+                      now: float | None = None) -> bool:
+    """Return True when *msg* is at most *max_age_sec* old."""
     try:
         ts = int(msg.get("timestamp") or 0)
     except (TypeError, ValueError):
         return False
     if ts <= 0:
         return False
-    return (now if now is not None else time.time()) - ts <= MAX_JOIN_AGE_SEC
+    return (now if now is not None else time.time()) - ts <= max_age_sec
 
 
 # Backwards-compatible name (the join path used this before leave events).
@@ -550,6 +556,19 @@ class WcdbBackend(AbstractWeChatBackend):
         if self._voice_config is None:
             return 10
         return int(getattr(self._voice_config, "inactive_kick_minutes", 10))
+
+    def _red_packet_grab_enabled(self) -> bool:
+        return bool(
+            self._voice_config is not None
+            and getattr(
+                self._voice_config, "red_packet_auto_grab_enabled", True,
+            )
+        )
+
+    def _red_packet_max_age(self) -> int:
+        if self._voice_config is None:
+            return 120
+        return int(getattr(self._voice_config, "red_packet_max_age_sec", 120))
 
     # ── Public API ─────────────────────────────────────────────────
 
@@ -1075,6 +1094,23 @@ class WcdbBackend(AbstractWeChatBackend):
                     standardized.get("sender_name", "?"),
                     standardized.get("red_packet_title", ""),
                 )
+                if self._red_packet_grab_enabled() and not self._is_bot_sender(
+                    standardized.get("sender_name", ""),
+                ):
+                    max_age = self._red_packet_max_age()
+                    if _is_recent_within(standardized, max_age):
+                        if self._pool:
+                            self._pool.submit(
+                                self._grab_red_packet,
+                                group_name, standardized,
+                            )
+                        else:
+                            self._grab_red_packet(group_name, standardized)
+                    else:
+                        logger.debug(
+                            "Skipping stale red packet in '%s' (age>%ss)",
+                            group_name, max_age,
+                        )
 
             # Log only for newly seen messages — _standardize runs on every
             # poll for the same rows, so logging there flooded the console.
@@ -1238,6 +1274,35 @@ class WcdbBackend(AbstractWeChatBackend):
             # If we cannot verify, err on the side of not kicking anyone.
             logger.exception("Failed to verify activity for %s — skipping kick", wxid)
             return True
+
+    def _grab_red_packet(self, group_name: str,
+                         standardized: dict) -> None:
+        """Claim a detected red packet (runs in a thread-pool worker)."""
+        if not self._running:
+            return
+        title = str(standardized.get("red_packet_title") or "")
+        sender = str(standardized.get("sender_name") or "?")
+        try:
+            # Window operations (navigation, clicks, sends) must never
+            # interleave — the controller drives one foreground window.
+            with self._window_lock:
+                ok = self._window.grab_red_packet(group_name, title=title)
+        except Exception:
+            logger.exception(
+                "Red packet grab crashed: group='%s' sender='%s'",
+                group_name, sender,
+            )
+            return
+        if ok:
+            logger.info(
+                "Red packet grabbed: group='%s' sender='%s' title='%s'",
+                group_name, sender, title,
+            )
+        else:
+            logger.warning(
+                "Red packet grab FAILED: group='%s' sender='%s' title='%s'",
+                group_name, sender, title,
+            )
 
     def _handle_message(self, group_name: str, talker: str,
                         standardized: dict, callback: MessageCallback) -> None:

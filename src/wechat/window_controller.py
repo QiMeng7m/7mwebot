@@ -1021,6 +1021,18 @@ class WeChatWindowController:
     INFO_REMOVE_DY: int = 359    # from top edge
     REMOVAL_WINDOW_NAME: str = "微信移出群成员"
 
+    # ── Red packet grabbing (WeChat 4.x mmui) ──────────────────────
+    # A red packet bubble exposes no dedicated UIA class on every build,
+    # so it is matched by name ("红包" / the packet greeting) plus known
+    # class fragments.  The claim overlay and result window DO have
+    # stable classes (verified in Weixin.dll 4.2).
+    RED_PACKET_INFO_CLASS: str = "mmui::PayRedEnvelopeInfoView"
+    RED_PACKET_DETAIL_CLASS: str = "mmui::PayRedEnvelopDetailWindow"
+    RED_PACKET_LIST_NAME: str = "消息"
+    RED_PACKET_OPEN_BUTTONS: tuple[str, ...] = ("拆开", "领取红包", "开")
+    RED_PACKET_POPUP_DELAY: float = 0.6   # bubble click → claim overlay
+    RED_PACKET_RESULT_DELAY: float = 2.0  # 拆开 click → result window
+
     def _click_relative(self, hwnd: int, dx: int, dy: int) -> None:
         """Click at (right - dx, top + dy) in *hwnd*, restoring the cursor."""
         try:
@@ -1499,6 +1511,278 @@ class WeChatWindowController:
             f"group='{group_name}'"
         )
         return False
+
+    # ── Red packet grabbing ───────────────────────────────────────
+
+    def grab_red_packet(self, group_name: str, title: str = "") -> bool:
+        """Open and claim the newest red packet in *group_name*.
+
+        Flow: activate → navigate to the group → find the red packet
+        bubble in the message list → click it → click 「拆开」 in the
+        claim overlay → verify the result window appeared → close it.
+
+        The bubble is matched by accessibility name ("红包" or the
+        packet's greeting) so ordinary text/image messages are never
+        clicked by mistake.  Returns True only when the claim result
+        window actually appeared.
+        """
+        if not group_name:
+            logger.error("grab_red_packet: empty group_name")
+            return False
+
+        hwnd = self.find_hwnd()
+        if not hwnd:
+            logger.error("grab_red_packet: no WeChat window")
+            return False
+        if not self.activate(hwnd):
+            logger.error("grab_red_packet: activation failed")
+            return False
+
+        nav_result = self.navigate_to_chat(hwnd, group_name)
+        if not nav_result:
+            logger.error("grab_red_packet: navigation to '%s' failed", group_name)
+            return False
+        if type(nav_result) is int:
+            hwnd = nav_result
+        else:
+            hwnd = self._adopt_foreground_hwnd(hwnd, "before red packet grab")
+
+        pid = self._wechat_pid(hwnd)
+        try:
+            item = self._wait_red_packet_item(hwnd, title)
+            if item is None:
+                logger.warning(
+                    "No red packet bubble found in '%s' (title='%s')",
+                    group_name, title,
+                )
+                return False
+            if not self._click_control(item):
+                logger.warning("Failed to click red packet bubble in '%s'", group_name)
+                return False
+            time.sleep(self.RED_PACKET_POPUP_DELAY)
+
+            if not self._claim_red_packet(hwnd, pid):
+                logger.warning(
+                    "Red packet claim button not found in '%s'", group_name,
+                )
+                return False
+
+            detail = self._wait_red_packet_detail(pid)
+            if detail is None:
+                logger.warning(
+                    "Red packet result window did not appear in '%s'",
+                    group_name,
+                )
+                return False
+            logger.info(
+                "Red packet claimed: group='%s' title='%s'",
+                group_name, title,
+            )
+            return True
+        except Exception:
+            logger.exception("grab_red_packet failed for '%s'", group_name)
+            return False
+        finally:
+            self._close_red_packet_windows(hwnd, pid)
+            self.invalidate_cache()
+
+    def _find_message_list(self, hwnd: int):
+        """Return the chat message list control (not the session list)."""
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return None
+        try:
+            root = uia.ControlFromHandle(hwnd)
+            if not root:
+                return None
+            widest = None
+            for ctrl, _depth in uia.WalkControl(root, maxDepth=16):
+                try:
+                    if (ctrl.ClassName or "") != "mmui::RecyclerListView":
+                        continue
+                    if (ctrl.Name or "") == self.RED_PACKET_LIST_NAME:
+                        return ctrl
+                    rect = ctrl.BoundingRectangle
+                    width = rect.right - rect.left
+                    if widest is None or width > widest[0]:
+                        widest = (width, ctrl)
+                except Exception:
+                    continue
+            return widest[1] if widest else None
+        except Exception:
+            logger.debug("Failed to locate message list", exc_info=True)
+            return None
+
+    def _find_red_packet_item(self, hwnd: int, title: str = ""):
+        """Return the newest list item that is a red packet bubble."""
+        list_ctrl = self._find_message_list(hwnd)
+        if list_ctrl is None:
+            return None
+        try:
+            items = [
+                c for c in list_ctrl.GetChildren()
+                if (c.ControlTypeName or "") == "ListItemControl"
+            ]
+        except Exception:
+            logger.debug("Failed to enumerate chat items", exc_info=True)
+            return None
+
+        title = str(title or "").strip()
+        for item in reversed(items):
+            try:
+                name = (item.Name or "").strip()
+                class_name = item.ClassName or ""
+            except Exception:
+                continue
+            if "红包" in name:
+                return item
+            if title and title != "微信红包" and title in name:
+                return item
+            if any(
+                key in class_name
+                for key in ("RedEnvelope", "RedPacket", "Hongbao")
+            ):
+                return item
+        return None
+
+    def _wait_red_packet_item(self, hwnd: int, title: str = "",
+                              timeout: float = 1.5):
+        """Wait for the message list to render the red packet bubble."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            item = self._find_red_packet_item(hwnd, title)
+            if item is not None:
+                return item
+            time.sleep(0.2)
+        return None
+
+    def _claim_red_packet(self, hwnd: int, pid: Optional[int]) -> bool:
+        """Click the claim button in the red packet overlay."""
+        info_view = self._find_wechat_control(pid, self.RED_PACKET_INFO_CLASS)
+        if info_view is not None and self._click_open_button(
+            info_view, allow_short=True,
+        ):
+            return True
+        # Some builds attach the overlay to the main window without the
+        # InfoView class.  Only unambiguous button names are accepted here.
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return False
+        try:
+            main = uia.ControlFromHandle(hwnd)
+        except Exception:
+            return False
+        return self._click_open_button(main, allow_short=False)
+
+    def _click_open_button(self, root, allow_short: bool = True) -> bool:
+        """Click 「拆开」/「领取红包」 inside *root*'s subtree."""
+        if root is None:
+            return False
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return False
+        allowed = self.RED_PACKET_OPEN_BUTTONS if allow_short \
+            else ("拆开", "领取红包")
+        for ctrl, _depth in uia.WalkControl(root, maxDepth=16):
+            try:
+                if (ctrl.ControlTypeName or "") != "ButtonControl":
+                    continue
+                name = (ctrl.Name or "").strip()
+                if not name:
+                    continue
+                if name in allowed or "拆开" in name:
+                    if self._click_control(ctrl):
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def _find_wechat_control(self, pid: Optional[int], class_name: str):
+        """Find a UIA control by class name in any visible WeChat window."""
+        if pid is None:
+            return None
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return None
+        for hwnd in self._visible_wechat_hwnds(pid):
+            try:
+                root = uia.ControlFromHandle(hwnd)
+            except Exception:
+                continue
+            if not root:
+                continue
+            if (root.ClassName or "") == class_name:
+                return root
+            try:
+                for ctrl, _depth in uia.WalkControl(root, maxDepth=16):
+                    if (ctrl.ClassName or "") == class_name:
+                        return ctrl
+            except Exception:
+                continue
+        return None
+
+    def _wait_red_packet_detail(self, pid: Optional[int]):
+        """Wait for the claim result window; None when it never appears."""
+        deadline = time.time() + self.RED_PACKET_RESULT_DELAY
+        while time.time() < deadline:
+            detail = self._find_wechat_control(
+                pid, self.RED_PACKET_DETAIL_CLASS,
+            )
+            if detail is not None:
+                return detail
+            time.sleep(0.2)
+        return None
+
+    def _close_red_packet_windows(self, hwnd: int,
+                                  pid: Optional[int]) -> None:
+        """Close the result window / claim overlay so sends can proceed."""
+        if pid is None:
+            return
+        try:
+            import uiautomation as uia
+        except ImportError:
+            return
+
+        # Result window: click its 关闭 button, fall back to WM_CLOSE.
+        for win_hwnd in list(self._visible_wechat_hwnds(pid)):
+            try:
+                root = uia.ControlFromHandle(win_hwnd)
+                if not root or (root.ClassName or "") != self.RED_PACKET_DETAIL_CLASS:
+                    continue
+            except Exception:
+                continue
+            closed = False
+            try:
+                for ctrl, _depth in uia.WalkControl(root, maxDepth=8):
+                    if (
+                        (ctrl.ControlTypeName or "") == "ButtonControl"
+                        and (ctrl.Name or "").strip() == "关闭"
+                    ):
+                        closed = self._click_control(ctrl)
+                        break
+            except Exception:
+                pass
+            if not closed:
+                try:
+                    win32gui.PostMessage(win_hwnd, win32con.WM_CLOSE, 0, 0)
+                except Exception:
+                    logger.debug("Failed to close red packet window",
+                                 exc_info=True)
+            time.sleep(0.2)
+
+        # Overlay left open (claim failed / already claimed): Esc closes it.
+        if self._find_wechat_control(pid, self.RED_PACKET_INFO_CLASS) is not None:
+            try:
+                self.activate(hwnd)
+                press_key(0x1B)  # Esc
+                time.sleep(0.2)
+            except Exception:
+                logger.debug("Failed to dismiss red packet overlay",
+                             exc_info=True)
 
     # ── Internals ─────────────────────────────────────────────────
 
