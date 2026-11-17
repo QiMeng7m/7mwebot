@@ -258,14 +258,6 @@ class BotConfig:
     inactive_kick_enabled: bool = False
     inactive_kick_minutes: int = 10  # 1-1440
 
-    # === Red Packet Auto Grab ===
-    # When a red packet is detected in a monitored group, click it and
-    # press 「拆开」 automatically.  Only packets younger than
-    # red_packet_max_age_sec are claimed, so a restart does not replay
-    # old packets from the last 50 messages.
-    red_packet_auto_grab_enabled: bool = True
-    red_packet_max_age_sec: int = 120
-
     # === Sticky Mention ===
     # When a user sends @bot with no message text, enter sticky listening
     # mode.  The user's next message in the same group is treated as if it
@@ -721,8 +713,6 @@ def load_config() -> BotConfig:
         "welcome_enabled": os.getenv("WELCOME_ENABLED", "false").strip().lower() == "true",
         "inactive_kick_enabled": os.getenv("INACTIVE_KICK_ENABLED", "false").strip().lower() == "true",
         "inactive_kick_minutes": _safe_int(os.getenv("INACTIVE_KICK_MINUTES", "10"), 10, "INACTIVE_KICK_MINUTES"),
-        "red_packet_auto_grab_enabled": os.getenv("RED_PACKET_AUTO_GRAB_ENABLED", "true").strip().lower() == "true",
-        "red_packet_max_age_sec": _safe_int(os.getenv("RED_PACKET_MAX_AGE_SEC", "120"), 120, "RED_PACKET_MAX_AGE_SEC"),
         "sticky_mention_enabled": os.getenv("STICKY_MENTION_ENABLED", "true").strip().lower() == "true",
         "sticky_mention_ttl_sec": _safe_int(os.getenv("STICKY_MENTION_TTL_SEC", "60"), 60, "STICKY_MENTION_TTL_SEC"),
         # Group Todo
