@@ -1058,6 +1058,24 @@ Lv7 渔神）、`DUEL_RANKS`（青铜 ~ 战神）、`BASE_POWER=10`、
 `GATHER_CHARGE_MAX=6`、`GATHER_CHARGE_SECONDS=600`（每 10 分钟恢复 1 点采药体力）、`GATHER_MAX_HERBS=99`、`REBIRTH_COST=10000`、
 `MARKET_FEE_RATIO=0.05`、`MARKET_LIST_DAYS=7`。
 
+### 2.39 `src/db/group_migration.py` (群数据迁移)
+
+仅由 `tools/migrate_group.py` 调用，不在 Bot 运行链路中。
+
+| 函数 | 描述 | 参数 | 返回值 |
+|---|---|---|---|
+| `list_chat_tables(conn)` | 找出所有带 `chat_id` 列的用户表 | `conn: sqlite3.Connection` | `list[str]` |
+| `chat_row_counts(conn, chat_id)` | 统计某群在每张表的行数 | `conn, chat_id: str` | `dict[str, int]` |
+| `plan_db_migration(conn, source, target)` | 只读预演，返回源/目标行数和冲突表 | `conn, source: str, target: str` | `dict[str, Any]` |
+| `migrate_db(conn, source, target)` | 单事务把所有 `chat_id=source` 改绑为 `target`；目标群已有数据则拒绝 | `conn, source: str, target: str` | `dict[str, int]` |
+| `plan_json_migration(data_dir, source, target)` | 只读预演 JSON 缓存迁移条目数 | `data_dir, source, target` | `dict[str, int]` |
+| `migrate_json(data_dir, source, target, target_name="")` | 移动 `group_names/group_members/group_nicknames/welcome_templates/pending_kicks` 中的群条目 | `data_dir, source, target, target_name` | `dict[str, int]` |
+| `_validate_ids(source, target)` | 校验非空且不相同 | `source, target` | `None` |
+| `_json_move_count(path, source, target)` | 预演单个 JSON 文件的迁移条目数 | `path: Path, source, target` | `int` |
+| `_read_json(path)` / `_write_json(path, data)` | 原子读写 JSON | 见签名 | `dict \| None` / `None` |
+
+模块常量：`CHAT_ID="chat_id"`、`JSON_FILES`（5 个缓存文件）、`MigrationError`。
+
 ---
 
 ## 3. 模块间关系图
@@ -1075,7 +1093,8 @@ desktop.py  (桌面入口)
             ├── src/config.py  (配置加载 .env → BotConfig)
             ├── src/db/  (数据库层)
             │     ├── schema.py  → initialize_db()
-            │     └── store.py   → MessageStore
+            │     ├── store.py   → MessageStore
+            │     └── group_migration.py → 群数据迁移（仅 tools/migrate_group.py）
             ├── src/trigger/detector.py  (触发检测)
             ├── src/router.py  (消息路由)
             │       ├── src/proactive/  (主动发言)
@@ -2620,6 +2639,51 @@ Boss伤害 = roll_damage(攻击) × (1 + 功法 Boss 伤害加成)
 | `学习功法 名称` | 花费 500 灵石学习，首次学习自动设为当前 |
 | `切换功法 名称` | 选择打坐时积累进度的功法 |
 | `突破功法` | 进度满后尝试突破；失败进度减半，5 次掉层 |
+
+### 功能S: 群数据迁移（`tools/migrate_group.py`）
+
+用于把游戏群重建后的全部 bot 数据从旧群搬到新群。**仅本地数据操作**，
+不改变 Bot 运行逻辑，也不会把旧消息发到微信里。
+
+#### 迁移内容
+
+| 数据 | 位置 | 处理方式 |
+|---|---|---|
+| 聊天记录 / 积分 / 装备 / 钓鱼 / 副本 / Boss / 宠物 / 任务 / 待办 / 群记忆等 | `data/messages.db` 所有带 `chat_id` 列的表 | `UPDATE ... SET chat_id=<目标群>` |
+| 群名缓存 | `data/group_names.json` | 条目移动到目标群，更新显示名 |
+| 群成员 / 群昵称缓存 | `data/group_members.json`、`data/group_nicknames.json` | 条目移动到目标群（目标群已有昵称优先） |
+| 欢迎模板映射 | `data/welcome_templates.json` → `group_mapping` | 映射移动到目标群 |
+| 待清理成员 | `data/pending_kicks.json` | `源群|wxid` 键改为 `目标群|wxid` |
+
+#### 调用链
+
+```
+tools/migrate_group.py
+  ├── _resolve_groups()       → WcdbNativeClient.get_sessions()
+  │                             群名 → chat_id（NFKC 归一化 + 子串匹配）
+  ├── plan_db_migration()     → list_chat_tables() / chat_row_counts()
+  ├── plan_json_migration()   → _json_move_count()
+  ├── _backup()               → sqlite3 backup API + shutil.copy2
+  ├── migrate_db()            → BEGIN IMMEDIATE + 逐表 UPDATE + 校验
+  └── migrate_json()          → _read_json() / _write_json()
+```
+
+#### 安全约束
+
+- 默认只预演（不加 `--yes` 不写任何数据）。
+- 目标群已有任何数据时直接拒绝，避免主键/唯一索引冲突或积分混算。
+- 数据库更新在单个事务中完成，失败整体回滚。
+- 迁移前自动备份到 `data/migration_backup_<时间戳>/`。
+- 需要先停止 webot / 桌面程序，否则 `BEGIN IMMEDIATE` 会因数据库被占用失败。
+
+#### 命令
+
+```bash
+python tools/migrate_group.py --source "旧群名" --target "新群名"          # 预演
+python tools/migrate_group.py --source "旧群名" --target "新群名" --yes    # 正式迁移
+```
+
+迁移完成后，如需 bot 在新群工作，把新群加入 `.env` 的 `WECHAT_GROUPS`。
 
 ---
 
