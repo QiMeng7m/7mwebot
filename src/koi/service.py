@@ -1954,6 +1954,87 @@ class KoiService:
         lines.append("👉 每天起一卦，集齐六十四卦。")
         return "\n".join(lines)
 
+    # ── AI 闲聊上下文 ─────────────────────────────────────────────
+
+    def chat_context(self, msg: dict) -> str:
+        """Read-only snapshot of the player's 星盘/八字 data for AI chat.
+
+        Called for every @mention before the AI reply is generated.  This
+        must never mutate state: a casual "我今天适合做什么" must not
+        consume the daily 批命 or grant merit.  Only reads/computes.
+        """
+        if not self.enabled(msg):
+            return ""
+        chat_id, sender_id, _ = self._ids(msg)
+        day = local_day()
+        daily = self._daily(chat_id, sender_id, day)
+        profile = self._profile(chat_id, sender_id)
+        chart = self._chart(profile)
+        lines: list[str] = []
+
+        identity = []
+        if profile.get("sign"):
+            identity.append(f"本命星 {profile['sign']}")
+        if profile.get("mbti"):
+            identity.append(profile["mbti"])
+        if profile.get("noble_star"):
+            identity.append(f"本命宿 {profile['noble_star']}")
+        if profile.get("life_number"):
+            identity.append(f"生命数字 {profile['life_number']}")
+        if identity:
+            lines.append("身份：" + "｜".join(identity))
+
+        if chart:
+            lines.append(
+                f"八字：{self._birth_label(profile)}｜"
+                f"四柱 {self._pillar_text(chart)}｜"
+                f"五行 {self._element_text(chart)}｜"
+                f"日主 {chart['day_master']}"
+                f"（{chart['day_master_element']}）｜"
+                f"{chart['dominant']}旺｜{chart['quadrant']}命｜"
+                f"生肖 {chart['zodiac']}"
+            )
+        else:
+            lines.append("八字：还没设置出生时间")
+
+        sign_id = int(daily.get("sign_id") or 0)
+        if sign_id:
+            sign = sign_by_id(sign_id) or {}
+            lines.append(
+                f"今日签：{daily.get('sign_level') or ''}"
+                f"「{sign.get('name', '')}」｜宜：{daily.get('yi') or '—'}"
+            )
+        else:
+            lines.append("今日签：还没求签")
+
+        balance = self._store.balance(chat_id, sender_id)
+        fate = self._store.fortune(chat_id, sender_id)
+        lines.append(
+            f"香火 {balance}｜气运 {fate}"
+            f"（{rules.rank_for(fate)['name']}）"
+            f"｜欧气 {self._luck_value(daily)}"
+        )
+
+        if chart:
+            seed = self._score_seed(sender_id, profile)
+            today_scores = bazi_rules.daily_scores(chart, day, seed)
+            high, low = self._score_extremes(today_scores)
+            lines.append("今日五维：" + self._score_line(today_scores))
+            lines.append(f"{high}；{low}")
+
+        hexagram_id = int(daily.get("hexagram_id") or 0)
+        cast = (self._hexagram_from_id(hexagram_id) if hexagram_id
+                else bazi_rules.hexagram(chart, f"{sender_id}:{day}")
+                if chart else None)
+        if cast:
+            lines.append(f"今日卦象：{cast['name']}（{cast['symbol']}）")
+        lines.append(
+            "今日批命：已批（不要重复批）"
+            if int(daily.get("fortune_used") or 0)
+            else "今日批命：还没批（可以邀请发「批命」看完整解读）"
+        )
+        return "\n".join(lines)
+
     # ── 聊天积德 ─────────────────────────────────────────────────
 
     def award_chat_merit(self, msg: dict) -> int:

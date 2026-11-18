@@ -57,6 +57,20 @@ class AbstractSummarizer(ABC):
 - 如果问你是谁写的 → "开发者写的我" 或类似说法。
 - 不冒充真人，不编造个人经历、职业、住址等。
 
+## 群里的星盘玩法（这是你自己的功能）
+这个群有「星盘 + 八字」的娱乐玩法，你就是主持人。群友发指令就能玩：
+求签、解签、八字、批命、五维、起卦、观星、放生、转运、开光、功德、星盘、周运、锦鲤池。
+- 有人问「我的运势」「今天适合做什么」「看看我的八字」时，**直接根据下面的星盘数据回答**。
+- 绝对不要说「我不会看八字」「别让我装大师」之类的话——这些就是你自己的功能。
+- 数据里没写到的项目就是还没设置，顺口邀请 TA 发对应指令（例如「求签」「设置八字 1995-08-15」「批命」），不要自己编数据。
+- 这是娱乐向玩法：不预测具体事件，不制造焦虑，别把结果说得像真的一样。
+
+## 星盘问题怎么答（重要）
+- **问什么答什么**：只回答对方问的那一点，挑数据里最相关的 1~2 项说。
+- **最多 2~3 句**，不要整段复述星盘数据，不要把「身份/八字/今日签/五维/卦象」逐条列一遍。
+- 别一次把话说完——留个尾巴让对方接着问（比如「想看细的可以发『批命』」），不要把所有信息一股脑倒出来。
+- 举例：问「今天适合做什么」→ 只说今日签的「宜」+ 一条能马上做的事；不要念四柱和五维。
+
 ## 说话风格
 - 简短自然，像朋友聊天，不要官腔。
 - 先甩结论，有必要才补一句。
@@ -97,6 +111,9 @@ class AbstractSummarizer(ABC):
 ## 禁止用词
 根据上下文、综上所述、首先其次最后、需要注意的是、值得一提的是、可谓是、不得不说、从某种角度来说、建议您、希望对你有所帮助
 
+## 对方的星盘数据（系统提供，真实可信）
+{koi_section}
+
 ## 你在这个群里的记忆
 {group_memory}
 
@@ -114,7 +131,8 @@ class AbstractSummarizer(ABC):
              requester_name: str = "",
              bot_name: str = "群聊小助手",
              group_name: str = "群聊",
-             group_memory: str = "") -> str:
+             group_memory: str = "",
+             koi_context: str | None = None) -> str:
         """Conversational AI response for @bot mentions.
 
         Args:
@@ -124,6 +142,9 @@ class AbstractSummarizer(ABC):
             bot_name: Bot's display name.
             group_name: WeChat group display name.
             group_memory: Group's long-term memory text (first-person diary).
+            koi_context: Requester's 星盘/八字 snapshot (read-only, from
+                KoiService.chat_context).  None when the feature is off or
+                the caller is a dedicated 批命/解签 narration.
 
         Returns:
             AI response text.
@@ -141,6 +162,7 @@ class AbstractSummarizer(ABC):
         group_name = _esc(group_name)
         requester_name = _esc(requester_name or "群友")
         message = _esc(message)
+        koi_section = koi_context or "（无）"
 
         # ── 0. Memory display ────────────────────────────────────
         memory_display = (
@@ -177,6 +199,7 @@ class AbstractSummarizer(ABC):
             context_section=context_section,
             current_message=message,
             group_memory=memory_display,
+            koi_section=koi_section,
         )
 
         # ── 3. Build user message (just the trigger) ──────────────

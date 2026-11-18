@@ -723,6 +723,37 @@ class BaziTests(KoiTestBase):
         reading = service.read_sign(self.msg)
         self.assertIn("解读：", reading)
 
+    def test_chat_context_includes_chart_and_is_read_only(self):
+        self.service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        self.service.sign(self.msg)
+        balance = self.store.balance("1@chatroom", "wxid_a")
+
+        context = self.service.chat_context(self.msg)
+
+        self.assertIn("四柱", context)
+        self.assertIn("今日签", context)
+        self.assertIn("今日五维", context)
+        self.assertIn("今日卦象", context)
+        self.assertIn("今日批命：还没批", context)
+        # Read-only: must not grant merit or consume daily chances.
+        self.assertEqual(
+            self.store.balance("1@chatroom", "wxid_a"), balance)
+        daily = self.store.get_daily("1@chatroom", "wxid_a")
+        self.assertEqual(int(daily.get("fortune_used") or 0), 0)
+        self.assertEqual(int(daily.get("hexagram_used") or 0), 0)
+
+    def test_chat_context_without_profile_invites_setup(self):
+        context = self.service.chat_context(self.msg)
+
+        self.assertIn("还没设置出生时间", context)
+        self.assertIn("还没求签", context)
+        self.assertNotIn("四柱", context)
+
+    def test_chat_context_disabled_outside_koi_groups(self):
+        self.config.koi_groups = ["其他群"]
+
+        self.assertEqual(self.service.chat_context(self.msg), "")
+
 
 if __name__ == "__main__":
     unittest.main()

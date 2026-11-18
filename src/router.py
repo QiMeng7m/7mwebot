@@ -720,6 +720,14 @@ class MessageRouter:
             )
 
         try:
+            # 星盘/八字数据：只读快照，不消耗每日批命次数。
+            koi_context = None
+            if self._koi_service is not None:
+                try:
+                    koi_context = self._koi_service.chat_context(msg) or None
+                except Exception:
+                    logger.exception("Koi chat context failed")
+
             ai_reply = self._summarizer.chat(
                 message=clean_content,
                 context_messages=context,
@@ -727,6 +735,7 @@ class MessageRouter:
                 bot_name=self._config.bot_display_name,
                 group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
                 group_memory=self._get_group_memory(msg["chat_id"]),
+                koi_context=koi_context,
             )
             ai_reply = self._nicks.resolve_wxids(ai_reply)
             # Guard against empty AI reply — sending a bare @mention is confusing

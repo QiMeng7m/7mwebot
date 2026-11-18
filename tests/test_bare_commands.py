@@ -28,6 +28,15 @@ class _StubSummarizer:
         return ""
 
 
+class _RecordingSummarizer(_StubSummarizer):
+    def __init__(self):
+        self.chat_kwargs = {}
+
+    def chat(self, *args, **kwargs):
+        self.chat_kwargs = kwargs
+        return "AI 回复"
+
+
 class BareCommandRoutingTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -139,6 +148,22 @@ class BareCommandRoutingTests(unittest.TestCase):
         msg = self._message("帮助")
         msg["timestamp"] = self.now - 3600
         self.assertIsNone(self.router.handle(msg))
+
+    def test_mention_chat_receives_koi_snapshot(self):
+        self.assertIsNotNone(self.router._koi_service)
+        setup = self._message("设置八字 1995-08-15 08:30")
+        self.router._koi_service.set_bazi(setup, "设置八字 1995-08-15 08:30")
+
+        recorder = _RecordingSummarizer()
+        self.router._summarizer = recorder
+        self.nicks.resolve_wxids.side_effect = lambda text: text
+
+        reply = self.router.handle(self._message(
+            "@小柒 根据我的运势，今天适合做什么", is_at=True))
+
+        self.assertIn("AI 回复", reply)
+        self.assertIn("四柱", recorder.chat_kwargs["koi_context"])
+        self.assertIn("今日五维", recorder.chat_kwargs["koi_context"])
 
 
 if __name__ == "__main__":
