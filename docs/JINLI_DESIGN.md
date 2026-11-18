@@ -225,7 +225,7 @@
 - **降级**：AI 关闭、超时或无返回时，自动使用本地固定模板；功能不中断。
 - **成本**：批命/解签均为每日 1 次，调用量很小。
 - **约束**：提示词要求不预测具体事件、不制造焦虑、不提及群聊或其他人。
-- **复用 Claude Code 配置**：设置 `CLAUDE_CODE_AI=true` 后，项目从 `~/.claude/settings.json` 读取 `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`。默认走网关的 `/v1` OpenAI 兼容接口；可用 `CLAUDE_CODE_AI_MODE=anthropic` 切换到 Anthropic 原生接口。
+
 
 ---
 
@@ -351,7 +351,7 @@ koi_fortune_luck: int = 3
 
 - `tests/test_koi.py`：规则、服务、指令、星盘、锦鲤池、周运、社交、身份、八字、八卦、路由器；
 - `tests/test_functional.py`：`/api/koi` 与控制台「星盘」页；
-- 全量：**650 passed, 4 skipped**。
+- 全量：**645 passed, 4 skipped**。
 
 ---
 

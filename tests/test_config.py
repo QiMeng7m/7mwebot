@@ -1,9 +1,7 @@
 """Tests for config.py — loading, validation, .env resolution, and helpers."""
 
-import json
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -807,90 +805,6 @@ class LoadConfigValidationIntegrationTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 load_config()
             self.assertIn("STICKY_MENTION_TTL_SEC", str(ctx.exception))
-
-
-class ClaudeCodeAiTests(unittest.TestCase):
-    """CLAUDE_CODE_AI reuses ~/.claude/settings.json."""
-
-    def _settings(self, tmp, *, key="test-key",
-                  base="http://gateway.local", model="deepseek-flash"):
-        path = Path(tmp) / "settings.json"
-        path.write_text(json.dumps({
-            "env": {
-                "ANTHROPIC_API_KEY": key,
-                "ANTHROPIC_BASE_URL": base,
-            },
-            "model": model,
-        }), encoding="utf-8")
-        return str(path)
-
-    def test_reuse_openai_mode(self):
-        from src.config import load_config
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._settings(tmp)
-            with patch.dict(os.environ, {
-                "CLAUDE_CODE_AI": "true",
-                "CLAUDE_CODE_SETTINGS_PATH": path,
-                "AI_ENABLED": "true",
-            }, clear=True):
-                cfg = load_config()
-        self.assertTrue(cfg.claude_code_ai)
-        self.assertEqual(cfg.ai_backend, "openai")
-        self.assertEqual(cfg.openai_base_url, "http://gateway.local/v1")
-        self.assertEqual(cfg.openai_model, "deepseek-flash")
-        self.assertEqual(cfg.openai_api_key, "test-key")
-
-    def test_reuse_anthropic_mode(self):
-        from src.config import load_config
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._settings(tmp)
-            with patch.dict(os.environ, {
-                "CLAUDE_CODE_AI": "true",
-                "CLAUDE_CODE_AI_MODE": "anthropic",
-                "CLAUDE_CODE_SETTINGS_PATH": path,
-                "AI_ENABLED": "true",
-            }, clear=True):
-                cfg = load_config()
-        self.assertEqual(cfg.ai_backend, "claude")
-        self.assertEqual(cfg.anthropic_base_url, "http://gateway.local")
-        self.assertEqual(cfg.summarize_model, "deepseek-flash")
-        self.assertEqual(cfg.anthropic_api_key, "test-key")
-
-    def test_openai_base_override(self):
-        from src.config import load_config
-        with tempfile.TemporaryDirectory() as tmp:
-            path = self._settings(tmp)
-            with patch.dict(os.environ, {
-                "CLAUDE_CODE_AI": "true",
-                "CLAUDE_CODE_SETTINGS_PATH": path,
-                "CLAUDE_CODE_AI_OPENAI_BASE_URL": "http://custom.local/v1",
-                "AI_ENABLED": "true",
-            }, clear=True):
-                cfg = load_config()
-        self.assertEqual(cfg.openai_base_url, "http://custom.local/v1")
-        self.assertEqual(cfg.openai_model, "deepseek-flash")
-
-    def test_missing_settings_raises(self):
-        from src.config import load_config
-        with patch.dict(os.environ, {
-            "CLAUDE_CODE_AI": "true",
-            "CLAUDE_CODE_SETTINGS_PATH": "/nonexistent/settings.json",
-            "AI_ENABLED": "true",
-        }, clear=True):
-            with self.assertRaises(RuntimeError) as ctx:
-                load_config()
-        self.assertIn("CLAUDE_CODE_AI", str(ctx.exception))
-
-    def test_flag_off_keeps_explicit_backend(self):
-        from src.config import load_config
-        with patch.dict(os.environ, {
-            "CLAUDE_CODE_AI": "false",
-            "ANTHROPIC_API_KEY": "sk-ant-test",
-            "AI_BACKEND": "claude",
-        }, clear=True):
-            cfg = load_config()
-        self.assertFalse(cfg.claude_code_ai)
-        self.assertEqual(cfg.ai_backend, "claude")
 
 
 if __name__ == "__main__":
