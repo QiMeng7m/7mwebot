@@ -55,10 +55,11 @@ _QUADRANT_LABEL = {
 
 class KoiService:
     def __init__(self, store: KoiStore, config,
-                 rng: random.Random | None = None):
+                 rng: random.Random | None = None, narrator=None):
         self._store = store
         self._config = config
         self._rng = rng or random.Random()
+        self._narrator = narrator
 
     # ── Context helpers ───────────────────────────────────────────
 
@@ -90,6 +91,17 @@ class KoiService:
             chat_id, sender_id, sender_name, "merit", welcome,
             "welcome", ref_id="welcome",
         )
+
+    def _narrate(self, prompt: str, msg: dict) -> str:
+        """Ask the configured AI for prose; return '' on any failure."""
+        if self._narrator is None:
+            return ""
+        try:
+            text = self._narrator(prompt, msg)
+            return str(text or "").strip()
+        except Exception:
+            logger.exception("Koi narration failed")
+            return ""
 
     def _daily(self, chat_id: str, sender_id: str, day: str) -> dict:
         row = dict(_EMPTY_DAILY)
@@ -355,12 +367,22 @@ class KoiService:
             return "今天还没求签，先发「求签」再来解签。"
         sign = sign_by_id(int(daily["sign_id"])) or {}
         level = str(daily.get("sign_level") or "")
+        yi = str(daily.get("yi") or "")
+        prompt = (
+            "你是一位娱乐向的解签先生。请只根据下面这支签，写 2~3 句解读。\n"
+            f"签等级：{level}\n签文：{sign.get('name', '')}\n"
+            f"签语：{sign.get('phrase', '')}\n今日宜：{yi}\n"
+            "要求：不要预测具体事件，不要制造焦虑，不要提及群聊或其他人；"
+            "语气轻松，像朋友聊天，最后给一句可执行的小建议。"
+        )
+        reading = self._narrate(prompt, msg) or \
+            rules.LEVEL_ADVICE.get(level, "顺势而为。")
         return (
             f"{rules.level_emoji(level)}{level}「{sign.get('name', '')}」\n"
             f"{sign.get('phrase', '')}\n"
-            f"解读：{rules.LEVEL_ADVICE.get(level, '顺势而为。')}\n"
-            f"今日宜：{daily.get('yi', '')}\n"
-            f"👉 {self._hint(str(daily.get('yi') or ''))}"
+            f"解读：{reading}\n"
+            f"今日宜：{yi}\n"
+            f"👉 {self._hint(yi)}"
         )
 
     # ── 观星 / 星骰 ──────────────────────────────────────────────
@@ -1698,6 +1720,66 @@ class KoiService:
             f"👉 发「八字」看天圆地方盘，发「批命」看今日解读。"
         )
 
+    @staticmethod
+    def _score_seed(sender_id: str, profile: dict) -> str:
+        return (f"{sender_id}:{profile.get('birth_year')}-"
+                f"{profile.get('birth_month')}-{profile.get('birth_day')}")
+
+    @staticmethod
+    def _score_line(values: dict[str, int]) -> str:
+        return "｜".join(
+            f"{label} {values.get(key, 50)}"
+            for key, label in bazi_rules.SCORE_KEYS)
+
+    @staticmethod
+    def _score_extremes(values: dict[str, int]) -> tuple[str, str]:
+        ordered = sorted(
+            bazi_rules.SCORE_KEYS,
+            key=lambda item: (values.get(item[0], 0), item[0]),
+            reverse=True,
+        )
+        high_key, high_label = ordered[0]
+        low_key, low_label = ordered[-1]
+        high = (f"最旺：{high_label} {values[high_key]} — "
+                f"{bazi_rules.score_comment(high_key, values[high_key])}")
+        low = (f"最弱：{low_label} {values[low_key]} — "
+               f"{bazi_rules.score_comment(low_key, values[low_key])}")
+        return high, low
+
+    def scores_card(self, msg: dict) -> str | None:
+        if not self.enabled(msg):
+            return None
+        chat_id, sender_id, sender_name = self._ids(msg)
+        self._ensure_member(chat_id, sender_id, sender_name)
+        profile = self._profile(chat_id, sender_id)
+        chart = self._chart(profile)
+        if chart is None:
+            return (
+                "五维评分需要出生时间。\n"
+                "👉 发「设置八字 1995-08-15」，有时辰更好："
+                "「设置八字 1995-08-15 08:30」。"
+            )
+        seed = self._score_seed(sender_id, profile)
+        base = bazi_rules.scores(chart, seed)
+        today = bazi_rules.daily_scores(chart, local_day(), seed)
+        lines = [f"【五维评分】{self._birth_label(profile)}"]
+        for key, label in bazi_rules.SCORE_KEYS:
+            score = base[key]
+            lines.append(
+                f"{label} {score} {bazi_rules.score_bar(score)} — "
+                f"{bazi_rules.score_comment(key, score)}")
+        high, low = self._score_extremes(base)
+        lines.append(high)
+        lines.append(low)
+        drift = []
+        for key, label in bazi_rules.SCORE_KEYS:
+            arrow = "↑" if today[key] > base[key] else (
+                "↓" if today[key] < base[key] else "—")
+            drift.append(f"{label} {today[key]}{arrow}")
+        lines.append("今日：" + "｜".join(drift))
+        lines.append("👉 发「批命」看今日整体解读。")
+        return "\n".join(lines)
+
     def bazi_card(self, msg: dict) -> str | None:
         if not self.enabled(msg):
             return None
@@ -1722,6 +1804,8 @@ class KoiService:
                 f"今日卦象：{cast['name']}（{cast['symbol']}）"
                 f"｜未起卦，先给你排一卦")
         palace = "\n".join(bazi_rules.palace(chart))
+        base_scores = bazi_rules.scores(
+            chart, self._score_seed(sender_id, profile))
         return (
             f"【命盘】{self._birth_label(profile)}\n"
             f"四柱：{self._pillar_text(chart)}\n"
@@ -1729,11 +1813,12 @@ class KoiService:
             f"{chart['dominant']}旺｜{chart['quadrant']}命\n"
             f"生肖：{chart['zodiac']}｜日主：{chart['day_master']}"
             f"（{chart['day_master_element']}）\n"
+            f"五维：{self._score_line(base_scores)}\n"
             f"天圆地方（洛书九宫）：\n{palace}\n"
             f"{cast_line}\n"
             f"本命宿：{profile.get('noble_star') or '—'}"
             f"｜生命数字：{profile.get('life_number') or '—'}\n"
-            f"👉 发「批命」看今日解读，发「起卦」收卦谱。"
+            f"👉 发「五维」看详细评分，发「批命」看今日解读。"
             f"（娱乐向，不必当真）"
         )
 
@@ -1806,11 +1891,40 @@ class KoiService:
         cast = bazi_rules.hexagram(
             chart, f"{sender_id}:{day}:{profile.get('birth_year')}-"
                    f"{profile.get('birth_month')}-{profile.get('birth_day')}")
-        lines = [f"【批命】{day}"]
-        lines.extend(bazi_rules.reading(
-            chart, cast, bazi_rules.today_ganzhi()))
+        seed = self._score_seed(sender_id, profile)
+        today_scores = bazi_rules.daily_scores(chart, day, seed)
+        today_stem, today_branch = bazi_rules.today_ganzhi()
+        prompt = (
+            "你是一位娱乐向命理师。请根据以下结构化信息，写 3~4 句今日批命。\n"
+            f"四柱：{self._pillar_text(chart)}\n"
+            f"五行：{self._element_text(chart)}；日主 {chart['day_master']}；"
+            f"{chart['dominant']}旺；{chart['quadrant']}命；"
+            f"生肖 {chart['zodiac']}\n"
+            f"今日干支：{today_stem}{today_branch}\n"
+            f"本卦：{cast['name']}；变卦：{cast['changed']}\n"
+            f"今日五维：{self._score_line(today_scores)}\n"
+            "要求：不要修改数字；不预测具体事件；不制造焦虑；"
+            "不提及群聊或其他人；语气轻松，像朋友聊天，"
+            "最后给一句可执行的小建议。"
+        )
+        ai_reading = self._narrate(prompt, msg)
+        lines = [
+            f"【批命】{day}",
+            f"日主 {chart['day_master']}{chart['day_master_element']}｜"
+            f"{chart['dominant']}旺｜{chart['quadrant']}命",
+        ]
+        if ai_reading:
+            lines.append(ai_reading)
+        else:
+            lines.extend(bazi_rules.reading(
+                chart, cast, (today_stem, today_branch)))
         lines.append(
             f"本卦：{cast['name']}｜变卦：{cast['changed']}")
+        lines.append("【今日五维】")
+        lines.append(self._score_line(today_scores))
+        high, low = self._score_extremes(today_scores)
+        lines.append(high)
+        lines.append(low)
         gain = int(getattr(self._config, "koi_fortune_merit", 10))
         luck = int(getattr(self._config, "koi_fortune_luck", 3))
         self._store.grant(

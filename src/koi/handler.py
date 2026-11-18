@@ -30,6 +30,8 @@ EXACT: dict[str, str] = {
     "命格": "profile",
     "八字": "bazi_card",
     "命盘": "bazi_card",
+    "五维": "scores_card",
+    "分支评分": "scores_card",
     "批命": "daily_fortune",
     "算命": "daily_fortune",
     "起卦": "cast_hexagram",

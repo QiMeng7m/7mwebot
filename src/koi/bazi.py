@@ -88,6 +88,121 @@ ELEMENT_ADVICE = {
     "水": "水旺：适合思考、蓄力与灵活变通。",
 }
 
+# ── 五维评分 ────────────────────────────────────────────────────
+
+SCORE_KEYS: tuple[tuple[str, str], ...] = (
+    ("love", "爱情"), ("career", "事业"), ("study", "学习"),
+    ("wealth", "财富"), ("social", "人际"),
+)
+
+ELEMENT_TO_SCORE = {
+    "水": "love", "金": "career", "木": "study",
+    "土": "wealth", "火": "social",
+}
+
+ZODIAC_SCORE = {
+    "鼠": {"study": 4, "wealth": 3},
+    "牛": {"career": 5, "study": 2},
+    "虎": {"career": 4, "social": 4},
+    "兔": {"love": 5, "social": 3},
+    "龙": {"career": 5, "wealth": 3},
+    "蛇": {"study": 4, "love": 2},
+    "马": {"social": 5, "career": 2},
+    "羊": {"love": 4, "study": 3},
+    "猴": {"social": 4, "wealth": 3},
+    "鸡": {"career": 4, "study": 3},
+    "狗": {"love": 3, "social": 4},
+    "猪": {"wealth": 4, "love": 3},
+}
+
+QUADRANT_SCORE = {
+    "青龙": "study", "白虎": "career",
+    "朱雀": "social", "玄武": "love",
+}
+
+SCORE_COMMENTS = {
+    "love": {
+        "high": "桃花有动静，适合主动表达。",
+        "mid": "关系平稳，多聊两句会更顺。",
+        "low": "别急着推进，先把自己过好。",
+    },
+    "career": {
+        "high": "事业在线，适合争取机会。",
+        "mid": "稳中有进，按计划推进就好。",
+        "low": "先守住基本盘，别做高风险决定。",
+    },
+    "study": {
+        "high": "学习状态好，适合啃硬骨头。",
+        "mid": "按节奏来，每天一点就够。",
+        "low": "注意力容易散，先做最简单的一件事。",
+    },
+    "wealth": {
+        "high": "财运有亮点，适合整理资产。",
+        "mid": "收支平稳，别冲动消费。",
+        "low": "钱包偏紧，今天少做非必要支出。",
+    },
+    "social": {
+        "high": "人缘在线，适合组局或求助。",
+        "mid": "社交平稳，保持自己的节奏。",
+        "low": "少凑热闹，安静做事更划算。",
+    },
+}
+
+
+def _score_tier(score: int) -> str:
+    if score >= 78:
+        return "high"
+    if score >= 52:
+        return "mid"
+    return "low"
+
+
+def score_comment(key: str, score: int) -> str:
+    return SCORE_COMMENTS.get(key, {}).get(_score_tier(score), "")
+
+
+def score_bar(score: int) -> str:
+    filled = max(1, min(10, int(round(int(score) / 10))))
+    return "█" * filled + "░" * (10 - filled)
+
+
+def scores(chart: dict, seed: str = "") -> dict[str, int]:
+    """Stable five-dimension scores from the birth chart."""
+    counts = chart["elements"]
+    result = {key: 50 for key, _label in SCORE_KEYS}
+
+    for element, count in counts.items():
+        key = ELEMENT_TO_SCORE[element]
+        result[key] += int(count) * 7
+
+    result[ELEMENT_TO_SCORE[chart["day_master_element"]]] += 10
+    for key, bonus in ZODIAC_SCORE.get(chart["zodiac"], {}).items():
+        result[key] += bonus
+    quadrant_key = QUADRANT_SCORE.get(chart["quadrant"])
+    if quadrant_key:
+        result[quadrant_key] += 4
+
+    for key, _label in SCORE_KEYS:
+        result[key] += _stable(f"{seed}:{key}") % 21 - 10
+    return {
+        key: max(20, min(96, int(value)))
+        for key, value in result.items()
+    }
+
+
+def daily_scores(chart: dict, day: str, seed: str = "") -> dict[str, int]:
+    base = scores(chart, seed)
+    result = {}
+    for key, _label in SCORE_KEYS:
+        drift = _stable(f"{seed}:{day}:{key}") % 19 - 9
+        result[key] = max(15, min(99, base[key] + drift))
+    return result
+
+
+def score_label(key: str) -> str:
+    return dict(SCORE_KEYS).get(key, key)
+
+
 
 def _stable(seed: str) -> int:
     return int(hashlib.sha256(str(seed).encode("utf-8")).hexdigest()[:12], 16)

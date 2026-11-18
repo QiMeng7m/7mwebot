@@ -108,7 +108,9 @@ class MessageRouter:
                 koi_store = KoiStore(
                     store.conn, lock=getattr(store, "lock", None),
                 )
-                self._koi_service = KoiService(koi_store, config)
+                self._koi_service = KoiService(
+                    koi_store, config, narrator=self._koi_narrate,
+                )
                 self._koi_handler = KoiHandler(
                     self._koi_service, nickname_service=nickname_service,
                 )
@@ -539,6 +541,30 @@ class MessageRouter:
     def _ai_enabled(self) -> bool:
         """Master AI switch (AI_ENABLED). False → no paid API calls."""
         return bool(getattr(self._config, "ai_enabled", True))
+
+    def _koi_narrate(self, prompt: str, msg: dict) -> str:
+        """Prose-only AI call for 解签 / 批命. Never sees group context."""
+        if not self._ai_enabled:
+            return ""
+        try:
+            text = self._summarizer.chat(
+                message=prompt,
+                context_messages=None,
+                requester_name=msg.get("sender_name", ""),
+                bot_name=self._config.bot_display_name,
+                group_name=msg.get("group_name")
+                or msg.get("chat_id") or "群聊",
+                group_memory="",
+            )
+            text = str(text or "").strip()
+            try:
+                text = self._nicks.resolve_wxids(text)
+            except Exception:
+                pass
+            return text or ""
+        except Exception:
+            logger.exception("Koi AI narration failed")
+            return ""
 
     def _get_group_memory(self, chat_id: str) -> str:
         """Return the group's memory text, or empty string if none."""

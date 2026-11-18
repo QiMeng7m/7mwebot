@@ -653,6 +653,76 @@ class BaziTests(KoiTestBase):
         self.assertTrue(looks_like_koi_command("起卦"))
         self.assertTrue(looks_like_koi_command("卦谱"))
 
+    def test_scores_are_stable_and_in_range(self):
+        from src.koi import bazi
+        chart = bazi.bazi({
+            "year": 1995, "month": 8, "day": 15, "hour": 8,
+        })
+        first = bazi.scores(chart, "seed")
+        second = bazi.scores(chart, "seed")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 5)
+        for value in first.values():
+            self.assertGreaterEqual(value, 20)
+            self.assertLessEqual(value, 96)
+        today = bazi.daily_scores(chart, "2026-11-18", "seed")
+        for value in today.values():
+            self.assertGreaterEqual(value, 15)
+            self.assertLessEqual(value, 99)
+
+    def test_scores_card_and_bazi_outputs(self):
+        self.service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        card = self.service.scores_card(self.msg)
+        for label in ("爱情", "事业", "学习", "财富", "人际"):
+            self.assertIn(label, card)
+        self.assertIn("今日：", card)
+        self.assertIn("五维", self.service.bazi_card(self.msg))
+        self.assertIn("今日五维", self.service.daily_fortune(self.msg))
+        reply = self.handler.handle("五维", self.msg)
+        self.assertIn("【五维评分】", reply)
+        reply = self.handler.handle("分支评分", self.msg)
+        self.assertIn("【五维评分】", reply)
+
+    def test_scores_require_birth(self):
+        self.assertIn("需要出生时间", self.service.scores_card(self.msg))
+
+    def test_ai_narration_is_used_for_fortune_and_sign(self):
+        calls = []
+
+        def narrator(prompt, msg):
+            calls.append(prompt)
+            return "AI 文案：今天适合先做最重要的一件事。"
+
+        service = KoiService(
+            self.store, self.config, rng=random.Random(1),
+            narrator=narrator,
+        )
+        service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        fortune = service.daily_fortune(self.msg)
+        self.assertIn("AI 文案", fortune)
+        self.assertTrue(any("娱乐向命理师" in prompt for prompt in calls))
+
+        service.sign(self.msg)
+        reading = service.read_sign(self.msg)
+        self.assertIn("AI 文案", reading)
+        self.assertTrue(any("娱乐向的解签先生" in prompt for prompt in calls))
+
+    def test_ai_narration_falls_back_to_fixed_templates(self):
+        def broken(prompt, msg):
+            raise RuntimeError("boom")
+
+        service = KoiService(
+            self.store, self.config, rng=random.Random(1),
+            narrator=broken,
+        )
+        service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        fortune = service.daily_fortune(self.msg)
+        self.assertIn("【批命】", fortune)
+        self.assertIn("今日五维", fortune)
+        service.sign(self.msg)
+        reading = service.read_sign(self.msg)
+        self.assertIn("解读：", reading)
+
 
 if __name__ == "__main__":
     unittest.main()
