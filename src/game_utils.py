@@ -78,11 +78,7 @@ def is_group_enabled(chat_id: str, group_name: str,
     return any(g in keys for g in groups)
 
 
-def load_group_members(chat_id: str,
-                       path: Path | str | None = None
-                       ) -> dict[str, str] | None:
-    """Return the last known ``{wxid: display_name}`` snapshot for a group."""
-    file_path = Path(path) if path else Path("data") / "group_members.json"
+def _load_member_map(chat_id: str, file_path: Path) -> dict[str, str] | None:
     try:
         if not file_path.exists():
             return None
@@ -99,3 +95,24 @@ def load_group_members(chat_id: str,
         for wxid, name in members.items()
         if str(wxid)
     }
+
+
+def load_group_members(chat_id: str,
+                       path: Path | str | None = None
+                       ) -> dict[str, str] | None:
+    """Return the last known ``{wxid: display_name}`` snapshot for a group."""
+    file_path = Path(path) if path else Path("data") / "group_members.json"
+    return _load_member_map(chat_id, file_path)
+
+
+def load_group_nicknames(chat_id: str,
+                         path: Path | str | None = None
+                         ) -> dict[str, str] | None:
+    """Return the group ``{wxid: 群昵称}`` map.
+
+    ``@`` mentions in WeChat carry the group nickname, which often differs
+    from the contact display name above.  The backend refreshes this file
+    from WCDB every minute (``wcdb_get_group_nicknames``).
+    """
+    file_path = Path(path) if path else Path("data") / "group_nicknames.json"
+    return _load_member_map(chat_id, file_path)

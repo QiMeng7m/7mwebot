@@ -3,15 +3,135 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
-from src.game_utils import load_group_members, strip_invisible
+from src.game_utils import (
+    load_group_members,
+    load_group_nicknames,
+    strip_invisible,
+)
 
 from . import rules
 from .service import KoiService
 
 _WS = re.compile(r"\s+")
 _REPLY_PREFIX = re.compile(r"^\s*([A-Za-z0-9_@.\-]{1,64}):\s+")
-_AT_NAME = re.compile(r"@([^\s@]+)")
+# WeChat terminates an @mention with U+2005; the name itself may contain
+# ordinary spaces (@萧山 九年义务教育漏网之鱼).  Kept as a last-resort
+# fallback when no known member name matches.
+_AT_NAME = re.compile(r"@([^ @\n]+)")
+
+
+def _norm_name(name: str) -> str:
+    text = unicodedata.normalize("NFC", str(name or ""))
+    text = strip_invisible(text).lstrip("@").strip()
+    return text.casefold()
+
+
+def _compact_name(name: str) -> str:
+    return re.sub(r"\s+", "", _norm_name(name))
+
+
+def _display_map(members: dict[str, str],
+                 nicknames: dict[str, str]) -> dict[str, str]:
+    """``wxid -> name`` with the group nickname taking precedence."""
+    display = {
+        str(wxid): str(name)
+        for wxid, name in (members or {}).items() if name
+    }
+    display.update({
+        str(wxid): str(name)
+        for wxid, name in (nicknames or {}).items() if name
+    })
+    return display
+
+
+def _lookup_name(raw: str, raw_names: list[tuple[str, str]]) -> str:
+    """Resolve a typed / @-ed name against known member names."""
+    key = _norm_name(raw)
+    if not key:
+        return ""
+    compact = re.sub(r"\s+", "", key)
+    for name, wxid in raw_names:
+        if _norm_name(name) == key or _compact_name(name) == compact:
+            return wxid
+    # Group aliases sometimes add a city/company prefix; accept a unique
+    # prefix/suffix match as a fallback.
+    if len(compact) < 2:
+        return ""
+    matches: list[str] = []
+    for name, wxid in raw_names:
+        flat = _compact_name(name)
+        if len(flat) < 2:
+            continue
+        if flat.endswith(compact) or compact.endswith(flat):
+            if wxid not in matches:
+                matches.append(wxid)
+    return matches[0] if len(matches) == 1 else ""
+
+
+def _mention_at(content: str, pos: int,
+                raw_names: list[tuple[str, str]],
+                known_ids: set[str]) -> tuple[str, str]:
+    """Return ``(name, wxid)`` for the @mention starting at *pos*."""
+    for name, wxid in raw_names:
+        if content.startswith(name, pos):
+            return name, wxid
+    match = re.match(r"[^ @\n]+", content[pos:])
+    if not match:
+        return "", ""
+    token = match.group(0).strip()
+    # No known name matched verbatim; try progressively shorter
+    # whitespace-separated prefixes in case the stored name differs
+    # slightly (extra words, invisible characters, …).
+    parts = token.split()
+    for end in range(len(parts), 0, -1):
+        candidate = " ".join(parts[:end])
+        if candidate in known_ids:
+            return candidate, candidate
+        wxid = _lookup_name(candidate, raw_names)
+        if wxid:
+            return candidate, wxid
+    return token, ""
+
+
+def _mentions(content: str, members: dict[str, str],
+              nicknames: dict[str, str],
+              display: dict[str, str]) -> list[tuple[str, str, bool]]:
+    """Parse @mentions into ``(wxid, name, resolved)``.
+
+    Uses the known member-name list first so group nicknames with spaces
+    (``@萧山 九年义务教育漏网之鱼``) resolve correctly.
+    """
+    raw_names: list[tuple[str, str]] = []
+    known_ids: set[str] = set()
+    for source in (nicknames, members):
+        for wxid, name in (source or {}).items():
+            known_ids.add(str(wxid))
+            text = str(name or "").strip()
+            if text:
+                raw_names.append((text, str(wxid)))
+    raw_names.sort(key=lambda item: -len(item[0]))
+
+    results: list[tuple[str, str, bool]] = []
+    seen: set[str] = set()
+    for index, char in enumerate(content):
+        if char != "@":
+            continue
+        name, wxid = _mention_at(content, index + 1, raw_names, known_ids)
+        if not wxid or wxid in seen:
+            continue
+        seen.add(wxid)
+        results.append((wxid, display.get(wxid, name), True))
+    if results:
+        return results
+    # Still surface an unresolved @name so the caller can tell the user
+    # exactly which mention could not be matched to a member.
+    for match in _AT_NAME.finditer(content):
+        name = match.group(1).strip()
+        if name:
+            return [("", name, False)]
+    return []
 
 EXACT: dict[str, str] = {
     "求签": "sign",
@@ -140,27 +260,27 @@ class KoiHandler:
         chat_id = str(msg.get("chat_id") or "")
         sender_id = str(msg.get("sender_id") or "")
         members = load_group_members(chat_id) or {}
-        reverse = {name: wxid for wxid, name in members.items()}
+        nicknames = load_group_nicknames(chat_id) or {}
+        display = _display_map(members, nicknames)
 
         for raw in (msg.get("mentioned_ids") or []):
-            target_id = str(raw)
+            target_id = str(raw or "")
             if target_id and target_id != sender_id:
-                return target_id, members.get(target_id, target_id)
+                return target_id, display.get(target_id, target_id)
 
         content = str(msg.get("content") or "")
+        content = content.replace("​", "").replace("﻿", "")
         match = _REPLY_PREFIX.match(content)
         if match and match.group(1) != sender_id:
             target_id = match.group(1)
-            return target_id, members.get(target_id, target_id)
+            return target_id, display.get(target_id, target_id)
 
-        match = _AT_NAME.search(content)
-        if match:
-            name = match.group(1)
-            if name in reverse:
-                return reverse[name], name
-            if name in members:
-                return name, members[name]
-            return "", name
+        mentions = _mentions(content, members, nicknames, display)
+        for target_id, target_name, resolved in mentions:
+            if resolved and target_id != sender_id:
+                return target_id, target_name
+        if mentions:
+            return mentions[0][0], mentions[0][1]
         return "", ""
 
     # ── Label ─────────────────────────────────────────────────────
