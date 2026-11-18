@@ -11,7 +11,7 @@ from src.db.schema import initialize_db
 from src.koi import rules
 from src.koi.handler import KoiHandler, looks_like_koi_command
 from src.koi.service import KoiService
-from src.koi.signs import SIGNS, all_sign_ids, signs_by_level
+from src.koi.signs import SIGNS, all_sign_ids, sign_by_id, signs_by_level
 from src.koi.store import KoiStore
 from src.game_utils import local_day, local_week
 
@@ -170,6 +170,47 @@ class ServiceTests(KoiTestBase):
         self.assertEqual(daily["rerolls"], 1)
         self.assertIn("今天已经转运", self.service.reroll(self.msg))
 
+    def test_sign_repeat_replays_the_same_sign(self):
+        self.service.sign(self.msg)
+        daily = self.store.get_daily("1@chatroom", "wxid_a", local_day())
+        sign = sign_by_id(int(daily["sign_id"]))
+
+        again = self.service.sign(self.msg)
+
+        self.assertIn("再看一次", again)
+        self.assertIn(f"「{sign['name']}」", again)
+        self.assertIn(sign["phrase"], again)
+        self.assertIn("今日星象", again)
+
+    def test_observe_repeat_replays_star_dice(self):
+        first = self.service.observe(self.msg)
+        again = self.service.observe(self.msg)
+
+        self.assertIn("再看一次", again)
+        self.assertIn("星骰", again)
+        # The star dice line is identical to the original reply.
+        first_dice = [line for line in first.splitlines()
+                      if line.startswith("🎲 星骰：")][0]
+        self.assertIn(first_dice, again)
+
+    def test_release_repeat_replays_result(self):
+        self.service.sign(self.msg)
+        self.service.release(self.msg)
+
+        again = self.service.release(self.msg)
+
+        self.assertIn("再看一次", again)
+        self.assertIn("气运 +", again)
+
+    def test_reroll_repeat_replays_result(self):
+        self.service.sign(self.msg)
+        self.service.reroll(self.msg)
+
+        again = self.service.reroll(self.msg)
+
+        self.assertIn("再看一次", again)
+        self.assertIn("新签", again)
+
     def test_card_and_book(self):
         self.service.sign(self.msg)
         card = self.service.card(self.msg)
@@ -263,7 +304,7 @@ class HandlerTests(KoiTestBase):
         from unittest.mock import MagicMock
 
         cfg = SimpleNamespace(
-            koi_enabled=True, todo_enabled=True,
+            koi_enabled=True,
             summarize_enabled=True,
         )
         handler = AdminCommandHandler(MagicMock())
@@ -290,7 +331,6 @@ class RouterKoiTests(unittest.TestCase):
         self.config = BotConfig()
         self.config.koi_enabled = True
         self.config.koi_groups = ["*"]
-        self.config.todo_enabled = False
         self.config.sticky_mention_enabled = False
         self.config.ai_enabled = False
         self.config.admin_wxid = "wxid_admin"
@@ -620,7 +660,10 @@ class BaziTests(KoiTestBase):
         self.assertEqual(
             self.store.collection_count(
                 "1@chatroom", "wxid_a", "hexagram"), 1)
-        self.assertIn("已经起过卦", self.service.cast_hexagram(self.msg))
+        again = self.service.cast_hexagram(self.msg)
+        self.assertIn("再看一次", again)
+        self.assertIn("变卦", again)
+        self.assertIn("动爻", again)
 
     def test_daily_fortune_once(self):
         self.service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
@@ -630,6 +673,40 @@ class BaziTests(KoiTestBase):
         self.assertGreater(
             self.store.balance("1@chatroom", "wxid_a"), before)
         self.assertIn("已经批过命", self.service.daily_fortune(self.msg))
+
+    def test_daily_fortune_repeat_replays_saved_reading(self):
+        def narrator(prompt, msg):
+            return "AI 文案：今天先把最要紧的一件事做掉。"
+
+        service = KoiService(
+            self.store, self.config, rng=random.Random(3),
+            narrator=narrator,
+        )
+        service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        first = service.daily_fortune(self.msg)
+        balance = self.store.balance("1@chatroom", "wxid_a")
+
+        again = service.daily_fortune(self.msg)
+
+        self.assertIn("再看一次", again)
+        self.assertIn("AI 文案", again)
+        self.assertIn("【今日五维】", again)
+        self.assertEqual(balance, self.store.balance("1@chatroom", "wxid_a"))
+        self.assertIn("【批命】", first)
+
+    def test_daily_fortune_repeat_falls_back_for_old_rows(self):
+        self.service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")
+        day = local_day()
+        self.store.upsert_daily({
+            "chat_id": "1@chatroom", "sender_id": "wxid_a", "day": day,
+            "fortune_used": 1,
+        })
+
+        again = self.service.daily_fortune(self.msg)
+
+        self.assertIn("今天已经批过命了（再看一次）", again)
+        self.assertIn("【今日五维】", again)
+        self.assertIn("本卦", again)
 
     def test_hexagram_book(self):
         self.service.set_bazi(self.msg, "设置八字 1995-08-15 08:30")

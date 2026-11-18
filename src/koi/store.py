@@ -21,7 +21,7 @@ _DAILY_FIELDS = (
     "chat_id", "sender_id", "day", "sign_id", "sign_level", "luck",
     "yi", "streak_days", "rerolls", "release_used", "draws_used",
     "chat_merit", "pool_in", "observed", "duel_star_used", "extra_luck",
-    "fortune_used", "hexagram_used", "hexagram_id",
+    "fortune_used", "hexagram_used", "hexagram_id", "repeat_replies",
 )
 
 
@@ -178,21 +178,24 @@ class KoiStore:
         values["fortune_used"] = int(values.get("fortune_used") or 0)
         values["hexagram_used"] = int(values.get("hexagram_used") or 0)
         values["hexagram_id"] = int(values.get("hexagram_id") or 0)
-        for key in ("chat_id", "sender_id", "day", "sign_level", "yi"):
+        for key in ("chat_id", "sender_id", "day", "sign_level", "yi",
+                    "repeat_replies"):
             values[key] = str(values.get(key) or "")
+        values["repeat_replies"] = values["repeat_replies"] or "{}"
         with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO koi_daily
                    (chat_id, sender_id, day, sign_id, sign_level, luck, yi,
                     streak_days, rerolls, release_used, draws_used,
                     chat_merit, pool_in, observed, duel_star_used,
-                    extra_luck, fortune_used, hexagram_used, hexagram_id)
+                    extra_luck, fortune_used, hexagram_used, hexagram_id,
+                    repeat_replies)
                    VALUES (:chat_id, :sender_id, :day, :sign_id,
                            :sign_level, :luck, :yi, :streak_days, :rerolls,
                            :release_used, :draws_used, :chat_merit,
                            :pool_in, :observed, :duel_star_used,
                            :extra_luck, :fortune_used, :hexagram_used,
-                           :hexagram_id)
+                           :hexagram_id, :repeat_replies)
                    ON CONFLICT(chat_id, sender_id, day) DO UPDATE SET
                        sign_id=excluded.sign_id,
                        sign_level=excluded.sign_level,
@@ -209,7 +212,8 @@ class KoiStore:
                        extra_luck=excluded.extra_luck,
                        fortune_used=excluded.fortune_used,
                        hexagram_used=excluded.hexagram_used,
-                       hexagram_id=excluded.hexagram_id""",
+                       hexagram_id=excluded.hexagram_id,
+                       repeat_replies=excluded.repeat_replies""",
                 values,
             )
 

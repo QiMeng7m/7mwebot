@@ -39,6 +39,7 @@ _EMPTY_DAILY = {
     "fortune_used": 0,
     "hexagram_used": 0,
     "hexagram_id": 0,
+    "repeat_replies": "{}",
 }
 
 _CORE_KEYS = ("qinglong", "baihu", "zhuque", "xuanwu")
@@ -113,6 +114,33 @@ class KoiService:
 
     def _save(self, row: dict) -> None:
         self._store.upsert_daily(row)
+
+    # ── 每日一次功能：重复查看当时的结果 ──────────────────────────
+
+    @staticmethod
+    def _reply_map(daily: dict) -> dict:
+        try:
+            data = json.loads(str(daily.get("repeat_replies") or "{}"))
+        except (TypeError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _remember_reply(self, daily: dict, action: str, text: str) -> None:
+        """Remember a once-per-day result so a repeat command can show it."""
+        data = self._reply_map(daily)
+        data[action] = str(text or "")
+        daily["repeat_replies"] = json.dumps(data, ensure_ascii=False)
+
+    def _previous_reply(self, daily: dict, action: str) -> str:
+        return str(self._reply_map(daily).get(action) or "")
+
+    def _replay(self, daily: dict, action: str,
+                title: str) -> str | None:
+        """Return the saved result of a once-per-day action, if any."""
+        saved = self._previous_reply(daily, action)
+        if not saved:
+            return None
+        return f"{title}，再看一次：\n{saved}"
 
     # ── Star / buff helpers ───────────────────────────────────────
 
@@ -293,10 +321,16 @@ class KoiService:
         if int(daily.get("sign_id") or 0):
             sign = sign_by_id(int(daily["sign_id"])) or {}
             level = str(daily.get("sign_level") or "")
+            event = rules.event_for(chat_id, day)
             return prefix + (
-                f"今天已经求过签了：{rules.level_emoji(level)}"
-                f"{level}「{sign.get('name', '')}」\n"
-                f"欧气 {self._luck_value(daily)}｜宜：{daily.get('yi', '')}\n"
+                f"今天已经求过签了（再看一次）：\n"
+                f"求得{rules.level_emoji(level)}{level}"
+                f"「{sign.get('name', '')}」\n"
+                f"欧气 {self._luck_value(daily)}｜"
+                f"连续求签 {int(daily.get('streak_days') or 1)} 天｜"
+                f"宜：{daily.get('yi', '')}\n"
+                f"{sign.get('phrase', '')}\n"
+                f"今日星象：{event['name']} — {event['desc']}\n"
                 f"👉 {self._hint(str(daily.get('yi') or ''))}"
             )
 
@@ -401,6 +435,9 @@ class KoiService:
         is_lucky = bool(profile.get("sign")) and profile["sign"] == lucky
 
         if int(daily.get("observed") or 0):
+            saved = self._replay(daily, "observe", "今天已经观过星了")
+            if saved:
+                return prefix + saved
             return prefix + (
                 f"今天已经观过星了。\n"
                 f"今日星象：{event['name']} — {event['desc']}\n"
@@ -424,6 +461,8 @@ class KoiService:
 
         effect_text = self._apply_planet(
             chat_id, sender_id, day, planet)
+        # 星骰可能通过 _add_luck 改了今日欧气，重新读取避免旧值覆盖。
+        daily = self._daily(chat_id, sender_id, day)
 
         base = int(getattr(self._config, "koi_observe_merit", 30))
         bonus = int(event.get("observe_bonus", 0) or 0)
@@ -456,6 +495,8 @@ class KoiService:
         if is_lucky:
             lines.append("⭐ 你就是本周幸运星座，求签欧气 +5")
         lines.append(f"👉 {self._next_action_hint(daily)}")
+        self._remember_reply(daily, "observe", "\n".join(lines))
+        self._save(daily)
         return prefix + "\n".join(lines)
 
     def _apply_planet(self, chat_id: str, sender_id: str, day: str,
@@ -497,6 +538,9 @@ class KoiService:
         event = rules.event_for(chat_id, day)
 
         if int(daily.get("release_used") or 0):
+            saved = self._replay(daily, "release", "今天已经放生过了")
+            if saved:
+                return prefix + saved
             return prefix + "今天已经放生过了，明天再来积德。"
 
         cost = max(5, int(getattr(self._config, "koi_release_cost", 30))
@@ -533,12 +577,14 @@ class KoiService:
             f"距「{nxt['name']}」还差 {rank['to_next']} 气运"
             if nxt else "已达最高段位"
         )
-        return prefix + (
+        text = (
             f"放生完成：香火 -{cost}，气运 +{gain}\n"
             f"气运 {fortune}（{rank['name']}）｜{next_line}\n"
             f"👉 {self._next_action_hint(daily)}"
         )
-
+        self._remember_reply(daily, "release", text)
+        self._save(daily)
+        return prefix + text
     # ── 转运 ─────────────────────────────────────────────────────
 
     def reroll(self, msg: dict) -> str | None:
@@ -553,6 +599,9 @@ class KoiService:
         if not int(daily.get("sign_id") or 0):
             return prefix + "今天还没求签，先发「求签」再来转运。"
         if int(daily.get("rerolls") or 0):
+            saved = self._replay(daily, "reroll", "今天已经转运过了")
+            if saved:
+                return prefix + saved
             return prefix + "今天已经转运过了，明天再来。"
 
         event = rules.event_for(chat_id, day)
@@ -610,7 +659,10 @@ class KoiService:
         if is_new:
             lines.append(f"📜 新签文收入签谱（{collected}/{len(all_sign_ids())}）")
         lines.append(f"👉 {self._hint(drawn['sign']['yi'])}")
-        return prefix + "\n".join(lines)
+        text = "\n".join(lines)
+        self._remember_reply(daily, "reroll", text)
+        self._save(daily)
+        return prefix + text
 
     # ── 开光 / 塔罗 ──────────────────────────────────────────────
 
@@ -1830,9 +1882,14 @@ class KoiService:
         day = local_day()
         daily = self._daily(chat_id, sender_id, day)
         if int(daily.get("hexagram_used") or 0):
+            saved = self._replay(daily, "hexagram", "今天已经起过卦了")
+            if saved:
+                return saved
             cast = self._hexagram_from_id(int(daily.get("hexagram_id") or 1))
             return (
-                f"今天已经起过卦了：{cast['name']}（{cast['symbol']}）\n"
+                f"今天已经起过卦了，再看一次：\n"
+                f"🎴 起卦：{cast['name']}（{cast['symbol']}）\n"
+                f"上卦 {cast['upper']}｜下卦 {cast['lower']}\n"
                 f"👉 发「批命」看完整解读。"
             )
         profile = self._profile(chat_id, sender_id)
@@ -1851,6 +1908,7 @@ class KoiService:
             chat_id, sender_id, sender_name, "merit", gain,
             "hexagram", ref_id=f"hexagram:{day}")
         self._add_luck(chat_id, sender_id, day, 2)
+        daily = self._daily(chat_id, sender_id, day)
         daily["hexagram_used"] = 1
         daily["hexagram_id"] = int(cast["number"])
         self._save(daily)
@@ -1869,7 +1927,32 @@ class KoiService:
         if new:
             lines.append("📜 新卦收入卦谱")
         lines.append("👉 发「批命」看完整解读。")
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        self._remember_reply(daily, "hexagram", text)
+        self._save(daily)
+        return text
+
+    def _fortune_lines(self, day: str, chart: dict, cast: dict,
+                       scores: dict[str, int],
+                       ai_reading: str = "") -> list[str]:
+        """Structured 批命 body, shared by the first run and replays."""
+        today_stem, today_branch = bazi_rules.today_ganzhi()
+        lines = [f"【批命】{day}"]
+        if ai_reading:
+            lines.append(
+                f"日主 {chart['day_master']}{chart['day_master_element']}｜"
+                f"{chart['dominant']}旺｜{chart['quadrant']}命")
+            lines.append(ai_reading)
+        else:
+            lines.extend(bazi_rules.reading(
+                chart, cast, (today_stem, today_branch)))
+        lines.append(f"本卦：{cast['name']}｜变卦：{cast['changed']}")
+        lines.append("【今日五维】")
+        lines.append(self._score_line(scores))
+        high, low = self._score_extremes(scores)
+        lines.append(high)
+        lines.append(low)
+        return lines
 
     def daily_fortune(self, msg: dict) -> str | None:
         if not self.enabled(msg):
@@ -1879,7 +1962,23 @@ class KoiService:
         day = local_day()
         daily = self._daily(chat_id, sender_id, day)
         if int(daily.get("fortune_used") or 0):
-            return "今天已经批过命了，明天再来。"
+            saved = self._replay(daily, "fortune", "今天已经批过命了")
+            if saved:
+                return saved
+            # 旧数据没保存完整回复：按当天同样的种子重建结构化结果。
+            profile = self._profile(chat_id, sender_id)
+            chart = self._chart(profile)
+            if chart is None:
+                return "今天已经批过命了，明天再来。"
+            cast = bazi_rules.hexagram(
+                chart,
+                f"{sender_id}:{day}:{profile.get('birth_year')}-"
+                f"{profile.get('birth_month')}-{profile.get('birth_day')}")
+            scores = bazi_rules.daily_scores(
+                chart, day, self._score_seed(sender_id, profile))
+            return ("今天已经批过命了（再看一次）：\n"
+                    + "\n".join(
+                        self._fortune_lines(day, chart, cast, scores)))
         profile = self._profile(chat_id, sender_id)
         chart = self._chart(profile)
         if chart is None:
@@ -1908,35 +2007,24 @@ class KoiService:
             "最后给一句可执行的小建议。"
         )
         ai_reading = self._narrate(prompt, msg)
-        lines = [
-            f"【批命】{day}",
-            f"日主 {chart['day_master']}{chart['day_master_element']}｜"
-            f"{chart['dominant']}旺｜{chart['quadrant']}命",
-        ]
-        if ai_reading:
-            lines.append(ai_reading)
-        else:
-            lines.extend(bazi_rules.reading(
-                chart, cast, (today_stem, today_branch)))
-        lines.append(
-            f"本卦：{cast['name']}｜变卦：{cast['changed']}")
-        lines.append("【今日五维】")
-        lines.append(self._score_line(today_scores))
-        high, low = self._score_extremes(today_scores)
-        lines.append(high)
-        lines.append(low)
+        lines = self._fortune_lines(
+            day, chart, cast, today_scores, ai_reading)
         gain = int(getattr(self._config, "koi_fortune_merit", 10))
         luck = int(getattr(self._config, "koi_fortune_luck", 3))
         self._store.grant(
             chat_id, sender_id, sender_name, "merit", gain,
             "fortune", ref_id=f"fortune:{day}")
         self._add_luck(chat_id, sender_id, day, luck)
+        daily = self._daily(chat_id, sender_id, day)
         daily["fortune_used"] = 1
         daily["hexagram_id"] = int(cast["number"])
         self._save(daily)
         lines.append(f"香火 +{gain}｜今日欧气 +{luck}")
         lines.append("👉 发「八字」看天圆地方盘。")
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        self._remember_reply(daily, "fortune", text)
+        self._save(daily)
+        return text
 
     def hexagram_book(self, msg: dict) -> str | None:
         if not self.enabled(msg):

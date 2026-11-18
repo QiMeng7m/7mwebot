@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS koi_daily (
     fortune_used  INTEGER NOT NULL DEFAULT 0,
     hexagram_used INTEGER NOT NULL DEFAULT 0,
     hexagram_id   INTEGER NOT NULL DEFAULT 0,
+    repeat_replies TEXT   NOT NULL DEFAULT '{}',
     PRIMARY KEY (chat_id, sender_id, day)
 );
 
@@ -283,6 +284,7 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
         "fortune_used": "fortune_used INTEGER NOT NULL DEFAULT 0",
         "hexagram_used": "hexagram_used INTEGER NOT NULL DEFAULT 0",
         "hexagram_id": "hexagram_id INTEGER NOT NULL DEFAULT 0",
+        "repeat_replies": "repeat_replies TEXT NOT NULL DEFAULT '{}'",
     })
     _ensure_columns(conn, "koi_profile", {
         "noble_star": "noble_star TEXT NOT NULL DEFAULT ''",
