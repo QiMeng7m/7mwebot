@@ -63,7 +63,7 @@ class ClaudeSummarizer(AbstractSummarizer):
                         messages: list[dict]) -> str:
         """Claude-specific: uses client.messages.create() with system param."""
         response = self.client.messages.create(
-            model=self.MODEL_HAIKU,
+            model=self.model,
             max_tokens=400,
             system=system_prompt,
             messages=messages,
@@ -100,7 +100,7 @@ class ClaudeSummarizer(AbstractSummarizer):
 
         def call():
             response = self.client.messages.create(
-                model=self.MODEL_HAIKU,
+                model=self.model,
                 max_tokens=1024,
                 system=CHUNK_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
@@ -172,7 +172,7 @@ class ClaudeSummarizer(AbstractSummarizer):
 
         def call():
             response = self.client.messages.create(
-                model=self.MODEL_HAIKU,
+                model=self.model,
                 max_tokens=2048,
                 system=system_prompt,
                 messages=[{

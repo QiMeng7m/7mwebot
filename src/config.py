@@ -1,5 +1,7 @@
 """Configuration loading from .env file."""
 
+import json
+import logging
 import os
 import re
 import sys
@@ -8,6 +10,70 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+
+
+def _claude_code_settings_path() -> Path:
+    override = os.getenv("CLAUDE_CODE_SETTINGS_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".claude" / "settings.json"
+
+
+def _openai_compatible_base(base: str) -> str:
+    override = os.getenv("CLAUDE_CODE_AI_OPENAI_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
+    base = str(base or "").rstrip("/")
+    if not base:
+        return "https://api.openai.com/v1"
+    return base if base.endswith("/v1") else base + "/v1"
+
+
+def _load_claude_code_ai() -> dict | None:
+    """Read the endpoint/key/model used by the local Claude Code install.
+
+    The key is never logged or returned in messages.  Only the base URL,
+    model and mode are safe to display.
+    """
+    path = _claude_code_settings_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("CLAUDE_CODE_AI: cannot read %s (%s)", path, exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    env = data.get("env") or {}
+    if not isinstance(env, dict):
+        env = {}
+    base = str(env.get("ANTHROPIC_BASE_URL") or "").strip()
+    key = str(
+        env.get("ANTHROPIC_API_KEY")
+        or env.get("ANTHROPIC_AUTH_TOKEN")
+        or ""
+    ).strip()
+    model = str(
+        env.get("ANTHROPIC_MODEL")
+        or data.get("model")
+        or ""
+    ).strip()
+    if not key or not model:
+        logger.warning(
+            "CLAUDE_CODE_AI: settings at %s has no API key or model", path)
+        return None
+    mode = os.getenv("CLAUDE_CODE_AI_MODE", "openai").strip().lower()
+    if not base:
+        mode = "anthropic"
+    return {
+        "base_url": base,
+        "api_key": key,
+        "model": model,
+        "mode": "anthropic" if mode == "anthropic" else "openai",
+        "openai_base_url": _openai_compatible_base(base),
+    }
+
 
 
 def _decode_wechat_groups(raw: str) -> str:
@@ -161,6 +227,9 @@ class BotConfig:
     ai_enabled: bool = True
     # "claude" | "deepseek" | "openai"
     ai_backend: str = "claude"
+    # Reuse the endpoint/key/model from ~/.claude/settings.json.
+    # When true, the explicit AI_BACKEND / key settings are overridden.
+    claude_code_ai: bool = False
 
     # === Claude (Anthropic) ===
     anthropic_api_key: str = ""
@@ -494,11 +563,22 @@ def load_config() -> BotConfig:
     """
     ai_backend = os.getenv("AI_BACKEND", "claude").strip().lower()
     ai_enabled = os.getenv("AI_ENABLED", "true").strip().lower() == "true"
+    claude_code_ai = os.getenv(
+        "CLAUDE_CODE_AI", "false").strip().lower() == "true"
+    cc_ai = _load_claude_code_ai() if (
+        claude_code_ai and ai_enabled) else None
+    if claude_code_ai and ai_enabled and cc_ai is None:
+        raise RuntimeError(
+            "CLAUDE_CODE_AI=true，但没有从 ~/.claude/settings.json 读到 "
+            "ANTHROPIC_API_KEY 与 ANTHROPIC_MODEL。请检查该文件，"
+            "或把 CLAUDE_CODE_AI 设为 false 并使用 .env 中的 AI 配置。"
+        )
 
     # Validate required API keys based on selected backend.
     # Skipped when AI is switched off so the bot can run with no key / no
     # remaining balance — a disabled bot must never require a paid key.
-    if ai_enabled:
+    # Also skipped when reusing the Claude Code configuration.
+    if ai_enabled and cc_ai is None:
         if ai_backend == "deepseek":
             api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
             if not api_key:
@@ -547,6 +627,7 @@ def load_config() -> BotConfig:
     kwargs: dict = {
         "ai_enabled": ai_enabled,
         "ai_backend": ai_backend,
+        "claude_code_ai": claude_code_ai,
         "anthropic_api_key": os.getenv("ANTHROPIC_API_KEY", "").strip(),
         "anthropic_base_url": os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").strip(),
         "summarize_model": os.getenv("SUMMARIZE_MODEL", "claude-haiku-4-5-20251001").strip(),
@@ -646,6 +727,25 @@ def load_config() -> BotConfig:
         "voice_local_model": os.getenv("VOICE_LOCAL_MODEL", "small").strip(),
         "voice_asr_to_simplified": os.getenv("VOICE_ASR_TO_SIMPLIFIED", "true").strip().lower() == "true",
     }
+
+    if cc_ai:
+        if cc_ai["mode"] == "anthropic":
+            kwargs["ai_backend"] = "claude"
+            kwargs["anthropic_api_key"] = cc_ai["api_key"]
+            kwargs["anthropic_base_url"] = (
+                cc_ai["base_url"] or "https://api.anthropic.com")
+            kwargs["summarize_model"] = cc_ai["model"]
+        else:
+            kwargs["ai_backend"] = "openai"
+            kwargs["openai_api_key"] = cc_ai["api_key"]
+            kwargs["openai_base_url"] = cc_ai["openai_base_url"]
+            kwargs["openai_model"] = cc_ai["model"]
+        logger.info(
+            "Using Claude Code AI gateway: mode=%s model=%s base=%s",
+            cc_ai["mode"], cc_ai["model"],
+            cc_ai["openai_base_url"] if cc_ai["mode"] == "openai"
+            else cc_ai["base_url"],
+        )
 
     deepseek_model = os.getenv("DEEPSEEK_MODEL")
     if deepseek_model is not None and deepseek_model.strip():

@@ -202,6 +202,40 @@ WECHAT_BACKEND=mac_ui       # UI 自动化，兼容性更好
 
 暂时不想产生 AI 费用时，把「AI 功能总开关」关掉即可；关闭后总结、闲聊、解签、群记忆、飞书 AI 导出会停止，星盘玩法不受影响。
 
+### 复用 Claude Code 的 AI 配置
+
+如果本机已经配置好 Claude Code，可以直接复用它的网关、Key 和模型，不需要在项目里再写一份 Key。
+
+Claude Code 的配置在 `~/.claude/settings.json`，例如：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-...",
+    "ANTHROPIC_BASE_URL": "http://your-gateway",
+    "ANTHROPIC_MODEL": "deepseek-flash"
+  }
+}
+```
+
+在项目 `.env` 中打开开关：
+
+```bash
+CLAUDE_CODE_AI=true
+# openai = 走网关的 /v1 OpenAI 兼容接口（推荐）
+CLAUDE_CODE_AI_MODE=openai
+# 可选：显式指定 OpenAI 兼容地址；不填则自动使用 ANTHROPIC_BASE_URL + /v1
+CLAUDE_CODE_AI_OPENAI_BASE_URL=http://your-gateway/v1
+# 可选：自定义 Claude Code settings 路径
+# CLAUDE_CODE_SETTINGS_PATH=
+```
+
+重启机器人后，项目会直接读取 Claude Code 的配置。Key 只在运行时读取，不会复制进项目文件。
+
+- 默认走 OpenAI 兼容接口，适用于 One-API 等网关；
+- 如果网关只支持 Anthropic 原生接口，可设 `CLAUDE_CODE_AI_MODE=anthropic`；
+- 修改 `~/.claude/settings.json` 后重启机器人即可生效。
+
 星盘玩法的主要配置：
 
 ```bash
