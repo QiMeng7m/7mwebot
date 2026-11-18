@@ -288,6 +288,34 @@ class MessageStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def search_messages(self, chat_id: str, keyword: str,
+                        since_ts: int, limit: int = 20) -> list[dict]:
+        """Full-text-ish search over messages in one chat.
+
+        Uses SQL LIKE on content.  ``%``, ``_`` and ``\\`` in the keyword
+        are escaped so user input is matched literally.
+
+        Returns messages in chronological order (oldest first).
+        """
+        term = str(keyword or "").strip()
+        if not term:
+            return []
+        escaped = (
+            term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT message_id, chat_id, sender_id, sender_name,
+                          content, msg_type, timestamp
+                   FROM messages
+                   WHERE chat_id = ? AND timestamp >= ?
+                     AND content LIKE ? ESCAPE '\\'
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (chat_id, int(since_ts), f"%{escaped}%", int(limit)),
+            ).fetchall()
+            return [dict(row) for row in reversed(rows)]
+
     def get_activity_report_data(
         self,
         chat_id: str,

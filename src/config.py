@@ -177,6 +177,20 @@ class BotConfig:
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
+    # === Persona ===
+    # Bot personality: default | grumpy | high_eq | deadpan | warm | custom
+    # Personas only change tone/style; routing and safety rules stay intact.
+    bot_persona: str = "default"
+    # Free-form persona description, used when bot_persona == "custom".
+    bot_persona_prompt: str = ""
+
+    # === Agent (LangChain tool calling) ===
+    # When on, @mentions go through a tool-calling agent that can search
+    # chat history / group memory.  Any failure falls back to plain chat.
+    agent_enabled: bool = False
+    agent_max_tool_calls: int = 4
+    agent_timeout_sec: float = 20.0
+
     # === WeChat Backend ===
     wechat_backend: str = "wcdb"
     # Comma-separated group names to monitor. "*" = auto-discover all groups.
@@ -462,6 +476,20 @@ def _validate_config(kwargs: dict) -> None:
             f"got {feishu_auto_sync_cooldown_sec}"
         )
 
+    agent_max_tool_calls = kwargs.get("agent_max_tool_calls", 4)
+    if not (1 <= agent_max_tool_calls <= 12):
+        errors.append(
+            "AGENT_MAX_TOOL_CALLS must be between 1 and 12, "
+            f"got {agent_max_tool_calls}"
+        )
+
+    agent_timeout_sec = kwargs.get("agent_timeout_sec", 20.0)
+    if not (5 <= agent_timeout_sec <= 120):
+        errors.append(
+            "AGENT_TIMEOUT_SEC must be between 5 and 120, "
+            f"got {agent_timeout_sec}"
+        )
+
     if errors:
         msg = "配置值无效:\n" + "\n".join(f"  - {err}" for err in errors)
         raise RuntimeError(msg)
@@ -520,6 +548,15 @@ def load_config() -> BotConfig:
         "openai_api_key": os.getenv("OPENAI_API_KEY", "").strip(),
         "openai_base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").strip(),
         "openai_model": os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip(),
+        "bot_persona": os.getenv("BOT_PERSONA", "default").strip().lower(),
+        "bot_persona_prompt": os.getenv("BOT_PERSONA_PROMPT", "").strip(),
+        "agent_enabled": os.getenv("AGENT_ENABLED", "false").strip().lower() == "true",
+        "agent_max_tool_calls": _safe_int(
+            os.getenv("AGENT_MAX_TOOL_CALLS", "4"), 4, "AGENT_MAX_TOOL_CALLS",
+        ),
+        "agent_timeout_sec": _safe_float(
+            os.getenv("AGENT_TIMEOUT_SEC", "20"), 20.0, "AGENT_TIMEOUT_SEC",
+        ),
         # deepseek_model handled conditionally below (dataclass default)
         "wechat_backend": os.getenv("WECHAT_BACKEND", "wcdb").strip(),
         "wechat_groups": _decode_wechat_groups(os.getenv("WECHAT_GROUPS", "*")),

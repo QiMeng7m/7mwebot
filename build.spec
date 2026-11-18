@@ -11,6 +11,16 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH)
 
+
+# ── LangChain dynamically-imported submodules ─────────────────────────
+def _collect(package: str) -> list[str]:
+    """Collect submodules, tolerating optional dependencies."""
+    try:
+        from PyInstaller.utils.hooks import collect_submodules
+        return collect_submodules(package, on_error="ignore")
+    except Exception:
+        return []
+
 # ── Resolve webview runtime DLLs dynamically ───────────────────────────
 def _find_webview_runtime_dir():
     """Find the webview package's runtime directory in site-packages."""
@@ -63,7 +73,7 @@ a = Analysis(
         'src.summarize.deepseek_backend', 'src.summarize.models', 'src.summarize.prompts',
         'src.proactive', 'src.proactive.gate', 'src.proactive.modes',
         'src.proactive.rate_tracker', 'src.proactive.sticky',
-        'src.memory', 'src.memory.consolidator',
+        'src.memory', 'src.memory.consolidator', 'src.memory.conversation',
         'src.integrations', 'src.integrations.feishu',
         'src.integrations.feishu.client', 'src.integrations.feishu.exporter',
         'src.integrations.feishu.knowledge',
@@ -75,7 +85,8 @@ a = Analysis(
         'src.wechat.native', 'src.wechat.native.injector',
         'src.web', 'src.web.server',
         'src.router', 'src.welcome',
-        'src.todo', 'src.todo.store', 'src.todo.handler',
+        'src.agent', 'src.agent.personas', 'src.agent.tools',
+        'src.agent.factory', 'src.agent.runner',
         'src.game_utils',
         'src.koi', 'src.koi.rules', 'src.koi.signs', 'src.koi.bazi',
         'src.koi.store', 'src.koi.service', 'src.koi.handler',
@@ -87,7 +98,19 @@ a = Analysis(
         'PIL', 'PIL.Image', 'PIL.ImageDraw',
         'psutil', 'pyperclip',
         'win32api', 'comtypes',
-    ],
+        # LangChain / LangGraph agent stack.  These packages import many
+        # submodules dynamically, so collect them explicitly.
+        'langchain', 'langchain.agents', 'langchain.agents.middleware',
+        'langchain.chat_models', 'langchain_core', 'langchain_core.tools',
+        'langchain_core.messages', 'langchain_core.language_models',
+        'langchain_openai', 'langchain_anthropic',
+        'langgraph', 'langgraph.prebuilt', 'langgraph.checkpoint',
+        'langgraph.checkpoint.memory', 'langgraph.store.memory',
+        'tiktoken', 'tiktoken_ext', 'tiktoken_ext.openai_public',
+        'jsonpatch', 'jsonpointer', 'tenacity', 'yaml',
+    ] + _collect('langchain') + _collect('langchain_core')
+      + _collect('langchain_openai') + _collect('langchain_anthropic')
+      + _collect('langgraph') + _collect('tiktoken_ext'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

@@ -28,6 +28,108 @@ function TypewriterText({ text, speed = 15 }) {
   return <span>{displayedText}</span>
 }
 
+const FALLBACK_PERSONAS = [
+  { id: 'default', name: '默认', summary: '自然群友', template: '' },
+  { id: 'grumpy', name: '暴躁老哥', summary: '说话冲、爱怼人、嘴硬心软', template: '说话冲、没耐心，能三个字说完绝不说五个字；只看事不看人，对方真难受时收起脾气。' },
+  { id: 'high_eq', name: '高情商', summary: '先接情绪再聊事情', template: '先接住对方的情绪，再给建议；不说教、不否定感受，说话让人舒服。' },
+  { id: 'deadpan', name: '冷面吐槽', summary: '极简、一针见血', template: '回复极短，通常一句话；冷静克制，靠精准吐槽制造冷幽默，不解释自己的梗。' },
+  { id: 'warm', name: '暖心搭子', summary: '温柔、有耐心', template: '语气柔和有耐心，先关心人再聊事；会记得对方之前说过的话。' },
+]
+
+function PersonaSection({ form, update }) {
+  const [personas, setPersonas] = useState(FALLBACK_PERSONAS)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/personas')
+      .then(r => r.json())
+      .then(d => { if (!cancelled && d.ok && d.personas?.length) setPersonas(d.personas) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const templates = personas.filter(p => p.template)
+  const value = form.bot_persona_prompt || ''
+
+  function setPersona(text) {
+    update('bot_persona_prompt', text)
+    update('bot_persona', text.trim() ? 'custom' : 'default')
+  }
+
+  return (
+    <div className="mt-6 pt-6 border-t border-border-main/50 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex-1 mr-8">
+          <p className="text-[15px] text-text-main font-medium">Agent 工具调用</p>
+          <p className="text-sm text-text-muted mt-1.5">
+            开启后，@机器人时会先查群聊记录和群记忆再回答；任何异常自动退回普通聊天
+          </p>
+        </div>
+        <Toggle enabled={form.agent_enabled === true}
+          onChange={v => update('agent_enabled', v)} />
+      </div>
+
+      {form.agent_enabled && (
+        <div className="p-4 bg-bg-raised rounded-xl grid grid-cols-2 gap-3">
+          <ParamRow label="最多工具调用次数" hint="防止模型反复查记录，默认 4">
+            <Input type="number" value={String(form.agent_max_tool_calls ?? 4)}
+              onChange={v => update('agent_max_tool_calls', parseInt(v) || 4)} />
+          </ParamRow>
+          <ParamRow label="超时时间（秒）" hint="超过后直接退回普通聊天，默认 20">
+            <Input type="number" value={String(form.agent_timeout_sec ?? 20)}
+              onChange={v => update('agent_timeout_sec', parseInt(v) || 20)} />
+          </ParamRow>
+        </div>
+      )}
+
+      <Field label="机器人人格（自由描述）"
+        hint="直接写你想要的风格，会完整替换默认语气；留空则使用默认的自然群友风格">
+        <textarea
+          value={value}
+          onChange={e => setPersona(e.target.value)}
+          rows={6}
+          placeholder={'例如：脾气暴躁，说话冲、没耐心，能三个字说完绝不说五个字；只怼事不怼人；对方真难受时收起脾气。\n\n也可以写：高情商，先接情绪再讲道理，不敷衍也不说教。'}
+          className="w-full bg-bg-raised border border-border-main rounded-xl px-5 py-3 text-[14px] text-text-main
+                     placeholder:text-text-muted/65 leading-relaxed resize-y
+                     focus:outline-none focus:border-brand-green focus:ring-2 focus:ring-brand-green/15
+                     transition-all duration-200"
+        />
+      </Field>
+
+      <div>
+        <p className="text-xs text-text-muted mb-2">没头绪？点一个模板填入，之后随便改：</p>
+        <div className="flex flex-wrap gap-2">
+          {templates.map(p => (
+            <button key={p.id} type="button" onClick={() => setPersona(p.template)}
+              className="px-3 py-1.5 rounded-full text-xs bg-bg-raised border border-border-main
+                         text-text-muted hover:text-text-main hover:border-brand-green transition-colors">
+              {p.name}
+            </button>
+          ))}
+          {value && (
+            <button type="button" onClick={() => setPersona('')}
+              className="px-3 py-1.5 rounded-full text-xs bg-bg-raised border border-border-main
+                         text-text-muted hover:text-text-main hover:border-warning transition-colors">
+              清空
+            </button>
+          )}
+        </div>
+      </div>
+
+      {value.trim() ? (
+        <p className="text-xs text-text-muted">
+          当前使用自定义人格（{value.trim().length} 字）。保存并重启机器人后生效，可先在提示词沙箱里预览。
+        </p>
+      ) : (form.bot_persona && form.bot_persona !== 'default') && (
+        <p className="text-xs text-text-muted">
+          当前使用预设「{personas.find(p => p.id === form.bot_persona)?.name || form.bot_persona}」；
+          在上面写内容会覆盖它。
+        </p>
+      )}
+    </div>
+  )
+}
+
 function AiSection({ form, update }) {
   const isDeepSeek = form.ai_backend === 'deepseek'
   const isOpenAI = form.ai_backend === 'openai'
@@ -104,6 +206,8 @@ function AiSection({ form, update }) {
           </Field>
         </>
       )}
+
+      <PersonaSection form={form} update={update} />
 
     </div>
   )
@@ -1701,6 +1805,8 @@ function SandboxSection({ form }) {
           anthropic_api_key: form.anthropic_api_key,
           anthropic_base_url: form.anthropic_base_url,
           summarize_model: form.summarize_model,
+          bot_persona: form.bot_persona,
+          bot_persona_prompt: form.bot_persona_prompt,
         })
       })
       const data = await res.json()
@@ -1834,6 +1940,8 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
     openai_api_key: '', openai_base_url: 'https://api.openai.com/v1', openai_model: 'gpt-4o-mini',
     anthropic_api_key: '', anthropic_base_url: 'https://api.anthropic.com',
     summarize_model: 'claude-haiku-4-5-20251001',
+    bot_persona: 'default', bot_persona_prompt: '',
+    agent_enabled: false, agent_max_tool_calls: 4, agent_timeout_sec: 20,
     bot_display_name: '', wechat_backend: 'wcdb', wechat_groups: '*',
     proactive_enabled: false, proactive_rate_window_sec: 120,
     proactive_rate_quiet: 1.5, proactive_rate_casual: 4.0,
@@ -1957,6 +2065,11 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
           anthropic_api_key: form.anthropic_api_key,
           anthropic_base_url: form.anthropic_base_url,
           summarize_model: form.summarize_model,
+          bot_persona: form.bot_persona,
+          bot_persona_prompt: form.bot_persona_prompt,
+          agent_enabled: form.agent_enabled,
+          agent_max_tool_calls: form.agent_max_tool_calls,
+          agent_timeout_sec: form.agent_timeout_sec,
           bot_display_name: form.bot_display_name,
           wechat_backend: form.wechat_backend,
           wechat_groups: form.wechat_groups,

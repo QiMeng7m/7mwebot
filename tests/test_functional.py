@@ -304,6 +304,25 @@ class TestKoiApi:
         assert sender in [m["sender_id"] for m in data["members"]]
 
 
+class TestPersonasApi:
+    def test_personas_endpoint_lists_builtin_personas(self, server):
+        status, data = _api_get("/api/personas")
+        assert status == 200
+        assert data["ok"] is True
+        ids = [p["id"] for p in data["personas"]]
+        assert "grumpy" in ids
+        assert "high_eq" in ids
+        assert "custom" in ids
+
+    def test_load_config_exposes_persona_fields(self, server):
+        status, data = _api_get("/api/load-config")
+        assert status == 200
+        cfg = data["config"]
+        assert "bot_persona" in cfg
+        assert "agent_enabled" in cfg
+        assert "agent_timeout_sec" in cfg
+
+
 # ── Playwright browser-level functional tests ───────────────────────────────
 
 try:
@@ -404,4 +423,19 @@ class TestKoiPanel:
         assert "今日锦鲤池" in body
         assert "成员星盘" in body
         assert "手动调整" in body
+        assert "Something went wrong" not in body
+
+
+class TestPersonaUi:
+    def test_persona_section_renders_in_ai_config(self, page):
+        page.goto(BASE_URL, timeout=10000)
+        page.wait_for_timeout(1000)
+        config_btn = page.locator("button:has-text('系统配置')")
+        assert config_btn.count() > 0
+        config_btn.first.click()
+        page.wait_for_timeout(800)
+        body = page.inner_text("body")
+        assert "机器人人格" in body
+        assert "Agent 工具调用" in body
+        assert "自然群友" in body
         assert "Something went wrong" not in body

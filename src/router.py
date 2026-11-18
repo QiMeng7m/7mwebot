@@ -32,6 +32,7 @@ MAX_CONTENT_LENGTH = 997           # max chars per message sent to AI (997 + "..
 MAX_CONTENT_LINES = 20             # max context lines fed to AI chat prompt
 AT_MENTION_MAX_AGE_SEC = 300       # ignore @mentions older than 5 minutes (startup safety)
 WELCOME_MAX_AGE_SEC = 300          # ignore join events older than 5 minutes (startup safety)
+QUESTION_FOLLOWUP_TTL_SEC = 300    # after the bot asks a question, wait up to 5 min for the answer
 
 # Markdown patterns to strip before sending to WeChat.
 # These regexes may miss edge cases like nested formatting or asterisks at
@@ -83,6 +84,13 @@ class MessageRouter:
         self._sticky = StickyMentionTracker(
             ttl_sec=config.sticky_mention_ttl_sec,
         ) if config.sticky_mention_enabled else None
+
+        # Short-term dialogue memory: the bot's own replies are never
+        # persisted (they are dropped before insert to prevent loops), so
+        # without this an answer to the bot's question looks like a new
+        # topic.  Keyed by (chat_id, sender_id).
+        from .memory.conversation import ConversationMemory
+        self._conv = ConversationMemory(ttl_sec=1800, max_turns=6)
         self._memory = MemoryConsolidator(store, summarizer)
 
         # 星盘玩法。
@@ -108,6 +116,23 @@ class MessageRouter:
                 logger.exception("Koi system initialization failed")
                 self._koi_service = None
                 self._koi_handler = None
+
+        # AI agent (LangChain tool calling) for @mention chats.
+        # Construction is dependency-light; LangChain is imported lazily
+        # on the first agent call.  Any runtime failure falls back to the
+        # classic summarizer path.
+        try:
+            from .agent.runner import AgentRunner
+            self._agent = AgentRunner(
+                config=config,
+                summarizer=summarizer,
+                store=store,
+            )
+            self._persona_block = self._agent.persona_block
+        except Exception:
+            logger.exception("Agent initialization failed; using plain chat")
+            self._agent = None
+            self._persona_block = ""
 
         # Health monitoring: count unique messages processed (post-dedup)
         self.messages_processed: int = 0
@@ -619,15 +644,38 @@ class MessageRouter:
                 except Exception:
                     logger.exception("Koi chat context failed")
 
-            ai_reply = self._summarizer.chat(
-                message=clean_content,
-                context_messages=context,
-                requester_name=display_name,
-                bot_name=self._config.bot_display_name,
-                group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
-                group_memory=self._get_group_memory(msg["chat_id"]),
-                koi_context=koi_context,
+            # Recent Q&A with this member.  The bot's own messages are
+            # never in the DB, so this is what lets a follow-up answer
+            # connect to the question the bot just asked.
+            conversation_turns = self._conv.recent_turns(
+                msg["chat_id"], msg["sender_id"],
             )
+
+            if self._agent is not None:
+                ai_reply = self._agent.chat(
+                    chat_id=msg["chat_id"],
+                    message=clean_content,
+                    context_messages=context,
+                    requester_name=display_name,
+                    bot_name=self._config.bot_display_name,
+                    group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
+                    group_memory=self._get_group_memory(msg["chat_id"]),
+                    koi_context=koi_context,
+                    conversation_turns=conversation_turns,
+                    summarizer=self._summarizer,
+                )
+            else:
+                ai_reply = self._summarizer.chat(
+                    message=clean_content,
+                    context_messages=context,
+                    requester_name=display_name,
+                    bot_name=self._config.bot_display_name,
+                    group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
+                    group_memory=self._get_group_memory(msg["chat_id"]),
+                    koi_context=koi_context,
+                    persona_section=self._persona_block,
+                    conversation_turns=conversation_turns,
+                )
             ai_reply = self._nicks.resolve_wxids(ai_reply)
             # Guard against empty AI reply — sending a bare @mention is confusing
             if not ai_reply or not ai_reply.strip():
@@ -636,6 +684,23 @@ class MessageRouter:
                     display_name, msg.get("group_name", msg["chat_id"][:20]),
                 )
                 return None
+
+            # Remember this exchange so the next message from the same
+            # member can refer back to what the bot asked.
+            self._conv.add_turn(
+                msg["chat_id"], msg["sender_id"], clean_content, ai_reply,
+            )
+
+            # If the bot asked a question, arm a one-shot sticky mention.
+            # The user's next message then counts as a follow-up even
+            # without @, so answering "摸鱼群" reaches _handle_chat with
+            # the dialogue history attached.
+            if self._sticky is not None and ("?" in ai_reply or "？" in ai_reply):
+                self._sticky.register(
+                    msg["chat_id"], msg["sender_id"],
+                    ttl_sec=QUESTION_FOLLOWUP_TTL_SEC,
+                )
+
             return f"@{display_name} {ai_reply}"
         except Exception as e:
             logger.error("AI chat failed: %s", e)
@@ -747,6 +812,7 @@ class MessageRouter:
                 bot_name=self._config.bot_display_name,
                 group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
                 group_memory=self._get_group_memory(msg["chat_id"]),
+                persona_section=self._persona_block,
             )
         except Exception as e:
             logger.error("Proactive chat API failed: %s", e)

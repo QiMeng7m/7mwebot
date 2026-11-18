@@ -39,10 +39,14 @@ class StickyMentionTracker:
 
     # ── Public API ──────────────────────────────────────────────────
 
-    def register(self, chat_id: str, sender_id: str) -> None:
+    def register(self, chat_id: str, sender_id: str,
+                 ttl_sec: int | None = None) -> None:
         """Record a sticky mention for (chat_id, sender_id).
 
         Overwrites any existing entry for the same key, extending the TTL.
+        ``ttl_sec`` optionally overrides the tracker default for this
+        entry (used when the bot asks a question and expects a considered
+        answer rather than an immediate one).
         Tracks re-registration count; after 3 consecutive re-registrations
         without a consume, further re-registrations are logged at WARNING
         and the count is stopped to prevent an infinite loop from a
@@ -68,12 +72,13 @@ class StickyMentionTracker:
             else:
                 self._re_reg_count.pop(key, None)
 
-            expiry = time.time() + self._ttl
+            expiry = time.time() + (ttl_sec if ttl_sec else self._ttl)
             self._entries[key] = expiry
             logger.debug(
                 "Sticky mention %s: chat=%s sender=%s (expires in %ds)",
                 "extended" if existed else "registered",
-                chat_id[:20], sender_id[:20], self._ttl,
+                chat_id[:20], sender_id[:20],
+                ttl_sec if ttl_sec else self._ttl,
             )
 
     def consume(self, chat_id: str, sender_id: str) -> bool:

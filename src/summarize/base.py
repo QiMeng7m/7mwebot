@@ -96,6 +96,9 @@ class AbstractSummarizer(ABC):
 群友A: @{bot_name} 你是不是暗恋我
 → ？你想太多了
 
+## 人格设定（优先级最高，覆盖上文所有风格、语气与示例）
+{persona_section}
+
 ## 回复规则
 - 直接回，不铺垫，不总结上文，不列编号。
 - 说自己的看法，不用每句话都中立客观。
@@ -110,6 +113,9 @@ class AbstractSummarizer(ABC):
 
 ## 禁止用词
 根据上下文、综上所述、首先其次最后、需要注意的是、值得一提的是、可谓是、不得不说、从某种角度来说、建议您、希望对你有所帮助
+
+## 你和这位群友最近的对话（重要）
+{conversation_section}
 
 ## 对方的星盘数据（系统提供，真实可信）
 {koi_section}
@@ -132,7 +138,9 @@ class AbstractSummarizer(ABC):
              bot_name: str = "群聊小助手",
              group_name: str = "群聊",
              group_memory: str = "",
-             koi_context: str | None = None) -> str:
+             koi_context: str | None = None,
+             persona_section: str = "",
+             conversation_turns: list[dict] | None = None) -> str:
         """Conversational AI response for @bot mentions.
 
         Args:
@@ -145,9 +153,73 @@ class AbstractSummarizer(ABC):
             koi_context: Requester's 星盘/八字 snapshot (read-only, from
                 KoiService.chat_context).  None when the feature is off or
                 the caller is a dedicated 批命/解签 narration.
+            persona_section: Rendered persona block from src.agent.personas.
+                Empty keeps the built-in default tone.
+            conversation_turns: Recent (user, bot) pairs for this member,
+                from src.memory.conversation.  Lets the model follow up on
+                a question it asked instead of treating the answer as a
+                brand-new topic.
 
         Returns:
             AI response text.
+        """
+        system_prompt, user_prompt = self.build_chat_prompts(
+            message=message,
+            context_messages=context_messages,
+            requester_name=requester_name,
+            bot_name=bot_name,
+            group_name=group_name,
+            group_memory=group_memory,
+            koi_context=koi_context,
+            persona_section=persona_section,
+            conversation_turns=conversation_turns,
+        )
+
+        # ── 4. Call AI API (backend-specific) ─────────────────────
+        return self._retry_with_backoff(
+            lambda: self._call_chat_api(
+                system_prompt,
+                [{"role": "user", "content": user_prompt}],
+            ),
+            "AI chat",
+        )
+
+    @staticmethod
+    def _render_conversation(turns: list[dict] | None) -> str:
+        """Render recent (user, bot) pairs into a prompt section."""
+        if not turns:
+            return "（这是你们最近的第一次对话，或之前的对话已经过去太久）"
+        lines = []
+        for turn in turns[-6:]:
+            user_text = str(turn.get("user", "") or "").strip()
+            bot_text = str(turn.get("bot", "") or "").strip()
+            if user_text:
+                lines.append(f"群友：{user_text}")
+            if bot_text:
+                lines.append(f"你：{bot_text}")
+        if not lines:
+            return "（无）"
+        lines.append("")
+        lines.append(
+            "回答时必须结合这段对话：接着上文说，不要重复你已经问过的问题，"
+            "也不要把对方的回答当成独立的新话题。"
+        )
+        return "\n".join(lines)
+
+    def build_chat_prompts(self, message: str,
+                           context_messages: list[dict] | None = None,
+                           requester_name: str = "",
+                           bot_name: str = "群聊小助手",
+                           group_name: str = "群聊",
+                           group_memory: str = "",
+                           koi_context: str | None = None,
+                           persona_section: str = "",
+                           conversation_turns: list[dict] | None = None
+                           ) -> tuple[str, str]:
+        """Render the (system, user) prompts for a conversational reply.
+
+        Shared by the classic API-call path and the LangChain agent path
+        so both see identical context and persona instructions.
         """
         import datetime
 
@@ -163,6 +235,21 @@ class AbstractSummarizer(ABC):
         requester_name = _esc(requester_name or "群友")
         message = _esc(message)
         koi_section = koi_context or "（无）"
+
+        # ── 0. Persona override (highest priority) ────────────────
+        # NOTE: like koi_section, this is a *format argument*, not part of
+        # the template — braces must NOT be escaped or they survive
+        # literally into the rendered prompt.
+        persona_display = (
+            persona_section.strip()
+            if persona_section and persona_section.strip()
+            else "（无额外设定，按上面的默认风格）"
+        )
+
+        # ── 0. Recent dialogue with this member ──────────────────
+        # WeChat never persists the bot's own replies, so this is the only
+        # place the model can see the question it just asked.
+        conversation_display = self._render_conversation(conversation_turns)
 
         # ── 0. Memory display ────────────────────────────────────
         memory_display = (
@@ -200,21 +287,15 @@ class AbstractSummarizer(ABC):
             current_message=message,
             group_memory=memory_display,
             koi_section=koi_section,
+            persona_section=persona_display,
+            conversation_section=conversation_display,
         )
 
         # ── 3. Build user message (just the trigger) ──────────────
         user_prompt = (
             f"{requester_name or '群友'} @了你，请回复：{message}"
         )
-
-        # ── 4. Call AI API (backend-specific) ─────────────────────
-        return self._retry_with_backoff(
-            lambda: self._call_chat_api(
-                system_prompt,
-                [{"role": "user", "content": user_prompt}],
-            ),
-            "AI chat",
-        )
+        return system_prompt, user_prompt
 
     # ── Proactive chat (ambient participation, no @mention) ────────
 
@@ -287,6 +368,9 @@ class AbstractSummarizer(ABC):
 - 可以适度使用表情，让语气更自然。
 - 对方认真说事时少抖机灵，语气放轻。
 
+## 人格设定（优先级最高，覆盖上文所有风格与语气描述）
+{persona_section}
+
 ## 当前群聊状态
 氛围模式：{mode_label}（{mode_description}）
 你应该：{mode_instruction}
@@ -311,7 +395,8 @@ class AbstractSummarizer(ABC):
     def proactive_chat(self, mode, context_messages: list[dict],
                        bot_name: str = "群聊小助手",
                        group_name: str = "群聊",
-                       group_memory: str = "") -> str:
+                       group_memory: str = "",
+                       persona_section: str = "") -> str:
         """Generate a spontaneous chat reply based on conversation context.
 
         The AI is explicitly told it may return blank when it judges the
@@ -358,6 +443,11 @@ class AbstractSummarizer(ABC):
 
         recent_messages = _esc("\n".join(recent_lines))
         memory_display = _esc(memory_display)
+        persona_display = (
+            persona_section.strip()
+            if persona_section and persona_section.strip()
+            else "（无额外设定，按上面的默认风格）"
+        )
 
         system_prompt = self.PROACTIVE_SYSTEM_PROMPT.format(
             bot_name=bot_name,
@@ -369,6 +459,7 @@ class AbstractSummarizer(ABC):
             current_time=datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
             recent_messages=recent_messages,
             group_memory=memory_display,
+            persona_section=persona_display,
         )
 
         user_prompt = "如果你想说话，现在就发一条。如果不想说话，回复空白。"

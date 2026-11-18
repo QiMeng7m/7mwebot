@@ -229,6 +229,11 @@ def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
     put("ANTHROPIC_API_KEY", "anthropic_api_key")
     put("ANTHROPIC_BASE_URL", "anthropic_base_url")
     put("SUMMARIZE_MODEL", "summarize_model")
+    put("BOT_PERSONA", "bot_persona")
+    put("BOT_PERSONA_PROMPT", "bot_persona_prompt")
+    put("AGENT_ENABLED", "agent_enabled", transform=as_bool)
+    put("AGENT_MAX_TOOL_CALLS", "agent_max_tool_calls")
+    put("AGENT_TIMEOUT_SEC", "agent_timeout_sec")
     put("BOT_DISPLAY_NAME", "bot_display_name")
     put("WECHAT_BACKEND", "wechat_backend")
     put("WECHAT_GROUPS", "wechat_groups", empty="*")
@@ -1178,6 +1183,12 @@ class _UIHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True})
             return
 
+        # ── API: Available personas (for the config dropdown) ──────────
+        if self.path == "/api/personas":
+            from src.agent.personas import persona_choices
+            self.send_json({"ok": True, "personas": persona_choices()})
+            return
+
         # ── API: Load config ───────────────────────────────────────────
         if self.path == "/api/load-config":
             from src.config import _decode_wechat_groups  # noqa: F811 - needed before use (scoping)
@@ -1201,6 +1212,11 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 "anthropic_api_key": _mask_key(raw.get("ANTHROPIC_API_KEY", "")),
                 "anthropic_base_url": raw.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
                 "summarize_model": raw.get("SUMMARIZE_MODEL", "claude-haiku-4-5-20251001"),
+                "bot_persona": raw.get("BOT_PERSONA", "default"),
+                "bot_persona_prompt": raw.get("BOT_PERSONA_PROMPT", ""),
+                "agent_enabled": raw.get("AGENT_ENABLED", "false").lower() == "true",
+                "agent_max_tool_calls": _int_env(raw.get("AGENT_MAX_TOOL_CALLS", "4"), 4),
+                "agent_timeout_sec": _float_env(raw.get("AGENT_TIMEOUT_SEC", "20"), 20.0),
                 "bot_display_name": raw.get("BOT_DISPLAY_NAME", ""),
                 "wechat_backend": raw.get("WECHAT_BACKEND", "wcdb"),
                 "wechat_groups": _decode_wechat_groups(raw.get("WECHAT_GROUPS", "*")),
@@ -1262,6 +1278,11 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     "anthropic_api_key": _mask_key(raw.get("ANTHROPIC_API_KEY", "")),
                     "anthropic_base_url": raw.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
                     "summarize_model": raw.get("SUMMARIZE_MODEL", "claude-haiku-4-5-20251001"),
+                    "bot_persona": raw.get("BOT_PERSONA", "default"),
+                    "bot_persona_prompt": raw.get("BOT_PERSONA_PROMPT", ""),
+                    "agent_enabled": raw.get("AGENT_ENABLED", "false").lower() == "true",
+                    "agent_max_tool_calls": _int_env(raw.get("AGENT_MAX_TOOL_CALLS", "4"), 4),
+                    "agent_timeout_sec": _float_env(raw.get("AGENT_TIMEOUT_SEC", "20"), 20.0),
                     "bot_display_name": raw.get("BOT_DISPLAY_NAME", ""),
                     "wechat_backend": raw.get("WECHAT_BACKEND", "wcdb"),
                     "wechat_groups": raw.get("WECHAT_GROUPS", "*"),
@@ -1861,6 +1882,20 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 # Create summarizer
                 summarizer = create_summarizer(config)
 
+                # Persona preview: try the requested persona before the
+                # saved one, so the user can compare personalities in the
+                # sandbox without restarting the bot.
+                persona_id = data.get("bot_persona")
+                if persona_id is None:
+                    persona_id = getattr(config, "bot_persona", "default")
+                persona_prompt = data.get("bot_persona_prompt")
+                if persona_prompt is None:
+                    persona_prompt = getattr(config, "bot_persona_prompt", "")
+                from src.agent.personas import resolve_persona, render_persona_block
+                persona_section = render_persona_block(
+                    resolve_persona(str(persona_id), str(persona_prompt))
+                )
+
                 # Call chat
                 reply = summarizer.chat(
                     message=message,
@@ -1869,6 +1904,7 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     bot_name=config.bot_display_name or "群聊小助手",
                     group_name=group_name,
                     group_memory=group_memory,
+                    persona_section=persona_section,
                 )
 
                 self.send_json({
