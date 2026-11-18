@@ -357,6 +357,21 @@ class Bot:
         else:
             logger.info("Model: %s", config.summarize_model)
         logger.info("Bot name: %r", config.bot_display_name)
+        # Makes it obvious at startup whether the persona actually loaded.
+        persona_prompt = str(getattr(config, "bot_persona_prompt", "") or "")
+        if persona_prompt.strip():
+            logger.info(
+                "Persona: custom (%d chars) — %s…",
+                len(persona_prompt), persona_prompt[:30],
+            )
+        else:
+            logger.info("Persona: preset %r", getattr(config, "bot_persona", "default"))
+        logger.info(
+            "Agent: %s (max %s tool calls, %ss timeout)",
+            "enabled" if getattr(config, "agent_enabled", False) else "disabled",
+            getattr(config, "agent_max_tool_calls", 4),
+            getattr(config, "agent_timeout_sec", 20),
+        )
         if config.wechat_groups:
             logger.info("Groups: %s", config.wechat_groups)
         logger.info("DB path: %s", config.db_path)
