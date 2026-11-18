@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.config import BotConfig
 from src.db.schema import initialize_db
@@ -226,6 +227,16 @@ class ServiceTests(KoiTestBase):
         board = self.service.leaderboard(self.msg)
         self.assertIn("【气运榜】", board)
         self.assertIn("张三", board)
+
+    def test_leaderboard_lists_members_who_only_signed(self):
+        # 求签 grants 香火 but no 气运; the member must still appear.
+        self.service.sign(self.msg)
+        self.assertEqual(
+            self.store.fortune("1@chatroom", "wxid_a"), 0)
+        board = self.service.leaderboard(self.msg)
+        self.assertIn("【气运榜】", board)
+        self.assertIn("张三", board)
+        self.assertIn("香火", board)
 
     def test_identity_setup(self):
         reply = self.service.set_sign(self.msg, "设置生日 10-24")
@@ -548,6 +559,20 @@ class FeatureTests(KoiTestBase):
         self.assertIn("【CP榜】", board)
         self.assertIn("Top5", board)
 
+    def test_cp_board_shows_names_and_needs_signs(self):
+        self.service.set_sign(self.msg, "我是 天蝎座")
+        other = make_msg(sender_id="wxid_b", name="李四")
+        self.service.set_sign(other, "我是 双鱼座")
+        mbti_only = make_msg(sender_id="wxid_c", name="王五")
+        self.service.set_mbti(mbti_only, "我是 INFP")
+
+        board = self.service.cp_board(self.msg)
+        self.assertIn("张三", board)
+        self.assertIn("李四", board)
+        # MBTI-only profiles cannot be paired and must not render 「—」.
+        self.assertNotIn("王五", board)
+        self.assertNotIn("— × —", board)
+
     def test_observe_rolls_dice_and_collects(self):
         reply = self.service.observe(self.msg)
         self.assertIn("星骰", reply)
@@ -598,6 +623,40 @@ class FeatureTests(KoiTestBase):
         msg["mentioned_ids"] = ["wxid_b"]
         reply = self.handler.handle("斗星", msg)
         self.assertIn("斗星", reply)
+
+    def test_handler_resolves_group_nickname_with_spaces(self):
+        # WeChat @-mentions carry the group nickname, which may contain
+        # spaces and differ from the contact display name.
+        members = {"zy-519": "降娄"}
+        nicknames = {"zy-519": "萧山 九年义务教育漏网之鱼"}
+        msg = make_msg(
+            "合盘 @萧山 九年义务教育漏网之鱼 ", name="张三")
+        with patch("src.koi.handler.load_group_members",
+                   return_value=members), \
+                patch("src.koi.handler.load_group_nicknames",
+                      return_value=nicknames):
+            reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("双方都要先设置星座", reply)
+
+    def test_handler_resolves_custom_wxid_mention(self):
+        members = {"zy-519": "降娄"}
+        msg = make_msg("斗星 @zy-519 ", name="张三")
+        with patch("src.koi.handler.load_group_members",
+                   return_value=members), \
+                patch("src.koi.handler.load_group_nicknames",
+                      return_value={}):
+            reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("斗星", reply)
+        self.assertIn("降娄", reply)
+
+    def test_handler_reports_unresolved_mention(self):
+        msg = make_msg("合盘 @不存在的人 ", name="张三")
+        with patch("src.koi.handler.load_group_members",
+                   return_value={}), \
+                patch("src.koi.handler.load_group_nicknames",
+                      return_value={}):
+            reply = self.handler.handle(msg["content"], msg)
+        self.assertIn("没找到「不存在的人」", reply)
 
 
 class BaziTests(KoiTestBase):

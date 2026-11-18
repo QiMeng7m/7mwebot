@@ -84,19 +84,42 @@ class KoiStore:
         return int(row["total"] or 0) if row is not None else 0
 
     def leaderboard(self, chat_id: str, limit: int = 10) -> list[dict]:
+        """Rank every interacted member by 气运, then 香火.
+
+        Members who have only 求签 (which grants 香火, not 气运) must
+        still appear — an empty 气运榜 while people are signing looked
+        like a bug to users.
+        """
         with self._lock:
             rows = self.conn.execute(
                 """SELECT sender_id, MAX(sender_name) AS sender_name,
-                          SUM(amount) AS fortune
+                          SUM(CASE WHEN kind='fortune' THEN amount
+                                   ELSE 0 END) AS fortune,
+                          SUM(CASE WHEN kind='merit' THEN amount
+                                   ELSE 0 END) AS merit
                    FROM koi_ledger
-                   WHERE chat_id=? AND kind='fortune'
+                   WHERE chat_id=?
                    GROUP BY sender_id
-                   HAVING fortune > 0
-                   ORDER BY fortune DESC, sender_id ASC
+                   ORDER BY fortune DESC, merit DESC, sender_id ASC
                    LIMIT ?""",
                 (str(chat_id), max(1, int(limit))),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def member_names(self, chat_id: str) -> dict[str, str]:
+        """Return the last known ``{sender_id: sender_name}`` for a chat."""
+        with self._lock:
+            rows = self.conn.execute(
+                """SELECT sender_id, MAX(sender_name) AS sender_name
+                   FROM koi_ledger
+                   WHERE chat_id=?
+                   GROUP BY sender_id""",
+                (str(chat_id),),
+            ).fetchall()
+        return {
+            str(row["sender_id"]): str(row["sender_name"] or row["sender_id"])
+            for row in rows
+        }
 
     def chat_ids(self) -> list[str]:
         with self._lock:

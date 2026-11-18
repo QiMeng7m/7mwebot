@@ -1084,8 +1084,14 @@ class KoiService:
         chat_id, sender_id, sender_name = self._ids(msg)
         prefix = self._settle_prefix(chat_id)
         self._ensure_member(chat_id, sender_id, sender_name)
-        if not target_id or target_id == sender_id:
+        if not target_id:
+            if target_name:
+                return prefix + (
+                    f"没找到「{target_name}」对应的群成员。\n"
+                    f"👉 直接 @TA 再发「斗星」。")
             return prefix + "请 @ 一位群友再斗星。"
+        if target_id == sender_id:
+            return prefix + "不能和自己斗星，请 @ 另一位群友。"
         day = local_day()
         daily = self._daily(chat_id, sender_id, day)
         used = int(daily.get("duel_star_used") or 0)
@@ -1125,8 +1131,14 @@ class KoiService:
             return None
         chat_id, sender_id, sender_name = self._ids(msg)
         self._ensure_member(chat_id, sender_id, sender_name)
-        if not target_id or target_id == sender_id:
+        if not target_id:
+            if target_name:
+                return (
+                    f"没找到「{target_name}」对应的群成员。\n"
+                    f"👉 直接 @TA 再发「合盘」。")
             return "请 @ 一位群友再合盘。"
+        if target_id == sender_id:
+            return "不能和自己合盘，请 @ 另一位群友。"
         a = self._profile(chat_id, sender_id)
         b = self._profile(chat_id, target_id)
         if not a.get("sign") or not b.get("sign"):
@@ -1267,23 +1279,32 @@ class KoiService:
         if not self.enabled(msg):
             return None
         chat_id, _, _ = self._ids(msg)
+        # Only members with a sign can be paired meaningfully; an
+        # MBTI-only profile used to show up as 「巨蟹座 × —」.
         profiles = [p for p in self._store.all_profiles(chat_id)
-                    if p.get("sign") or p.get("mbti")][:50]
+                    if p.get("sign")][:50]
         if len(profiles) < 2:
-            return "至少需要 2 个人设置命盘才能排 CP 榜。"
+            return ("至少需要 2 个人设置星座才能排 CP 榜。\n"
+                    "👉 发「我是 天蝎座」加入。")
+        names = self._store.member_names(chat_id)
         pairs = []
         for i in range(len(profiles)):
             for j in range(i + 1, len(profiles)):
                 a, b = profiles[i], profiles[j]
                 result = rules.compatibility(a, b)
-                pairs.append((result["score"], result["text"], a, b))
-        pairs.sort(key=lambda x: -x[0])
+                pairs.append((result["score"], a, b))
+        pairs.sort(key=lambda x: (
+            -x[0], str(x[1].get("sender_id") or ""),
+            str(x[2].get("sender_id") or "")))
         lines = ["【CP榜】本群契合度 Top5"]
-        for score, text, a, b in pairs[:5]:
+        for index, (score, a, b) in enumerate(pairs[:5], 1):
+            a_id = str(a.get("sender_id") or "")
+            b_id = str(b.get("sender_id") or "")
             lines.append(
-                f"{a.get('sign') or '—'} × {b.get('sign') or '—'}"
-                f"（{a.get('mbti') or '—'} / {b.get('mbti') or '—'}）"
-                f" — {score}")
+                f"{index}. {names.get(a_id) or a_id} × "
+                f"{names.get(b_id) or b_id} — {score}"
+                f"（{a.get('sign') or '—'} / {b.get('sign') or '—'}"
+                f"｜{a.get('mbti') or '—'} / {b.get('mbti') or '—'}）")
         lines.append("👉 发「合盘 @某人」看详细解读。")
         return "\n".join(lines)
 
@@ -1441,10 +1462,14 @@ class KoiService:
             rank = rules.rank_for(int(row["fortune"]))
             lines.append(
                 f"{index}. {row['sender_name'] or row['sender_id']} — "
-                f"{row['fortune']}（{rank['name']}）"
+                f"气运 {row['fortune']}（{rank['name']}）"
+                f"｜香火 {int(row.get('merit') or 0)}"
             )
         mine = self._store.fortune(chat_id, sender_id)
-        lines.append(f"我的气运：{mine}（{rules.rank_for(mine)['name']}）")
+        balance = self._store.balance(chat_id, sender_id)
+        lines.append(
+            f"我的气运：{mine}（{rules.rank_for(mine)['name']}）"
+            f"｜香火 {balance}")
         lines.append("👉 发「放生」把香火换成气运。")
         return "\n".join(lines)
 
