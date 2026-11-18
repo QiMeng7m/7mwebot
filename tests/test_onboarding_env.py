@@ -19,7 +19,6 @@ class OnboardingEnvTests(unittest.TestCase):
     def test_feature_toggles_are_written(self):
         with server._onboarding_lock:
             server._onboarding_data.update({
-                "fun_enabled": False,
                 "proactive_enabled": True,
                 "sticky_mention_enabled": False,
                 "key": "a" * 64,
@@ -30,7 +29,6 @@ class OnboardingEnvTests(unittest.TestCase):
             server._write_onboarding_to_env(env_path)
             text = env_path.read_text(encoding="utf-8")
 
-        self.assertIn("FUN_ENABLED=false", text)
         self.assertIn("PROACTIVE_ENABLED=true", text)
         self.assertIn("STICKY_MENTION_ENABLED=false", text)
         self.assertIn("ONBOARDING_DONE=true", text)

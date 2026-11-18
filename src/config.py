@@ -127,9 +127,9 @@ def find_env_file() -> Path | None:
     if canonical.exists():
         return canonical
 
-    legacy = Path.cwd() / ".env"
-    if legacy != canonical and legacy.exists():
-        return legacy
+    fallback = Path.cwd() / ".env"
+    if fallback != canonical and fallback.exists():
+        return fallback
 
     return None
 
@@ -230,10 +230,6 @@ class BotConfig:
     # === Database ===
     db_path: str = "data/messages.db"
 
-    # === Fun Features ===
-    # @抽签 — draw a fortune lot (上上签/大吉/中吉/小吉/末吉/凶)
-    fun_enabled: bool = True
-
     # === Proactive Participation ===
     # Master switch — enable autonomous chat participation without @mention
     proactive_enabled: bool = False
@@ -291,86 +287,33 @@ class BotConfig:
         "删掉", "删除", "取消", "不要了",
     ])
 
-    # === Activity Points ===
-    # Master switch — award points for group messages, enable 修炼值 commands.
-    points_enabled: bool = True
-    # Comma-separated group names where points are active. "*" = all groups.
-    points_groups: list[str] = field(default_factory=lambda: ["*"])
-    points_base_score: int = 1
-    points_length_min_chars: int = 20
-    points_length_bonus: int = 1
-    points_long_length_min_chars: int = 100
-    points_long_length_bonus: int = 1
-    points_media_bonus: int = 1
-    points_reply_bonus: int = 2
-    points_daily_first_bonus: int = 10
-    points_per_message_cap: int = 5
-    # 0 = unlimited: count every message and never stop for the day.
-    points_rate_limit_per_min: int = 0
-    points_daily_cap: int = 0
-    # Suppress the last N identical messages per member (0 = off).
-    points_dedup_window: int = 0
-    points_max_age_sec: int = 300
-    points_board_size: int = 10
-    points_levels_path: str = "data/point_levels.json"
-
-    # === Equipment Shop ===
-    equipment_enabled: bool = True
-    equipment_path: str = "data/equipment.json"
-
-    # === Duels (切磋) ===
-    duel_enabled: bool = True
-    duel_groups: list[str] = field(default_factory=lambda: ["*"])
-    duel_prob_k: float = 1.15
-    duel_min_prob: float = 0.08
-    duel_max_prob: float = 0.92
-    duel_base_steal_ratio: float = 0.08
-    duel_reward_k: float = 1.2
-    duel_per_fight_cap: int = 20
-    duel_daily_attempts: int = 10
-    # Max duels between the same attacker → defender per day.
-    duel_daily_pair_attempts: int = 5
-    duel_daily_steal_cap: int = 50
-    duel_pair_cooldown_sec: int = 300
-    duel_loss_cooldown_sec: int = 120
-    duel_novice_protection_points: int = 20
-    shield_price: int = 20
-    shield_duration_sec: int = 14400
-    shield_max_sec: int = 86400
-
-    # === Fishing (钓鱼) ===
-    # Fishing credits balance only (never cumulative points / levels).
-    fishing_enabled: bool = True
-    fishing_groups: list[str] = field(default_factory=lambda: ["*"])
-    fishing_catalog_path: str = "data/fishing.json"
-    # Max casts per member per local clock hour (resets every hour).
-    fishing_hourly_attempts: int = 30
-    # Max balance from fishing per member per day (0 = unlimited).
-    fishing_daily_cap: int = 0
-    fishing_cooldown_sec: int = 5
-    fishing_max_batch: int = 10
-    fishing_miss_chance: float = 0.15
-
-    # === World Boss / 群副本 ===
-    # Weekly cooperative boss: HP scales with group size.  Each member
-    # holds up to boss_max_attempts charges and regenerates one every
-    # boss_cooldown_sec.  The kill pool is split by damage share.
-    boss_enabled: bool = True
-    boss_groups: list[str] = field(default_factory=lambda: ["*"])
-    boss_cooldown_sec: int = 1800
-    boss_max_attempts: int = 3
-    boss_hp_per_member: int = 600
-    boss_min_hp: int = 3000
-    boss_max_hp: int = 30000
-    boss_reward_ratio: float = 0.15
-
-    # === Daily Lottery (每日抽奖) ===
-    # Every draw costs balance and can return points, balance, equipment,
-    # fishing rods/baits or shields.  Higher-value rewards are rarer.
-    lottery_enabled: bool = True
-    lottery_groups: list[str] = field(default_factory=lambda: ["*"])
-    lottery_cost: int = 100
-    lottery_daily_attempts: int = 3
+    # === 星盘玩法 ================================================
+    koi_enabled: bool = True
+    koi_groups: list[str] = field(default_factory=lambda: ["*"])
+    koi_sign_merit: int = 50
+    koi_observe_merit: int = 30
+    koi_chat_merit_per_message: int = 1
+    koi_chat_merit_daily_cap: int = 20
+    koi_release_cost: int = 30
+    koi_release_fortune: int = 3
+    koi_reroll_cost: int = 50
+    koi_welcome_merit: int = 100
+    koi_sign_change_days: int = 30
+    koi_mbti_change_days: int = 30
+    koi_draw_cost: int = 100
+    koi_draw_daily_limit: int = 3
+    koi_draw_pity: int = 30
+    koi_pool_min: int = 10
+    koi_pool_max_per_day: int = 200
+    koi_pool_hour: int = 21
+    koi_pool_winner_ratio: float = 0.80
+    koi_pool_refund_ratio: float = 0.15
+    koi_duel_star_daily_limit: int = 3
+    koi_weekly_reward_merit: int = 100
+    koi_weekly_reward_fortune: int = 5
+    koi_hexagram_merit: int = 10
+    koi_fortune_merit: int = 10
+    koi_fortune_luck: int = 3
 
     # === Tuning ===
     poll_interval_sec: float = 1.0
@@ -538,75 +481,6 @@ def _validate_config(kwargs: dict) -> None:
             f"got {feishu_auto_sync_cooldown_sec}"
         )
 
-    # Activity points / duels
-    points_per_message_cap = kwargs.get("points_per_message_cap", 5)
-    if not (1 <= points_per_message_cap <= 100):
-        errors.append(
-            "POINTS_PER_MESSAGE_CAP must be between 1 and 100, "
-            f"got {points_per_message_cap}"
-        )
-
-    points_rate_limit_per_min = kwargs.get("points_rate_limit_per_min", 0)
-    if not (0 <= points_rate_limit_per_min <= 120):
-        errors.append(
-            "POINTS_RATE_LIMIT_PER_MIN must be between 0 and 120 "
-            "(0 = unlimited), "
-            f"got {points_rate_limit_per_min}"
-        )
-
-    points_daily_cap = kwargs.get("points_daily_cap", 0)
-    if not (0 <= points_daily_cap <= 10000):
-        errors.append(
-            "POINTS_DAILY_CAP must be between 0 and 10000 "
-            "(0 = unlimited), "
-            f"got {points_daily_cap}"
-        )
-
-    points_dedup_window = kwargs.get("points_dedup_window", 0)
-    if not (0 <= points_dedup_window <= 10):
-        errors.append(
-            "POINTS_DEDUP_WINDOW must be between 0 and 10 "
-            "(0 = off), "
-            f"got {points_dedup_window}"
-        )
-
-    duel_min_prob = kwargs.get("duel_min_prob", 0.08)
-    duel_max_prob = kwargs.get("duel_max_prob", 0.92)
-    if not (0.0 <= duel_min_prob < duel_max_prob <= 1.0):
-        errors.append(
-            "DUEL_MIN_PROB / DUEL_MAX_PROB must satisfy "
-            "0 <= min < max <= 1, got "
-            f"{duel_min_prob} / {duel_max_prob}"
-        )
-
-    duel_daily_attempts = kwargs.get("duel_daily_attempts", 10)
-    if not (1 <= duel_daily_attempts <= 100):
-        errors.append(
-            "DUEL_DAILY_ATTEMPTS must be between 1 and 100, "
-            f"got {duel_daily_attempts}"
-        )
-
-    fishing_hourly_attempts = kwargs.get("fishing_hourly_attempts", 30)
-    if not (1 <= fishing_hourly_attempts <= 200):
-        errors.append(
-            "FISHING_HOURLY_ATTEMPTS must be between 1 and 200, "
-            f"got {fishing_hourly_attempts}"
-        )
-
-    fishing_daily_cap = kwargs.get("fishing_daily_cap", 0)
-    if not (0 <= fishing_daily_cap <= 10000):
-        errors.append(
-            "FISHING_DAILY_CAP must be between 0 and 10000, "
-            f"got {fishing_daily_cap}"
-        )
-
-    fishing_miss_chance = kwargs.get("fishing_miss_chance", 0.15)
-    if not (0.0 <= fishing_miss_chance <= 0.9):
-        errors.append(
-            "FISHING_MISS_CHANCE must be between 0 and 0.9, "
-            f"got {fishing_miss_chance}"
-        )
-
     if errors:
         msg = "配置值无效:\n" + "\n".join(f"  - {err}" for err in errors)
         raise RuntimeError(msg)
@@ -710,7 +584,6 @@ def load_config() -> BotConfig:
         "feishu_bitable_app_token": os.getenv("FEISHU_BITABLE_APP_TOKEN", "").strip(),
         "feishu_bitable_table_id": os.getenv("FEISHU_BITABLE_TABLE_ID", "").strip(),
         "feishu_doc_folder_token": os.getenv("FEISHU_DOC_FOLDER_TOKEN", "").strip(),
-        "fun_enabled": os.getenv("FUN_ENABLED", "true").strip().lower() == "true",
         "summarize_enabled": os.getenv("SUMMARIZE_ENABLED", "true").strip().lower() == "true",
         "proactive_enabled": os.getenv("PROACTIVE_ENABLED", "false").strip().lower() == "true",
         # proactive_rate_window_sec handled conditionally below (dataclass default)
@@ -732,65 +605,36 @@ def load_config() -> BotConfig:
         "todo_completed_retention_days": _safe_int(os.getenv("TODO_COMPLETED_RETENTION_DAYS", "30"), 30, "TODO_COMPLETED_RETENTION_DAYS"),
         "todo_deleted_retention_days": _safe_int(os.getenv("TODO_DELETED_RETENTION_DAYS", "30"), 30, "TODO_DELETED_RETENTION_DAYS"),
         # Activity points
-        "points_enabled": os.getenv("POINTS_ENABLED", "true").strip().lower() == "true",
-        "points_groups": [g.strip() for g in os.getenv("POINTS_GROUPS", "*").split(",") if g.strip()],
-        "points_base_score": _safe_int(os.getenv("POINTS_BASE_SCORE", "1"), 1, "POINTS_BASE_SCORE"),
-        "points_length_min_chars": _safe_int(os.getenv("POINTS_LENGTH_MIN_CHARS", "20"), 20, "POINTS_LENGTH_MIN_CHARS"),
-        "points_length_bonus": _safe_int(os.getenv("POINTS_LENGTH_BONUS", "1"), 1, "POINTS_LENGTH_BONUS"),
-        "points_long_length_min_chars": _safe_int(os.getenv("POINTS_LONG_LENGTH_MIN_CHARS", "100"), 100, "POINTS_LONG_LENGTH_MIN_CHARS"),
-        "points_long_length_bonus": _safe_int(os.getenv("POINTS_LONG_LENGTH_BONUS", "1"), 1, "POINTS_LONG_LENGTH_BONUS"),
-        "points_media_bonus": _safe_int(os.getenv("POINTS_MEDIA_BONUS", "1"), 1, "POINTS_MEDIA_BONUS"),
-        "points_reply_bonus": _safe_int(os.getenv("POINTS_REPLY_BONUS", "2"), 2, "POINTS_REPLY_BONUS"),
-        "points_daily_first_bonus": _safe_int(os.getenv("POINTS_DAILY_FIRST_BONUS", "10"), 10, "POINTS_DAILY_FIRST_BONUS"),
-        "points_per_message_cap": _safe_int(os.getenv("POINTS_PER_MESSAGE_CAP", "5"), 5, "POINTS_PER_MESSAGE_CAP"),
-        "points_rate_limit_per_min": _safe_int(os.getenv("POINTS_RATE_LIMIT_PER_MIN", "0"), 0, "POINTS_RATE_LIMIT_PER_MIN"),
-        "points_daily_cap": _safe_int(os.getenv("POINTS_DAILY_CAP", "0"), 0, "POINTS_DAILY_CAP"),
-        "points_dedup_window": _safe_int(os.getenv("POINTS_DEDUP_WINDOW", "0"), 0, "POINTS_DEDUP_WINDOW"),
-        "points_max_age_sec": _safe_int(os.getenv("POINTS_MAX_AGE_SEC", "300"), 300, "POINTS_MAX_AGE_SEC"),
-        "points_board_size": _safe_int(os.getenv("POINTS_BOARD_SIZE", "10"), 10, "POINTS_BOARD_SIZE"),
-        "points_levels_path": os.getenv("POINTS_LEVELS_PATH", "data/point_levels.json").strip(),
         # Equipment
-        "equipment_enabled": os.getenv("EQUIPMENT_ENABLED", "true").strip().lower() == "true",
-        "equipment_path": os.getenv("EQUIPMENT_PATH", "data/equipment.json").strip(),
         # Duels
-        "duel_enabled": os.getenv("DUEL_ENABLED", "true").strip().lower() == "true",
-        "duel_groups": [g.strip() for g in os.getenv("DUEL_GROUPS", "*").split(",") if g.strip()],
-        "duel_prob_k": _safe_float(os.getenv("DUEL_PROB_K", "1.15"), 1.15, "DUEL_PROB_K"),
-        "duel_min_prob": _safe_float(os.getenv("DUEL_MIN_PROB", "0.08"), 0.08, "DUEL_MIN_PROB"),
-        "duel_max_prob": _safe_float(os.getenv("DUEL_MAX_PROB", "0.92"), 0.92, "DUEL_MAX_PROB"),
-        "duel_base_steal_ratio": _safe_float(os.getenv("DUEL_BASE_STEAL_RATIO", "0.08"), 0.08, "DUEL_BASE_STEAL_RATIO"),
-        "duel_reward_k": _safe_float(os.getenv("DUEL_REWARD_K", "1.2"), 1.2, "DUEL_REWARD_K"),
-        "duel_per_fight_cap": _safe_int(os.getenv("DUEL_PER_FIGHT_CAP", "20"), 20, "DUEL_PER_FIGHT_CAP"),
-        "duel_daily_attempts": _safe_int(os.getenv("DUEL_DAILY_ATTEMPTS", "10"), 10, "DUEL_DAILY_ATTEMPTS"),
-        "duel_daily_pair_attempts": _safe_int(os.getenv("DUEL_PAIR_DAILY_ATTEMPTS", "5"), 5, "DUEL_PAIR_DAILY_ATTEMPTS"),
-        "duel_daily_steal_cap": _safe_int(os.getenv("DUEL_DAILY_STEAL_CAP", "50"), 50, "DUEL_DAILY_STEAL_CAP"),
-        "duel_pair_cooldown_sec": _safe_int(os.getenv("DUEL_PAIR_COOLDOWN_SEC", "300"), 300, "DUEL_PAIR_COOLDOWN_SEC"),
-        "duel_loss_cooldown_sec": _safe_int(os.getenv("DUEL_LOSS_COOLDOWN_SEC", "120"), 120, "DUEL_LOSS_COOLDOWN_SEC"),
-        "duel_novice_protection_points": _safe_int(os.getenv("DUEL_NOVICE_PROTECTION_POINTS", "20"), 20, "DUEL_NOVICE_PROTECTION_POINTS"),
-        "shield_price": _safe_int(os.getenv("SHIELD_PRICE", "20"), 20, "SHIELD_PRICE"),
-        "shield_duration_sec": _safe_int(os.getenv("SHIELD_DURATION_SEC", "14400"), 14400, "SHIELD_DURATION_SEC"),
-        "shield_max_sec": _safe_int(os.getenv("SHIELD_MAX_SEC", "86400"), 86400, "SHIELD_MAX_SEC"),
         # Fishing
-        "fishing_enabled": os.getenv("FISHING_ENABLED", "true").strip().lower() == "true",
-        "fishing_groups": [g.strip() for g in os.getenv("FISHING_GROUPS", "*").split(",") if g.strip()],
-        "fishing_catalog_path": os.getenv("FISHING_CATALOG_PATH", "data/fishing.json").strip(),
-        "fishing_hourly_attempts": _safe_int(os.getenv("FISHING_HOURLY_ATTEMPTS", "30"), 30, "FISHING_HOURLY_ATTEMPTS"),
-        "fishing_daily_cap": _safe_int(os.getenv("FISHING_DAILY_CAP", "0"), 0, "FISHING_DAILY_CAP"),
-        "fishing_cooldown_sec": _safe_int(os.getenv("FISHING_COOLDOWN_SEC", "5"), 5, "FISHING_COOLDOWN_SEC"),
-        "fishing_max_batch": _safe_int(os.getenv("FISHING_MAX_BATCH", "10"), 10, "FISHING_MAX_BATCH"),
-        "fishing_miss_chance": _safe_float(os.getenv("FISHING_MISS_CHANCE", "0.15"), 0.15, "FISHING_MISS_CHANCE"),
-        "boss_enabled": os.getenv("BOSS_ENABLED", "true").strip().lower() == "true",
-        "boss_groups": [g.strip() for g in os.getenv("BOSS_GROUPS", "*").split(",") if g.strip()],
-        "boss_cooldown_sec": _safe_int(os.getenv("BOSS_COOLDOWN_SEC", "1800"), 1800, "BOSS_COOLDOWN_SEC"),
-        "boss_max_attempts": _safe_int(os.getenv("BOSS_MAX_ATTEMPTS", "3"), 3, "BOSS_MAX_ATTEMPTS"),
-        "boss_hp_per_member": _safe_int(os.getenv("BOSS_HP_PER_MEMBER", "600"), 600, "BOSS_HP_PER_MEMBER"),
-        "boss_min_hp": _safe_int(os.getenv("BOSS_MIN_HP", "3000"), 3000, "BOSS_MIN_HP"),
-        "boss_max_hp": _safe_int(os.getenv("BOSS_MAX_HP", "30000"), 30000, "BOSS_MAX_HP"),
-        "boss_reward_ratio": _safe_float(os.getenv("BOSS_REWARD_RATIO", "0.15"), 0.15, "BOSS_REWARD_RATIO"),
-        "lottery_enabled": os.getenv("LOTTERY_ENABLED", "true").strip().lower() == "true",
-        "lottery_groups": [g.strip() for g in os.getenv("LOTTERY_GROUPS", "*").split(",") if g.strip()],
-        "lottery_cost": _safe_int(os.getenv("LOTTERY_COST", "100"), 100, "LOTTERY_COST"),
-        "lottery_daily_attempts": _safe_int(os.getenv("LOTTERY_DAILY_ATTEMPTS", "3"), 3, "LOTTERY_DAILY_ATTEMPTS"),
+        # 星盘玩法
+        "koi_enabled": os.getenv("KOI_ENABLED", "true").strip().lower() == "true",
+        "koi_groups": [g.strip() for g in os.getenv("KOI_GROUPS", "*").split(",") if g.strip()],
+        "koi_sign_merit": _safe_int(os.getenv("KOI_SIGN_MERIT", "50"), 50, "KOI_SIGN_MERIT"),
+        "koi_observe_merit": _safe_int(os.getenv("KOI_OBSERVE_MERIT", "30"), 30, "KOI_OBSERVE_MERIT"),
+        "koi_chat_merit_per_message": _safe_int(os.getenv("KOI_CHAT_MERIT_PER_MESSAGE", "1"), 1, "KOI_CHAT_MERIT_PER_MESSAGE"),
+        "koi_chat_merit_daily_cap": _safe_int(os.getenv("KOI_CHAT_MERIT_DAILY_CAP", "20"), 20, "KOI_CHAT_MERIT_DAILY_CAP"),
+        "koi_release_cost": _safe_int(os.getenv("KOI_RELEASE_COST", "30"), 30, "KOI_RELEASE_COST"),
+        "koi_release_fortune": _safe_int(os.getenv("KOI_RELEASE_FORTUNE", "3"), 3, "KOI_RELEASE_FORTUNE"),
+        "koi_reroll_cost": _safe_int(os.getenv("KOI_REROLL_COST", "50"), 50, "KOI_REROLL_COST"),
+        "koi_welcome_merit": _safe_int(os.getenv("KOI_WELCOME_MERIT", "100"), 100, "KOI_WELCOME_MERIT"),
+        "koi_sign_change_days": _safe_int(os.getenv("KOI_SIGN_CHANGE_DAYS", "30"), 30, "KOI_SIGN_CHANGE_DAYS"),
+        "koi_mbti_change_days": _safe_int(os.getenv("KOI_MBTI_CHANGE_DAYS", "30"), 30, "KOI_MBTI_CHANGE_DAYS"),
+        "koi_draw_cost": _safe_int(os.getenv("KOI_DRAW_COST", "100"), 100, "KOI_DRAW_COST"),
+        "koi_draw_daily_limit": _safe_int(os.getenv("KOI_DRAW_DAILY_LIMIT", "3"), 3, "KOI_DRAW_DAILY_LIMIT"),
+        "koi_draw_pity": _safe_int(os.getenv("KOI_DRAW_PITY", "30"), 30, "KOI_DRAW_PITY"),
+        "koi_pool_min": _safe_int(os.getenv("KOI_POOL_MIN", "10"), 10, "KOI_POOL_MIN"),
+        "koi_pool_max_per_day": _safe_int(os.getenv("KOI_POOL_MAX_PER_DAY", "200"), 200, "KOI_POOL_MAX_PER_DAY"),
+        "koi_pool_hour": _safe_int(os.getenv("KOI_POOL_HOUR", "21"), 21, "KOI_POOL_HOUR"),
+        "koi_pool_winner_ratio": _safe_float(os.getenv("KOI_POOL_WINNER_RATIO", "0.80"), 0.80, "KOI_POOL_WINNER_RATIO"),
+        "koi_pool_refund_ratio": _safe_float(os.getenv("KOI_POOL_REFUND_RATIO", "0.15"), 0.15, "KOI_POOL_REFUND_RATIO"),
+        "koi_duel_star_daily_limit": _safe_int(os.getenv("KOI_DUEL_STAR_DAILY_LIMIT", "3"), 3, "KOI_DUEL_STAR_DAILY_LIMIT"),
+        "koi_weekly_reward_merit": _safe_int(os.getenv("KOI_WEEKLY_REWARD_MERIT", "100"), 100, "KOI_WEEKLY_REWARD_MERIT"),
+        "koi_weekly_reward_fortune": _safe_int(os.getenv("KOI_WEEKLY_REWARD_FORTUNE", "5"), 5, "KOI_WEEKLY_REWARD_FORTUNE"),
+        "koi_hexagram_merit": _safe_int(os.getenv("KOI_HEXAGRAM_MERIT", "10"), 10, "KOI_HEXAGRAM_MERIT"),
+        "koi_fortune_merit": _safe_int(os.getenv("KOI_FORTUNE_MERIT", "10"), 10, "KOI_FORTUNE_MERIT"),
+        "koi_fortune_luck": _safe_int(os.getenv("KOI_FORTUNE_LUCK", "3"), 3, "KOI_FORTUNE_LUCK"),
         "log_level": os.getenv("LOG_LEVEL", "INFO").strip(),
         "log_file": os.getenv("LOG_FILE", "data/bot.log").strip(),
         # Voice recognition

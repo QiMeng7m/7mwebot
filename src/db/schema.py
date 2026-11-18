@@ -69,426 +69,177 @@ CREATE TABLE IF NOT EXISTS group_memory (
 CREATE INDEX IF NOT EXISTS idx_trigger_chat_time
     ON trigger_log(chat_id, processed_at DESC);
 
--- Last fortune lot drawn by each member (for 「解签」).
--- day/interpreted_at enforce one draw and one reading per local day.
-CREATE TABLE IF NOT EXISTS fun_draws (
-    chat_id        TEXT    NOT NULL,
-    sender_id      TEXT    NOT NULL,
-    sender_name    TEXT    NOT NULL DEFAULT '',
-    level          TEXT    NOT NULL,
-    emoji          TEXT    NOT NULL DEFAULT '',
-    phrase         TEXT    NOT NULL,
-    drawn_at       INTEGER NOT NULL,
-    day            TEXT    NOT NULL DEFAULT '',
-    interpreted_at INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (chat_id, sender_id)
-);
+-- ── 星盘玩法（KOI） ─────────────────────────────────────────────
+-- 香火 / 气运只在本玩法内流转。
 
--- ── Activity points (“活跃修炼值”) ───────────────────────────────────
--- Append-only ledger.  One row per scoring component, plus transfers
--- (duels), spending (shop / shield) and manual admin adjustments.
--- UNIQUE(message_id, reason) makes replaying a message idempotent.
-CREATE TABLE IF NOT EXISTS point_events (
+-- 香火（kind='merit'）与气运（kind='fortune'）流水。
+-- UNIQUE 约束保证重复消息 / 重放不会重复发奖。
+CREATE TABLE IF NOT EXISTS koi_ledger (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id     TEXT    NOT NULL,
     sender_id   TEXT    NOT NULL,
     sender_name TEXT    NOT NULL DEFAULT '',
-    message_id  TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    amount      INTEGER NOT NULL,
     reason      TEXT    NOT NULL,
-    category    TEXT    NOT NULL DEFAULT 'earn',
-    points      INTEGER NOT NULL,
-    day         TEXT    NOT NULL,
-    season      TEXT    NOT NULL,
+    ref_id      TEXT    NOT NULL DEFAULT '',
+    day         TEXT    NOT NULL DEFAULT '',
     created_at  INTEGER NOT NULL,
-    UNIQUE(message_id, reason)
+    UNIQUE(chat_id, sender_id, ref_id, reason)
 );
 
-CREATE INDEX IF NOT EXISTS idx_points_chat_season
-    ON point_events(chat_id, season, sender_id);
-CREATE INDEX IF NOT EXISTS idx_points_chat_day
-    ON point_events(chat_id, day, sender_id);
-CREATE INDEX IF NOT EXISTS idx_points_chat_sender
-    ON point_events(chat_id, sender_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_koi_ledger_chat_kind
+    ON koi_ledger(chat_id, kind, sender_id);
+CREATE INDEX IF NOT EXISTS idx_koi_ledger_sender
+    ON koi_ledger(chat_id, sender_id, created_at DESC);
 
--- Closed seasons (written lazily when a new month starts).
-CREATE TABLE IF NOT EXISTS point_seasons (
-    chat_id       TEXT    NOT NULL,
-    season        TEXT    NOT NULL,
-    winner_id     TEXT    NOT NULL DEFAULT '',
-    winner_name   TEXT    NOT NULL DEFAULT '',
-    winner_points INTEGER NOT NULL DEFAULT 0,
-    closed_at     INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, season)
-);
-
--- ── Equipment ─────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS equipment_owned (
+-- 每人每群每天一行：签、欧气、次数与连签。
+CREATE TABLE IF NOT EXISTS koi_daily (
     chat_id       TEXT    NOT NULL,
     sender_id     TEXT    NOT NULL,
-    item_id       TEXT    NOT NULL,
-    purchased_at  INTEGER NOT NULL,
-    equipped      INTEGER NOT NULL DEFAULT 0,
-    enhance_level INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (chat_id, sender_id, item_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_equipment_member
-    ON equipment_owned(chat_id, sender_id);
-
--- Timed “免战” shields (duel immunity).
-CREATE TABLE IF NOT EXISTS duel_shields (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    expires_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
--- Duel audit log.
-CREATE TABLE IF NOT EXISTS duels (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id        TEXT    NOT NULL,
-    message_id     TEXT    NOT NULL DEFAULT '',
-    attacker_id    TEXT    NOT NULL,
-    attacker_name  TEXT    NOT NULL DEFAULT '',
-    defender_id    TEXT    NOT NULL,
-    defender_name  TEXT    NOT NULL DEFAULT '',
-    attacker_power INTEGER NOT NULL,
-    defender_power INTEGER NOT NULL,
-    win_prob       REAL    NOT NULL,
-    attacker_win   INTEGER NOT NULL,
-    points_moved   INTEGER NOT NULL DEFAULT 0,
-    shield_blocked INTEGER NOT NULL DEFAULT 0,
-    created_at     INTEGER NOT NULL,
-    day            TEXT    NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_duels_attacker_day
-    ON duels(chat_id, day, attacker_id);
-CREATE INDEX IF NOT EXISTS idx_duels_defender_day
-    ON duels(chat_id, day, defender_id);
-CREATE INDEX IF NOT EXISTS idx_duels_pair
-    ON duels(chat_id, attacker_id, defender_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_duels_message
-    ON duels(chat_id, message_id);
-
--- ── Fishing (“钓鱼”) ─────────────────────────────────────────────
--- Every cast is logged, including misses (species_id = '') so daily
--- attempt limits and cooldowns survive restarts.  Fishing credits the
--- append-only ledger with category='fish', which increases balance but
--- is excluded from cumulative earned points / levels / rankings.
-CREATE TABLE IF NOT EXISTS fishing_casts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id      TEXT    NOT NULL,
-    sender_id    TEXT    NOT NULL,
-    sender_name  TEXT    NOT NULL DEFAULT '',
-    message_id   TEXT    NOT NULL,
-    cast_index   INTEGER NOT NULL DEFAULT 0,
-    rod_id       TEXT    NOT NULL DEFAULT '',
-    bait_id      TEXT    NOT NULL DEFAULT '',
-    species_id   TEXT    NOT NULL DEFAULT '',
-    species_name TEXT    NOT NULL DEFAULT '',
-    rarity       TEXT    NOT NULL DEFAULT '',
-    weight_g     INTEGER NOT NULL DEFAULT 0,
-    amount       INTEGER NOT NULL DEFAULT 0,
-    day          TEXT    NOT NULL,
-    created_at   INTEGER NOT NULL,
-    UNIQUE(message_id, cast_index)
-);
-
-CREATE INDEX IF NOT EXISTS idx_fish_member_day
-    ON fishing_casts(chat_id, day, sender_id);
-CREATE INDEX IF NOT EXISTS idx_fish_member_time
-    ON fishing_casts(chat_id, sender_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_fish_chat_time
-    ON fishing_casts(chat_id, created_at DESC);
-
--- Rods (permanent, one equipped) and bait (consumable stacks) owned by
--- each member in each group.
-CREATE TABLE IF NOT EXISTS fishing_inventory (
-    chat_id      TEXT    NOT NULL,
-    sender_id    TEXT    NOT NULL,
-    kind         TEXT    NOT NULL,              -- 'rod' | 'bait'
-    item_id      TEXT    NOT NULL,
-    quantity     INTEGER NOT NULL DEFAULT 0,
-    equipped     INTEGER NOT NULL DEFAULT 0,
-    purchased_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, kind, item_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_fish_inventory_member
-    ON fishing_inventory(chat_id, sender_id);
-
--- ── Endgame: world boss / achievements / realms ───────────────────
--- One boss per group per ISO week.  HP scales with the group size when
--- the boss is first summoned.
-CREATE TABLE IF NOT EXISTS boss_state (
-    chat_id    TEXT    NOT NULL,
-    season     TEXT    NOT NULL,              -- ISO week YYYY-Www
-    boss_name  TEXT    NOT NULL,
-    hp_total   INTEGER NOT NULL,
-    hp_left    INTEGER NOT NULL,
-    killed_at  INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, season)
-);
-
--- Every boss hit.  UNIQUE(chat_id, message_id) makes command replay safe.
-CREATE TABLE IF NOT EXISTS boss_attacks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id     TEXT    NOT NULL,
-    season      TEXT    NOT NULL,
-    message_id  TEXT    NOT NULL,
-    sender_id   TEXT    NOT NULL,
-    sender_name TEXT    NOT NULL DEFAULT '',
-    damage      INTEGER NOT NULL,
-    crit        INTEGER NOT NULL DEFAULT 0,
-    day         TEXT    NOT NULL,
-    created_at  INTEGER NOT NULL,
-    UNIQUE(chat_id, message_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_boss_attacks_member
-    ON boss_attacks(chat_id, season, sender_id);
-CREATE INDEX IF NOT EXISTS idx_boss_attacks_day
-    ON boss_attacks(chat_id, season, day, sender_id);
-
--- Regenerating challenge attempts: one every BOSS_COOLDOWN_SEC seconds,
--- accumulating up to BOSS_MAX_ATTEMPTS.  Reset per boss week.
-CREATE TABLE IF NOT EXISTS boss_energy (
-    chat_id    TEXT    NOT NULL,
-    season     TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    attempts   INTEGER NOT NULL,
-    regen_at   INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, season, sender_id)
-);
-
--- Unlocked achievements (definitions live in src/points/achievements.py).
-CREATE TABLE IF NOT EXISTS achievements (
-    chat_id        TEXT    NOT NULL,
-    sender_id      TEXT    NOT NULL,
-    achievement_id TEXT    NOT NULL,
-    unlocked_at    INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, achievement_id)
-);
-
--- Equipped display title per member.
-CREATE TABLE IF NOT EXISTS member_profiles (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    title      TEXT    NOT NULL DEFAULT '',
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
--- 境界 (realm) progression after Lv12.
-CREATE TABLE IF NOT EXISTS member_realms (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    realm      INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
--- 功法 progress per member/technique.  ``layer`` starts at 1, ``progress``
--- accumulates through 打坐, ``failures`` counts consecutive failed
--- breakthroughs at the current layer.
-CREATE TABLE IF NOT EXISTS technique_progress (
-    chat_id      TEXT    NOT NULL,
-    sender_id    TEXT    NOT NULL,
-    technique_id TEXT    NOT NULL,
-    layer        INTEGER NOT NULL DEFAULT 1,
-    progress     INTEGER NOT NULL DEFAULT 0,
-    failures     INTEGER NOT NULL DEFAULT 0,
-    learned_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, technique_id)
-);
-
--- Current technique used for meditation, plus the meditation cooldown.
-CREATE TABLE IF NOT EXISTS technique_state (
-    chat_id           TEXT    NOT NULL,
-    sender_id         TEXT    NOT NULL,
-    current_technique TEXT    NOT NULL DEFAULT '',
-    cooldown_until    INTEGER NOT NULL DEFAULT 0,
-    updated_at        INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
--- 装备主动技能: last cast time, buff expiry and next available time.
--- One row per member/skill; re-casting refreshes the row.  ``cooldown_until``
--- blocks casting, ``expires_at`` is when the buff stops applying.
-CREATE TABLE IF NOT EXISTS skill_casts (
-    chat_id       TEXT    NOT NULL,
-    sender_id     TEXT    NOT NULL,
-    skill_id      TEXT    NOT NULL,
-    cast_at       INTEGER NOT NULL,
-    expires_at    INTEGER NOT NULL,
-    cooldown_until INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, skill_id)
-);
-
--- Daily lottery: one row per paid draw.  UNIQUE(chat_id, message_id)
--- makes command replay safe; the day column enforces the daily limit.
-CREATE TABLE IF NOT EXISTS lottery_draws (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id     TEXT    NOT NULL,
-    sender_id   TEXT    NOT NULL,
-    sender_name TEXT    NOT NULL DEFAULT '',
-    message_id  TEXT    NOT NULL,
-    reward_kind TEXT    NOT NULL,
-    reward_name TEXT    NOT NULL DEFAULT '',
-    amount      INTEGER NOT NULL DEFAULT 0,
-    day         TEXT    NOT NULL,
-    created_at  INTEGER NOT NULL,
-    UNIQUE(chat_id, message_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_lottery_member_day
-    ON lottery_draws(chat_id, sender_id, day);
-
--- ── Phase 2: 套装 / 技能升级 / 任务 / 秘境 / 词条 / 擂台 ───────────
-CREATE TABLE IF NOT EXISTS skill_levels (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    skill_id   TEXT    NOT NULL,
-    level      INTEGER NOT NULL DEFAULT 1,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, skill_id)
-);
-
-CREATE TABLE IF NOT EXISTS item_inventory (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    kind       TEXT    NOT NULL,
-    item_id    TEXT    NOT NULL,
-    quantity   INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, kind, item_id)
-);
-
-CREATE TABLE IF NOT EXISTS task_progress (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    task_id    TEXT    NOT NULL,
-    period     TEXT    NOT NULL,
-    progress   INTEGER NOT NULL DEFAULT 0,
-    claimed    INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, task_id, period)
-);
-
-CREATE TABLE IF NOT EXISTS dungeon_progress (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    best_floor INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
-CREATE TABLE IF NOT EXISTS dungeon_state (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    day        TEXT    NOT NULL,
-    attempts   INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
+    day           TEXT    NOT NULL,
+    sign_id       INTEGER NOT NULL DEFAULT 0,
+    sign_level    TEXT    NOT NULL DEFAULT '',
+    luck          INTEGER NOT NULL DEFAULT 0,
+    yi            TEXT    NOT NULL DEFAULT '',
+    streak_days   INTEGER NOT NULL DEFAULT 0,
+    rerolls       INTEGER NOT NULL DEFAULT 0,
+    release_used  INTEGER NOT NULL DEFAULT 0,
+    draws_used    INTEGER NOT NULL DEFAULT 0,
+    chat_merit    INTEGER NOT NULL DEFAULT 0,
+    pool_in       INTEGER NOT NULL DEFAULT 0,
+    observed      INTEGER NOT NULL DEFAULT 0,
+    duel_star_used INTEGER NOT NULL DEFAULT 0,
+    extra_luck    INTEGER NOT NULL DEFAULT 0,
+    fortune_used  INTEGER NOT NULL DEFAULT 0,
+    hexagram_used INTEGER NOT NULL DEFAULT 0,
+    hexagram_id   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (chat_id, sender_id, day)
 );
 
-CREATE TABLE IF NOT EXISTS equipment_affixes (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    item_id    TEXT    NOT NULL,
-    slot       INTEGER NOT NULL,
-    affix_id   TEXT    NOT NULL,
-    value      REAL    NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id, item_id, slot)
-);
+CREATE INDEX IF NOT EXISTS idx_koi_daily_chat_day
+    ON koi_daily(chat_id, day);
 
-CREATE TABLE IF NOT EXISTS arena_entries (
-    chat_id    TEXT    NOT NULL,
-    season     TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    sender_name TEXT   NOT NULL DEFAULT '',
-    points     INTEGER NOT NULL DEFAULT 0,
-    wins       INTEGER NOT NULL DEFAULT 0,
-    losses     INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, season, sender_id)
-);
-
-CREATE TABLE IF NOT EXISTS arena_claims (
-    chat_id    TEXT    NOT NULL,
-    season     TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    rank       INTEGER NOT NULL,
-    reward     INTEGER NOT NULL,
-    claimed_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, season, sender_id)
-);
-
-CREATE TABLE IF NOT EXISTS guilds (
-    chat_id    TEXT    PRIMARY KEY,
-    name       TEXT    NOT NULL,
-    level      INTEGER NOT NULL DEFAULT 1,
-    exp        INTEGER NOT NULL DEFAULT 0,
-    funds      INTEGER NOT NULL DEFAULT 0,
-    created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS guild_members (
-    chat_id       TEXT    NOT NULL,
-    sender_id     TEXT    NOT NULL,
-    role          TEXT    NOT NULL DEFAULT 'member',
-    contribution  INTEGER NOT NULL DEFAULT 0,
-    joined_at     INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
-CREATE TABLE IF NOT EXISTS market_listings (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id     TEXT    NOT NULL,
-    seller_id   TEXT    NOT NULL,
-    seller_name TEXT    NOT NULL DEFAULT '',
-    item_id     TEXT    NOT NULL,
-    price       INTEGER NOT NULL,
-    status      TEXT    NOT NULL DEFAULT 'open',
-    buyer_id    TEXT    NOT NULL DEFAULT '',
-    enhance_level INTEGER NOT NULL DEFAULT 0,
-    created_at  INTEGER NOT NULL,
-    expires_at  INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_market_open
-    ON market_listings(chat_id, status, id);
-
-CREATE TABLE IF NOT EXISTS pets (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    species_id TEXT    NOT NULL,
-    level      INTEGER NOT NULL DEFAULT 1,
-    exp        INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
-);
-
-CREATE TABLE IF NOT EXISTS alchemy_state (
+-- 签谱：每支签第一次抽到即永久收录。
+CREATE TABLE IF NOT EXISTS koi_signs (
     chat_id     TEXT    NOT NULL,
     sender_id   TEXT    NOT NULL,
-    herbs       INTEGER NOT NULL DEFAULT 0,
-    last_gather INTEGER NOT NULL DEFAULT 0,
-    gather_charges INTEGER NOT NULL DEFAULT 6,
+    sign_id     INTEGER NOT NULL,
+    first_at    INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, sign_id)
+);
+
+-- 身份：星座 / MBTI / 简化星盘。
+CREATE TABLE IF NOT EXISTS koi_profile (
+    chat_id      TEXT    NOT NULL,
+    sender_id    TEXT    NOT NULL,
+    sign         TEXT    NOT NULL DEFAULT '',
+    mbti         TEXT    NOT NULL DEFAULT '',
+    moon_sign    TEXT    NOT NULL DEFAULT '',
+    rising_sign  TEXT    NOT NULL DEFAULT '',
+    title        TEXT    NOT NULL DEFAULT '',
+    noble_star   TEXT    NOT NULL DEFAULT '',
+    life_number  INTEGER NOT NULL DEFAULT 0,
+    awakening    TEXT    NOT NULL DEFAULT '',
+    birth_year   INTEGER NOT NULL DEFAULT 0,
+    birth_month  INTEGER NOT NULL DEFAULT 0,
+    birth_day    INTEGER NOT NULL DEFAULT 0,
+    birth_hour   INTEGER NOT NULL DEFAULT -1,
+    sign_updated_at   INTEGER NOT NULL DEFAULT 0,
+    mbti_updated_at   INTEGER NOT NULL DEFAULT 0,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id)
+);
+
+-- 通用收集（塔罗 / 星骰）；签谱仍使用 koi_signs。
+CREATE TABLE IF NOT EXISTS koi_collection (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,      -- tarot | dice
+    item_id     INTEGER NOT NULL,
+    first_at    INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, kind, item_id)
+);
+
+-- 符 / 增益
+CREATE TABLE IF NOT EXISTS koi_buffs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    value       REAL    NOT NULL DEFAULT 0,
+    uses_left   INTEGER NOT NULL DEFAULT 0,
+    expires_at  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_koi_buffs_member
+    ON koi_buffs(chat_id, sender_id, active);
+
+-- 开光保底
+CREATE TABLE IF NOT EXISTS koi_pity (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    draws_since_legendary INTEGER NOT NULL DEFAULT 0,
     updated_at  INTEGER NOT NULL,
     PRIMARY KEY (chat_id, sender_id)
 );
 
-CREATE TABLE IF NOT EXISTS rebirths (
-    chat_id    TEXT    NOT NULL,
-    sender_id  TEXT    NOT NULL,
-    cycle      INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (chat_id, sender_id)
+-- 星盘 28 宿 + 外圈
+CREATE TABLE IF NOT EXISTS koi_stars (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    quadrant    TEXT    NOT NULL,      -- qinglong | baihu | zhuque | xuanwu | outer
+    star_index  INTEGER NOT NULL,
+    lit_at      INTEGER NOT NULL,
+    PRIMARY KEY (chat_id, sender_id, quadrant, star_index)
+);
+
+-- 四象阵营周结算
+CREATE TABLE IF NOT EXISTS koi_faction_week (
+    chat_id     TEXT    NOT NULL,
+    week        TEXT    NOT NULL,
+    winner      TEXT    NOT NULL DEFAULT '',
+    settled_at  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, week)
+);
+
+-- 锦鲤池
+CREATE TABLE IF NOT EXISTS koi_pool (
+    chat_id     TEXT    NOT NULL,
+    day         TEXT    NOT NULL,
+    total       INTEGER NOT NULL DEFAULT 0,
+    status      TEXT    NOT NULL DEFAULT 'open',
+    winner_id   TEXT    NOT NULL DEFAULT '',
+    winner_name TEXT    NOT NULL DEFAULT '',
+    payout      INTEGER NOT NULL DEFAULT 0,
+    drawn_at    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, day)
+);
+
+CREATE TABLE IF NOT EXISTS koi_pool_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id     TEXT    NOT NULL,
+    day         TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    sender_name TEXT    NOT NULL DEFAULT '',
+    amount      INTEGER NOT NULL,
+    luck        INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_koi_pool_day
+    ON koi_pool_entries(chat_id, day, sender_id);
+
+-- 周运
+CREATE TABLE IF NOT EXISTS koi_weekly (
+    chat_id     TEXT    NOT NULL,
+    sender_id   TEXT    NOT NULL,
+    week        TEXT    NOT NULL,
+    goals_json  TEXT    NOT NULL DEFAULT '[]',
+    claimed     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, sender_id, week)
 );
 """
 
@@ -496,6 +247,12 @@ CREATE TABLE IF NOT EXISTS rebirths (
 def _ensure_columns(conn: sqlite3.Connection, table: str,
                     columns: dict[str, str]) -> None:
     """Add missing columns to an existing table (idempotent migration)."""
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    if not exists:
+        return
     existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     for name, ddl in columns.items():
         if name not in existing:
@@ -520,18 +277,23 @@ def initialize_db(db_path: str) -> sqlite3.Connection:
     conn.executescript(SCHEMA_SQL)
 
     # Migrations for tables created by older builds.
-    _ensure_columns(conn, "fun_draws", {
-        "day": "day TEXT NOT NULL DEFAULT ''",
-        "interpreted_at": "interpreted_at INTEGER NOT NULL DEFAULT 0",
+    _ensure_columns(conn, "koi_daily", {
+        "duel_star_used": "duel_star_used INTEGER NOT NULL DEFAULT 0",
+        "extra_luck": "extra_luck INTEGER NOT NULL DEFAULT 0",
+        "fortune_used": "fortune_used INTEGER NOT NULL DEFAULT 0",
+        "hexagram_used": "hexagram_used INTEGER NOT NULL DEFAULT 0",
+        "hexagram_id": "hexagram_id INTEGER NOT NULL DEFAULT 0",
     })
-    _ensure_columns(conn, "equipment_owned", {
-        "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
-    })
-    _ensure_columns(conn, "market_listings", {
-        "enhance_level": "enhance_level INTEGER NOT NULL DEFAULT 0",
-    })
-    _ensure_columns(conn, "alchemy_state", {
-        "gather_charges": "gather_charges INTEGER NOT NULL DEFAULT 6",
+    _ensure_columns(conn, "koi_profile", {
+        "noble_star": "noble_star TEXT NOT NULL DEFAULT ''",
+        "life_number": "life_number INTEGER NOT NULL DEFAULT 0",
+        "awakening": "awakening TEXT NOT NULL DEFAULT ''",
+        "birth_year": "birth_year INTEGER NOT NULL DEFAULT 0",
+        "birth_month": "birth_month INTEGER NOT NULL DEFAULT 0",
+        "birth_day": "birth_day INTEGER NOT NULL DEFAULT 0",
+        "birth_hour": "birth_hour INTEGER NOT NULL DEFAULT -1",
+        "sign_updated_at": "sign_updated_at INTEGER NOT NULL DEFAULT 0",
+        "mbti_updated_at": "mbti_updated_at INTEGER NOT NULL DEFAULT 0",
     })
 
     conn.commit()

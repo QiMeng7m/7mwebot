@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { MagnifyingGlass, CheckCircle, Trash, ArrowUUpLeft, X, ListChecks, FloppyDisk, Info, Warning } from '@phosphor-icons/react'
 import { Toggle, Input, Field } from './SharedComponents'
 
-const API = 'http://127.0.0.1:7327'
+const API = ''
 
 const tabTransition = {
   initial: { opacity: 0, y: 6 },

@@ -253,20 +253,6 @@ class Bot:
         self._backend = backend
         self.backend = backend   # public ref for lifecycle control
 
-        # Delayed replies (e.g. fishing suspense): let the router send a
-        # message later from a daemon thread.  Serialize with the same
-        # window lock the normal reply path uses — the keyboard automation
-        # is not safe under concurrent sends.
-        window_lock = getattr(backend, "_window_lock", None)
-
-        def _delayed_send(chat_id: str, text: str) -> bool:
-            if window_lock is not None:
-                with window_lock:
-                    return backend.send_text(chat_id, text)
-            return backend.send_text(chat_id, text)
-
-        router.set_reply_sender(_delayed_send)
-
         # Register backend with web server for stop/restart (explicit
         # API — no monkey-patching needed).
         try:
@@ -274,6 +260,27 @@ class Bot:
             _register_backend(backend)
         except Exception:
             pass
+
+        # ── 5.5 锦鲤池定时开奖 ─────────────────────────────────
+        # 每分钟检查一次；21:00 后自动结算并把公告发到群里。
+        window_lock = getattr(backend, "_window_lock", None)
+
+        def _koi_pool_loop() -> None:
+            while True:
+                time.sleep(60)
+                try:
+                    for chat_id, text in router.settle_koi_pools():
+                        if window_lock is not None:
+                            with window_lock:
+                                backend.send_text(chat_id, text)
+                        else:
+                            backend.send_text(chat_id, text)
+                except Exception:
+                    logger.exception("Koi pool tick failed")
+
+        threading.Thread(
+            target=_koi_pool_loop, daemon=True, name="koi-pool",
+        ).start()
 
         # ── 6. Health monitor ───────────────────────────────────
         self._health = HealthMonitor(
@@ -311,7 +318,7 @@ class Bot:
         #   the worker, serialized through a client_lock to keep ctypes
         #   safe.  On shutdown the pool drains with a 30 s timeout.
         #
-        # Legacy design (pre-2026-06):
+        # Backend design notes:
         #   The old single-threaded loop caused head-of-line blocking:
         #   one slow AI call delayed ALL groups' message polling.
         #   The old comment is archived in AUDIT.md §C1.

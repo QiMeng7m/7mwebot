@@ -305,7 +305,6 @@ def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
     put("BOT_DISPLAY_NAME", "bot_display_name")
     put("WECHAT_BACKEND", "wechat_backend")
     put("WECHAT_GROUPS", "wechat_groups", empty="*")
-    put("FUN_ENABLED", "fun_enabled", transform=as_bool)
     put("PROACTIVE_ENABLED", "proactive_enabled", transform=as_bool)
     put("PROACTIVE_RATE_WINDOW_SEC", "proactive_rate_window_sec")
     put("PROACTIVE_RATE_QUIET", "proactive_rate_quiet")
@@ -495,7 +494,6 @@ def _write_onboarding_to_env(env_path):
             "WECHAT_BACKEND": _onboarding_data.get("wechat_backend", "wcdb"),
             "WECHAT_GROUPS": _onboarding_data.get("wechat_groups", "*"),
             "BOT_DISPLAY_NAME": _onboarding_data.get("bot_display_name", "群聊小助手"),
-            "FUN_ENABLED": str(_onboarding_data.get("fun_enabled", True)).lower(),
             "PROACTIVE_ENABLED": str(_onboarding_data.get("proactive_enabled", False)).lower(),
             "STICKY_MENTION_ENABLED": str(_onboarding_data.get("sticky_mention_enabled", True)).lower(),
             "WCDB_KEY": _onboarding_data.get("key", ""),
@@ -965,7 +963,6 @@ _onboarding_data = {
     "bot_display_name": "", "wechat_groups": "*", "wechat_backend": "wcdb",
     "ai_backend": "deepseek", "deepseek_api_key": "", "deepseek_model": "deepseek-v4-flash",
     "anthropic_api_key": "", "summarize_model": "claude-haiku-4-5-20251001",
-    "fun_enabled": True,
     "proactive_enabled": False,
     "sticky_mention_enabled": True,
 }
@@ -1149,7 +1146,7 @@ def _handle_ws_upgrade(headers, conn):
     return True
 
 
-def _points_db_path() -> str:
+def _game_db_path() -> str:
     """Resolve DB_PATH exactly like the todo endpoints do."""
     from src.config import find_env_file
     db_path = "data/messages.db"
@@ -1162,35 +1159,13 @@ def _points_db_path() -> str:
     return db_path
 
 
-def _points_config():
-    """Load BotConfig, falling back to dataclass defaults."""
+def _game_config():
     try:
         from src.config import load_config
         return load_config()
     except Exception:
         from src.config import BotConfig
         return BotConfig()
-
-
-def _points_stack(conn, config):
-    """Build (store, levels, catalog, duels, fishing_catalog, fishing)."""
-    from src.points.store import PointStore
-    from src.points.levels import LevelTable
-    from src.points.equipment import EquipmentCatalog
-    from src.points.duel import DuelService
-    from src.points.fishing import FishingService
-    from src.points.fishing_catalog import FishingCatalog
-
-    store = PointStore(conn)
-    levels = LevelTable(getattr(
-        config, "points_levels_path", "data/point_levels.json"))
-    catalog = EquipmentCatalog(getattr(
-        config, "equipment_path", "data/equipment.json"))
-    duels = DuelService(store, config, levels, catalog)
-    fishing_catalog = FishingCatalog(getattr(
-        config, "fishing_catalog_path", "data/fishing.json"))
-    fishing = FishingService(store, config, fishing_catalog)
-    return store, levels, catalog, duels, fishing_catalog, fishing
 
 
 class _UIHandler(SimpleHTTPRequestHandler):
@@ -1216,15 +1191,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                          "/api/onboarding/step1", "/api/onboarding/step2",
                          "/api/onboarding/step3", "/api/onboarding/step4",
                          "/api/sandbox/test",
-                         "/api/lots",
                          "/api/todos/action",
-                         "/api/points/adjust", "/api/points/levels",
-                         "/api/points/purge",
-                         "/api/equipment/buy", "/api/equipment/equip",
-                         "/api/equipment/catalog",
-                         "/api/fishing/cast", "/api/fishing/buy_rod",
-                         "/api/fishing/buy_bait", "/api/fishing/equip_rod",
-                         "/api/fishing/catalog",
+                         "/api/koi/adjust",
                          "/api/voice/download-model",
                          "/api/wechat-data-dir/detect"):
             self.do_GET()
@@ -1310,7 +1278,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 "bot_display_name": raw.get("BOT_DISPLAY_NAME", ""),
                 "wechat_backend": raw.get("WECHAT_BACKEND", "wcdb"),
                 "wechat_groups": _decode_wechat_groups(raw.get("WECHAT_GROUPS", "*")),
-                "fun_enabled": raw.get("FUN_ENABLED", "true").lower() == "true",
                 "proactive_enabled": raw.get("PROACTIVE_ENABLED", "false").lower() == "true",
                 "proactive_rate_window_sec": _int_env(raw.get("PROACTIVE_RATE_WINDOW_SEC", "120"), 120),
                 "proactive_rate_quiet": _float_env(raw.get("PROACTIVE_RATE_QUIET", "1.5"), 1.5),
@@ -1373,7 +1340,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     "bot_display_name": raw.get("BOT_DISPLAY_NAME", ""),
                     "wechat_backend": raw.get("WECHAT_BACKEND", "wcdb"),
                     "wechat_groups": raw.get("WECHAT_GROUPS", "*"),
-                    "fun_enabled": raw.get("FUN_ENABLED", "true").lower() == "true",
                     "proactive_enabled": raw.get("PROACTIVE_ENABLED", "false").lower() == "true",
                     "proactive_rate_window_sec": _int_env(raw.get("PROACTIVE_RATE_WINDOW_SEC", "120"), 120),
                     "proactive_rate_quiet": _float_env(raw.get("PROACTIVE_RATE_QUIET", "1.5"), 1.5),
@@ -1745,32 +1711,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": str(e)})
             return
 
-        # ── API: Get / Save lots config ───────────────────────────────
-        if self.path == "/api/lots":
-            if self.command == "GET":
-                try:
-                    from src.fun import load_lots_config
-                    config = load_lots_config()
-                    self.send_json({"ok": True, "config": config})
-                except Exception as e:
-                    logger.exception("Failed to load lots config")
-                    self.send_json({"ok": False, "error": str(e)})
-            else:
-                # POST — save custom lots config
-                content_len = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(content_len) if content_len else b"{}"
-                try:
-                    data = json.loads(body)
-                    from src.fun import save_lots_config
-                    save_lots_config(data)
-                    self.send_json({"ok": True})
-                except ValueError as e:
-                    self.send_json({"ok": False, "error": str(e)})
-                except Exception as e:
-                    logger.exception("Failed to save lots config")
-                    self.send_json({"ok": False, "error": str(e)})
-            return
-
         # ── API: Todo management ───────────────────────────────────────
         if self.path == "/api/todos" or self.path.startswith("/api/todos?"):
             params = {}
@@ -1885,12 +1825,8 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": False, "error": str(e)})
             return
 
-        # ── API: Points / equipment / duels / fishing ─────────────────
-        if self.path.startswith("/api/points") or \
-                self.path.startswith("/api/equipment") or \
-                self.path.startswith("/api/expansion") or \
-                self.path.startswith("/api/duels") or \
-                self.path.startswith("/api/fishing"):
+        # ── API: 星盘 (KOI) ───────────────────────────────────────────
+        if self.path.startswith("/api/koi"):
             from urllib.parse import urlparse, parse_qs
             parsed = urlparse(self.path)
             route = parsed.path
@@ -1898,553 +1834,105 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 k: v[0] if v else ""
                 for k, v in parse_qs(parsed.query).items()
             }
-
-            def _body() -> dict:
-                length = int(self.headers.get("Content-Length", 0))
-                raw = self.rfile.read(length) if length else b"{}"
-                data = json.loads(raw or b"{}")
-                return data if isinstance(data, dict) else {}
-
             conn = None
             try:
                 from src.db.schema import initialize_db
-                conn = initialize_db(_points_db_path())
-                config = _points_config()
-                store, levels, catalog, duels, fishing_catalog, fishing = \
-                    _points_stack(conn, config)
+                from src.koi.store import KoiStore
+                from src.koi import rules
+                from src.game_utils import local_day
 
-                # ── GET /api/points ──────────────────────────────
-                if route == "/api/points":
-                    chat_id = params.get("chat_id", "")
+                conn = initialize_db(_game_db_path())
+                store = KoiStore(conn)
+                chat_id = params.get("chat_id", "")
+                chats = store.chat_ids()
+                if not chat_id and chats:
+                    chat_id = chats[0]
+
+                if route == "/api/koi" and self.command == "GET":
                     if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
+                        self.send_json({
+                            "ok": True, "chats": [], "chat_id": "",
+                            "totals": {}, "today": {}, "members": [],
+                        })
                         return
-                    scope = params.get("scope", "total")
-                    if scope not in ("total", "season", "day"):
-                        scope = "total"
-                    limit = int(params.get("limit") or
-                                getattr(config, "points_board_size", 10))
-                    limit = max(1, min(limit, 100))
-                    rows = store.board(chat_id, scope, limit)
-                    for row in rows:
-                        row["level"] = levels.label(row["points"])
+                    summaries = store.member_summaries(chat_id, 100)
+                    profiles = {
+                        str(p["sender_id"]): p
+                        for p in store.all_profiles(chat_id)
+                    }
+                    stars = store.star_counts_all(chat_id)
+                    members = []
+                    total_merit = 0
+                    total_fortune = 0
+                    for row in summaries:
+                        sender_id = str(row["sender_id"])
+                        merit = int(row["merit"] or 0)
+                        fortune = int(row["fortune"] or 0)
+                        total_merit += merit
+                        total_fortune += fortune
+                        counts = stars.get(sender_id, {})
+                        core = sum(
+                            counts.get(k, 0) for k in
+                            ("qinglong", "baihu", "zhuque", "xuanwu"))
+                        profile = profiles.get(sender_id, {})
+                        members.append({
+                            "sender_id": sender_id,
+                            "sender_name": row["sender_name"] or sender_id,
+                            "merit": merit,
+                            "fortune": fortune,
+                            "rank": rules.rank_for(fortune)["name"],
+                            "stars": core,
+                            "outer": counts.get("outer", 0),
+                            "sign": profile.get("sign", ""),
+                            "mbti": profile.get("mbti", ""),
+                            "awakening": profile.get("awakening", ""),
+                        })
+                    day = local_day()
+                    pool = store.pool_get(chat_id, day)
                     self.send_json({
                         "ok": True,
-                        "scope": scope,
-                        "rows": rows,
-                        "participants": store.participants(chat_id),
-                        "day_total": store.day_total(
-                            chat_id, time.strftime("%Y-%m-%d")),
-                    })
-                    return
-
-                # ── GET /api/points/member ───────────────────────
-                if route == "/api/points/member":
-                    chat_id = params.get("chat_id", "")
-                    sender_id = params.get("sender_id", "")
-                    if not chat_id or not sender_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id and sender_id required"})
-                        return
-                    stats = store.member_stats(chat_id, sender_id)
-                    power = duels.power(chat_id, sender_id)
-                    level = levels.for_points(stats.earned)
-                    nxt = levels.next_for(stats.earned)
-                    self.send_json({
-                        "ok": True,
-                        "member": {
-                            "sender_id": stats.sender_id,
-                            "sender_name": stats.sender_name,
-                            "earned": stats.earned,
-                            "balance": stats.balance,
-                            "season_points": stats.season_points,
-                            "day_points": stats.day_points,
-                            "total_rank": stats.total_rank,
-                            "season_rank": stats.season_rank,
-                            "streak_days": stats.streak_days,
-                            "level": level,
-                            "next_level": nxt,
-                            "power": {
-                                "total": power.total,
-                                "attack": power.attack,
-                                "defense": power.defense,
-                                "base": power.base,
-                                "base_attack": power.base_attack,
-                                "base_defense": power.base_defense,
-                                "equipment": power.equipment,
-                                "equipment_attack": power.equipment_attack,
-                                "equipment_defense": power.equipment_defense,
-                                "realm_bonus": power.realm_bonus,
-                                "technique_attack": power.technique_attack,
-                                "technique_defense": power.technique_defense,
-                                "technique_effects": power.technique_effects,
-                                "skill_attack": power.skill_attack,
-                                "skill_defense": power.skill_defense,
-                                "skill_effects": power.skill_effects,
-                                "expansion_attack": power.expansion_attack,
-                                "expansion_defense": power.expansion_defense,
-                                "expansion_effects": power.expansion_effects,
-                                "items": power.items,
-                            },
+                        "chats": chats,
+                        "chat_id": chat_id,
+                        "totals": {
+                            "members": len(members),
+                            "merit": total_merit,
+                            "fortune": total_fortune,
+                            "signed_today": store.signed_today(chat_id, day),
                         },
-                        "events": store.recent_events(chat_id, sender_id, 30),
-                    })
-                    return
-
-                # ── GET /api/points/overview ─────────────────────
-                if route == "/api/points/overview":
-                    chat_id = params.get("chat_id", "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    rows = store.board(chat_id, "total", 500)
-                    distribution: dict[str, int] = {}
-                    for row in rows:
-                        label = levels.label(row["points"])
-                        distribution[label] = distribution.get(label, 0) + 1
-                    self.send_json({
-                        "ok": True,
-                        "participants": store.participants(chat_id),
-                        "day_total": store.day_total(
-                            chat_id, time.strftime("%Y-%m-%d")),
-                        "level_distribution": distribution,
-                        "daily": store.daily_series(chat_id, 14),
-                    })
-                    return
-
-                # ── POST /api/points/adjust ──────────────────────
-                if route == "/api/points/adjust":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    try:
-                        delta = int(data.get("delta", 0))
-                    except (TypeError, ValueError):
-                        self.send_json({"ok": False,
-                                        "error": "delta must be an integer"})
-                        return
-                    if not chat_id or not sender_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id and sender_id required"})
-                        return
-                    if delta == 0 or abs(delta) > 10000:
-                        self.send_json({"ok": False,
-                                        "error": "delta must be non-zero"})
-                        return
-                    kind = str(data.get("kind") or "earned")
-                    if kind not in ("earned", "balance"):
-                        self.send_json({"ok": False,
-                                        "error": "kind must be earned or balance"})
-                        return
-                    name = str(data.get("sender_name")
-                               or store.member_name(chat_id, sender_id))
-                    if kind == "earned":
-                        earned = store.adjust_earned(
-                            chat_id, sender_id, name, delta,
-                            note=str(data.get("reason", "")),
-                        )
-                    else:
-                        store.adjust_balance(
-                            chat_id, sender_id, name, delta,
-                            note=str(data.get("reason", "")),
-                        )
-                        earned = store.earned_of(chat_id, sender_id)
-                    self.send_json({
-                        "ok": True,
-                        "kind": kind,
-                        "earned": earned,
-                        "balance": store.balance_of(chat_id, sender_id),
-                    })
-                    return
-
-                # ── GET /api/points/members ──────────────────────
-                if route == "/api/points/members":
-                    chat_id = params.get("chat_id", "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    from src.points.util import load_group_members
-                    current = load_group_members(chat_id)
-                    members = store.known_members(chat_id)
-                    for member in members:
-                        member["active"] = (
-                            None if current is None
-                            else member["sender_id"] in current
-                        )
-                    self.send_json({
-                        "ok": True,
-                        "has_snapshot": current is not None,
+                        "today": {
+                            "day": day,
+                            "pool_total": int(pool.get("total") or 0),
+                            "pool_status": pool.get("status") or "none",
+                            "pool_winner": pool.get("winner_name") or "",
+                        },
                         "members": members,
                     })
                     return
 
-                # ── POST /api/points/purge ───────────────────────
-                if route == "/api/points/purge":
-                    if self.command != "POST":
-                        self.send_json({"ok": False,
-                                        "error": "POST required"})
+                if route == "/api/koi/adjust" and self.command == "POST":
+                    length = int(self.headers.get("Content-Length", 0))
+                    raw = self.rfile.read(length) if length else b"{}"
+                    data = json.loads(raw or b"{}")
+                    chat_id = str(data.get("chat_id") or chat_id)
+                    sender_id = str(data.get("sender_id") or "")
+                    kind = str(data.get("kind") or "merit")
+                    delta = int(data.get("delta") or 0)
+                    if not chat_id or not sender_id or kind not in (
+                            "merit", "fortune"):
+                        self.send_json({
+                            "ok": False, "error": "参数不完整"})
                         return
-                    data = _body()
-                    chat_id = str(data.get("chat_id") or "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    if data.get("all_departed"):
-                        from src.points.util import load_group_members
-                        current = load_group_members(chat_id)
-                        if current is None:
-                            self.send_json({
-                                "ok": False,
-                                "error": ("没有群成员快照，无法识别退群成员。"
-                                          "请先启动微信数据源刷新群成员。"),
-                            })
-                            return
-                        targets = [
-                            member["sender_id"]
-                            for member in store.known_members(chat_id)
-                            if member["sender_id"] not in current
-                        ]
-                    else:
-                        sender_id = str(data.get("sender_id") or "")
-                        if not sender_id:
-                            self.send_json({
-                                "ok": False,
-                                "error": "sender_id or all_departed required",
-                            })
-                            return
-                        targets = [sender_id]
-                    if len(targets) > 500:
-                        self.send_json({"ok": False,
-                                        "error": "一次最多清理 500 人"})
-                        return
-                    purged = {
-                        sender_id: store.purge_member(chat_id, sender_id)
-                        for sender_id in targets
-                    }
-                    self.send_json({
-                        "ok": True,
-                        "count": len(purged),
-                        "purged": purged,
-                    })
-                    return
-
-                # ── GET/POST /api/points/levels ──────────────────
-                if route == "/api/points/levels":
-                    if self.command == "POST":
-                        data = _body()
-                        levels.save(data.get("levels") or [])
-                        self.send_json({"ok": True,
-                                        "levels": levels.load()})
-                    else:
-                        self.send_json({"ok": True,
-                                        "levels": levels.load()})
-                    return
-
-                # ── GET /api/equipment ───────────────────────────
-                if route == "/api/equipment":
-                    chat_id = params.get("chat_id", "")
-                    sender_id = params.get("sender_id", "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    owned = (
-                        store.owned_items(chat_id, sender_id)
-                        if sender_id else []
-                    )
-                    power = (
-                        duels.power(chat_id, sender_id)
-                        if sender_id else None
-                    )
-                    self.send_json({
-                        "ok": True,
-                        "catalog": catalog.load(),
-                        "owned": owned,
-                        "power": None if power is None else {
-                            "total": power.total,
-                            "attack": power.attack,
-                            "defense": power.defense,
-                            "base": power.base,
-                            "equipment": power.equipment,
-                            "equipment_attack": power.equipment_attack,
-                            "equipment_defense": power.equipment_defense,
-                            "realm_bonus": power.realm_bonus,
-                            "technique_attack": power.technique_attack,
-                            "technique_defense": power.technique_defense,
-                            "skill_attack": power.skill_attack,
-                            "skill_defense": power.skill_defense,
-                            "skill_effects": power.skill_effects,
-                            "expansion_attack": power.expansion_attack,
-                            "expansion_defense": power.expansion_defense,
-                            "expansion_effects": power.expansion_effects,
-                            "items": power.items,
-                        },
-                        "balance": (
-                            store.balance_of(chat_id, sender_id)
-                            if sender_id else 0
-                        ),
-                    })
-                    return
-
-                # ── GET /api/expansion ───────────────────────────
-                if route == "/api/expansion":
-                    chat_id = params.get("chat_id", "")
-                    sender_id = params.get("sender_id", "")
-                    if not chat_id or not sender_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id and sender_id required"})
-                        return
-                    from src.points.expansion import ExpansionService
-                    expansion = ExpansionService(
-                        store, config, levels, catalog, duels)
-                    self.send_json({
-                        "ok": True,
-                        "expansion": expansion.summary(chat_id, sender_id),
-                    })
-                    return
-
-                # ── POST /api/equipment/buy ──────────────────────
-                if route == "/api/equipment/buy":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    item = catalog.by_id(str(data.get("item_id", "")))
-                    if not chat_id or not sender_id or item is None:
-                        self.send_json({"ok": False,
-                                        "error": "invalid request"})
-                        return
-                    name = str(data.get("sender_name")
-                               or store.member_name(chat_id, sender_id))
-                    ok, code, balance, equipped = store.buy_item(
-                        chat_id, sender_id, name, item,
-                        catalog.same_slot_ids(item),
-                    )
-                    power = duels.power(chat_id, sender_id)
-                    self.send_json({
-                        "ok": ok, "code": code, "balance": balance,
-                        "equipped": equipped,
-                        "power": power.total,
-                    })
-                    return
-
-                # ── POST /api/equipment/equip ────────────────────
-                if route == "/api/equipment/equip":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    item = catalog.by_id(str(data.get("item_id", "")))
-                    if not chat_id or not sender_id or item is None:
-                        self.send_json({"ok": False,
-                                        "error": "invalid request"})
-                        return
-                    equip = bool(data.get("equipped", True))
-                    ok = store.equip_item(
-                        chat_id, sender_id, item["id"],
-                        catalog.same_slot_ids(item), equip=equip,
-                    )
-                    self.send_json({
-                        "ok": ok,
-                        "power": duels.power(chat_id, sender_id).total,
-                    })
-                    return
-
-                # ── GET/POST /api/equipment/catalog ──────────────
-                if route == "/api/equipment/catalog":
-                    if self.command == "POST":
-                        data = _body()
-                        catalog.save(data)
-                        self.send_json({"ok": True, "catalog": catalog.load()})
-                    else:
-                        self.send_json({"ok": True, "catalog": catalog.load()})
-                    return
-
-                # ── GET /api/duels ───────────────────────────────
-                if route == "/api/duels":
-                    chat_id = params.get("chat_id", "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    limit = max(1, min(int(params.get("limit") or 50), 200))
-                    self.send_json({
-                        "ok": True,
-                        "duels": store.recent_duels(chat_id, limit),
-                    })
-                    return
-
-                # ── GET /api/fishing ──────────────────────────────
-                if route == "/api/fishing":
-                    chat_id = params.get("chat_id", "")
-                    if not chat_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id required"})
-                        return
-                    limit = max(1, min(
-                        int(params.get("limit") or
-                            getattr(config, "points_board_size", 10)), 100))
-                    payload = {
-                        "ok": True,
-                        "catalog": fishing_catalog.load(),
-                        "board": {
-                            "value": store.fishing_board(
-                                chat_id, "value", limit=limit),
-                            "biggest": store.fishing_board(
-                                chat_id, "biggest", limit=limit),
-                        },
-                        "recent": store.fishing_recent(
-                            chat_id, limit=limit),
-                        "limits": {
-                            "hourly_attempts": getattr(
-                                config, "fishing_hourly_attempts", 30),
-                            "daily_cap": getattr(
-                                config, "fishing_daily_cap", 120),
-                            "cooldown_sec": getattr(
-                                config, "fishing_cooldown_sec", 5),
-                            "max_batch": getattr(
-                                config, "fishing_max_batch", 10),
-                        },
-                    }
-                    sender_id = params.get("sender_id", "")
-                    if sender_id:
-                        payload["member"] = fishing.stats(
-                            chat_id, sender_id)
-                        payload["inventory"] = store.fishing_inventory(
-                            chat_id, sender_id)
-                    self.send_json(payload)
-                    return
-
-                # ── POST /api/fishing/cast ────────────────────────
-                if route == "/api/fishing/cast":
+                    name = str(data.get("sender_name") or sender_id)
                     import uuid
-                    from dataclasses import asdict
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    if not chat_id or not sender_id:
-                        self.send_json({"ok": False,
-                                        "error": "chat_id and sender_id required"})
-                        return
-                    try:
-                        count = int(data.get("count", 1))
-                    except (TypeError, ValueError):
-                        count = 1
-                    msg = {
-                        "message_id": f"web:{uuid.uuid4().hex}",
-                        "chat_id": chat_id,
-                        "group_name": str(data.get("group_name", "")),
-                        "sender_id": sender_id,
-                        "sender_name": str(data.get("sender_name")
-                                            or store.member_name(
-                                                chat_id, sender_id)),
-                        "content": "钓鱼",
-                        "msg_type": 1,
-                        "timestamp": int(time.time()),
-                    }
-                    result = fishing.cast(msg, count=count)
-                    self.send_json({
-                        "ok": result.ok,
-                        "code": result.code,
-                        "reply": result.reply,
-                        "casts": [asdict(item) for item in result.casts],
-                        "total_value": result.total_value,
-                        "balance": result.balance_after,
-                        "attempts_used": result.attempts_used,
-                        "attempts_limit": result.attempts_limit,
-                        "earned_today": result.earned_today,
-                        "daily_cap": result.daily_cap,
-                    })
+                    store.grant(
+                        chat_id, sender_id, name, kind, delta,
+                        "admin", ref_id=f"admin:{uuid.uuid4().hex}")
+                    self.send_json({"ok": True})
                     return
 
-                # ── POST /api/fishing/buy_rod ─────────────────────
-                if route == "/api/fishing/buy_rod":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    rod = fishing_catalog.by_rod_id(
-                        str(data.get("rod_id", "")))
-                    if not chat_id or not sender_id or rod is None:
-                        self.send_json({"ok": False,
-                                        "error": "invalid request"})
-                        return
-                    ok, code, balance = store.buy_fishing_rod(
-                        chat_id, sender_id,
-                        str(data.get("sender_name")
-                            or store.member_name(chat_id, sender_id)),
-                        rod,
-                    )
-                    self.send_json({
-                        "ok": ok, "code": code, "balance": balance,
-                    })
-                    return
-
-                # ── POST /api/fishing/buy_bait ────────────────────
-                if route == "/api/fishing/buy_bait":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    bait = fishing_catalog.by_bait_id(
-                        str(data.get("bait_id", "")))
-                    if not chat_id or not sender_id or bait is None:
-                        self.send_json({"ok": False,
-                                        "error": "invalid request"})
-                        return
-                    try:
-                        quantity = int(data.get("quantity", 10))
-                    except (TypeError, ValueError):
-                        quantity = 10
-                    ok, code, balance = store.buy_fishing_bait(
-                        chat_id, sender_id,
-                        str(data.get("sender_name")
-                            or store.member_name(chat_id, sender_id)),
-                        bait, quantity,
-                    )
-                    self.send_json({
-                        "ok": ok, "code": code, "balance": balance,
-                    })
-                    return
-
-                # ── POST /api/fishing/equip_rod ───────────────────
-                if route == "/api/fishing/equip_rod":
-                    data = _body()
-                    chat_id = str(data.get("chat_id", ""))
-                    sender_id = str(data.get("sender_id", ""))
-                    rod = fishing_catalog.by_rod_id(
-                        str(data.get("rod_id", "")))
-                    if not chat_id or not sender_id or rod is None:
-                        self.send_json({"ok": False,
-                                        "error": "invalid request"})
-                        return
-                    rod_id = "" if rod.get("default") else rod["id"]
-                    ok = store.equip_fishing_rod(
-                        chat_id, sender_id, rod_id)
-                    self.send_json({"ok": ok})
-                    return
-
-                # ── GET/POST /api/fishing/catalog ─────────────────
-                if route == "/api/fishing/catalog":
-                    if self.command == "POST":
-                        data = _body()
-                        fishing_catalog.save(data)
-                        self.send_json({
-                            "ok": True,
-                            "catalog": fishing_catalog.load(),
-                        })
-                    else:
-                        self.send_json({
-                            "ok": True,
-                            "catalog": fishing_catalog.load(),
-                        })
-                    return
-
-                self.send_json({"ok": False, "error": "Not found"})
-            except ValueError as exc:
-                self.send_json({"ok": False, "error": str(exc)})
+                self.send_json({"ok": False, "error": "unknown koi route"})
             except Exception as exc:
-                logger.exception("Points API failed (%s)", self.path)
+                logger.exception("Koi API failed (%s)", self.path)
                 self.send_json({"ok": False, "error": str(exc)})
             finally:
                 if conn is not None:
@@ -2778,7 +2266,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 data = json.loads(body)
                 with _onboarding_lock:
                     _onboarding_data["step4_done"] = True
-                    _onboarding_data["fun_enabled"] = data.get("fun_enabled", True)
                     _onboarding_data["proactive_enabled"] = data.get("proactive_enabled", False)
                     _onboarding_data["sticky_mention_enabled"] = data.get("sticky_mention_enabled", True)
 

@@ -47,7 +47,6 @@ export default function Onboarding({ onComplete }) {
     anthropic_api_key: '', anthropic_base_url: 'https://api.anthropic.com',
     summarize_model: 'claude-haiku-4-5-20251001',
     // Step 4
-    fun_enabled: true,
     proactive_enabled: false,
     sticky_mention_enabled: true,
   })

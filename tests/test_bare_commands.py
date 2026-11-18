@@ -37,6 +37,8 @@ class BareCommandRoutingTests(unittest.TestCase):
         self.chat = "123@chatroom"
 
         self.config = BotConfig()
+        self.config.koi_enabled = True
+        self.config.koi_groups = ["*"]
         self.config.db_path = os.path.join(self.tmp.name, "test.db")
         self.config.todo_enabled = True
         self.config.todo_groups = ["*"]
@@ -85,7 +87,8 @@ class BareCommandRoutingTests(unittest.TestCase):
 
         self.assertIsNotNone(reply)
         self.assertIn("游玩清单", reply)
-        self.assertIn("【钓鱼】", reply)
+        self.assertIn("【星盘】", reply)
+        self.assertIn("求签", reply)
         self.assertNotIn("管理（仅管理员）", reply)
 
     def test_bare_help_alias(self):
@@ -93,11 +96,12 @@ class BareCommandRoutingTests(unittest.TestCase):
         self.assertIn("游玩清单", reply)
 
     def test_bare_help_section(self):
-        reply = self.router.handle(self._message("帮助 钓鱼"))
+        reply = self.router.handle(self._message("帮助 星盘"))
 
         self.assertIsNotNone(reply)
-        self.assertIn("【钓鱼】用法", reply)
-        self.assertIn("每小时", reply)
+        self.assertIn("【星盘】用法", reply)
+        self.assertIn("求签", reply)
+        self.assertIn("观星", reply)
 
     def test_bare_todo_add_and_view(self):
         added = self.router.handle(self._message("记一下 周五聚餐"))

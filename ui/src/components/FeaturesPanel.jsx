@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, Warning, FloppyDisk, Info } from '@phosphor-icons/react'
 import { Field, Toggle, Select, Input } from './SharedComponents'
 import WelcomeSection from './WelcomeEditor'
-import LotsEditor from './LotsEditor'
 
 const pageTransition = {
   initial: { opacity: 0, x: 12 },
@@ -18,11 +17,11 @@ const paramPanel = {
 }
 
 const sectionTitles = {
-  summarize: '总结功能', feishu: '飞书同步', fun: '趣味抽签',
+  summarize: '总结功能', feishu: '飞书同步',
   proactive: '主动发言', sticky: '粘性提及', welcome: '欢迎新人', log: '日志级别',
 }
 const sectionAccents = {
-  summarize: '#18E299', feishu: '#3772cf', fun: '#c37d0d',
+  summarize: '#18E299', feishu: '#3772cf',
   proactive: '#10b981', sticky: '#8b5cf6', welcome: '#f59e0b', log: '#6b7280',
 }
 
@@ -209,30 +208,6 @@ function FeishuSection({ form, update }) {
   )
 }
 
-// ── Fun: Draw Lots ──────────────────────────────────────────────────
-
-function FunSection({ form, update }) {
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex-1 mr-8">
-          <p className="text-[15px] text-text-main font-medium">趣味抽签</p>
-          <p className="text-sm text-text-muted mt-1.5">@机器人说"抽签"，随机返回运势签文（上上签/大吉/中吉/小吉/末吉/凶）</p>
-        </div>
-        <Toggle enabled={form.fun_enabled} onChange={v => update('fun_enabled', v)} />
-      </div>
-      <AnimatePresence>
-        {form.fun_enabled && (
-          <motion.div variants={paramPanel} initial="initial" animate="animate" exit="exit"
-            className="p-4 bg-bg-raised rounded-lg space-y-3">
-            <LotsEditor />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
 // ── Proactive ───────────────────────────────────────────────────────
 
 function ProactiveSection({ form, update }) {
@@ -335,8 +310,6 @@ function LogSection({ form, update }) {
   )
 }
 
-// ── Lots Editor imported from shared component ──────────────────────
-
 // ── Main FeaturesPanel ──────────────────────────────────────────────
 
 export default function FeaturesPanel({ activeSection, onNavigate }) {
@@ -345,7 +318,6 @@ export default function FeaturesPanel({ activeSection, onNavigate }) {
   const [loaded, setLoaded] = useState(false)
   const [form, setForm] = useState({
     summarize_enabled: true, fallback_window_hours: 8, trigger_keywords: [],
-    fun_enabled: true,
     proactive_enabled: false, proactive_rate_window_sec: 120,
     proactive_rate_quiet: 1.5, proactive_rate_casual: 4.0,
     proactive_rate_lively: 6.5, proactive_rate_burst: 8.5,
@@ -366,7 +338,7 @@ export default function FeaturesPanel({ activeSection, onNavigate }) {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('http://127.0.0.1:7327/api/load-config')
+        const res = await fetch('/api/load-config')
         const data = await res.json()
         if (data.ok && data.config) setForm(prev => ({ ...prev, ...data.config }))
       } catch {}
@@ -380,13 +352,12 @@ export default function FeaturesPanel({ activeSection, onNavigate }) {
   async function handleSave() {
     setSaved(false); setSaveError('')
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/config', {
+      const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           summarize_enabled: form.summarize_enabled, fallback_window_hours: form.fallback_window_hours,
           trigger_keywords: form.trigger_keywords,
-          fun_enabled: form.fun_enabled,
           proactive_enabled: form.proactive_enabled, proactive_rate_window_sec: form.proactive_rate_window_sec,
           proactive_rate_quiet: form.proactive_rate_quiet, proactive_rate_casual: form.proactive_rate_casual,
           proactive_rate_lively: form.proactive_rate_lively, proactive_rate_burst: form.proactive_rate_burst,
@@ -443,7 +414,6 @@ export default function FeaturesPanel({ activeSection, onNavigate }) {
               <div className="p-7">
                 {activeSection === 'summarize' && <SummarizeSection form={form} update={update} />}
                 {activeSection === 'feishu' && <FeishuSection form={form} update={update} />}
-                {activeSection === 'fun' && <FunSection form={form} update={update} />}
                 {activeSection === 'proactive' && <ProactiveSection form={form} update={update} />}
                 {activeSection === 'sticky' && <StickySection form={form} update={update} />}
                 {activeSection === 'welcome' && <WelcomeSection form={form} update={update} />}

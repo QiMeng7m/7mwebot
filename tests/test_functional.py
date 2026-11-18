@@ -269,74 +269,39 @@ class TestPostAllowlist:
         assert resp.status == 405
 
 
-class TestPointsApi:
-    """Verify the points/equipment/duel APIs are wired up."""
+class TestKoiApi:
+    """Verify the star-game API is wired up."""
 
-    def test_points_board_returns_rows(self, server):
-        status, data = _api_get("/api/points?chat_id=test@chatroom")
+    def test_koi_overview_shape(self, server):
+        status, data = _api_get("/api/koi")
         assert status == 200
         assert data["ok"] is True
-        assert data["rows"] == []
-        assert data["participants"] == 0
-        assert "day_total" in data
-
-    def test_points_overview_shape(self, server):
-        status, data = _api_get("/api/points/overview?chat_id=test@chatroom")
-        assert status == 200
-        assert data["ok"] is True
-        assert len(data["daily"]) == 14
-        assert isinstance(data["level_distribution"], dict)
-
-    def test_equipment_catalog(self, server):
-        status, data = _api_get("/api/equipment?chat_id=test@chatroom")
-        assert status == 200
-        assert data["ok"] is True
-        names = [item["name"] for item in data["catalog"]["items"]]
-        assert "木剑" in names
-        assert len(data["catalog"]["slots"]) == 4
-
-    def test_duels_endpoint(self, server):
-        status, data = _api_get("/api/duels?chat_id=test@chatroom")
-        assert status == 200
-        assert data["ok"] is True
-        assert data["duels"] == []
-
-    def test_adjust_rejects_zero_delta(self, server):
-        status, data = _api_post("/api/points/adjust", {
-            "chat_id": "test@chatroom",
-            "sender_id": "wxid_test",
-            "delta": 0,
-        })
-        assert status == 200
-        assert data["ok"] is False
-
-    def test_points_members_lists_known_members(self, server):
-        status, data = _api_get("/api/points/members?chat_id=test@chatroom")
-        assert status == 200
-        assert data["ok"] is True
+        assert isinstance(data["chats"], list)
         assert isinstance(data["members"], list)
-        assert isinstance(data["has_snapshot"], bool)
+        assert "totals" in data
+        assert "today" in data
 
-    def test_points_purge_is_post_only_and_validated(self, server):
-        # GET is rejected (the path is in the POST allowlist, not GET).
-        status, data = _api_get("/api/points/purge?chat_id=test@chatroom")
+    def test_koi_adjust_validates(self, server):
+        status, data = _api_post("/api/koi/adjust", {})
         assert status == 200
         assert data["ok"] is False
-        # POST without chat_id is rejected too.
-        status, data = _api_post("/api/points/purge", {})
-        assert status == 200
-        assert data["ok"] is False
-        # A single-member purge is accepted (no rows for this test member).
-        import uuid
-        fake = f"wxid_purge_{uuid.uuid4().hex}"
-        status, data = _api_post("/api/points/purge", {
-            "chat_id": "test@chatroom",
-            "sender_id": fake,
+
+    def test_koi_adjust_and_list_member(self, server):
+        chat = "test@chatroom"
+        sender = "wxid_test_koi"
+        status, data = _api_post("/api/koi/adjust", {
+            "chat_id": chat,
+            "sender_id": sender,
+            "sender_name": "测试星盘",
+            "kind": "merit",
+            "delta": 50,
         })
         assert status == 200
         assert data["ok"] is True
-        assert data["count"] == 1
-        assert data["purged"] == {fake: {}}
+        status, data = _api_get(f"/api/koi?chat_id={chat}")
+        assert status == 200
+        assert data["ok"] is True
+        assert sender in [m["sender_id"] for m in data["members"]]
 
 
 # ── Playwright browser-level functional tests ───────────────────────────────
@@ -422,32 +387,21 @@ class TestConfigExportImport:
             assert "导出备份" in page_text or "配置备份" in page_text
 
 
-class TestPointsPanel:
-    def test_sidebar_has_points_tab(self, page):
+class TestKoiPanel:
+    def test_sidebar_has_koi_tab(self, page):
         page.goto(BASE_URL, timeout=10000)
         page.wait_for_timeout(1000)
-        assert "修炼值" in page.inner_text("body")
+        assert "星盘" in page.inner_text("body")
 
-    def test_points_panel_renders(self, page):
+    def test_koi_panel_renders(self, page):
         page.goto(BASE_URL, timeout=10000)
         page.wait_for_timeout(1000)
-        tab = page.locator("button:has-text('修炼值')")
+        tab = page.locator("button:has-text('星盘')")
         assert tab.count() > 0
         tab.first.click()
         page.wait_for_timeout(800)
         body = page.inner_text("body")
-        assert "装备商店" in body
-        assert "切磋记录" in body
-        assert "榜单" in body
-        # No blank page / error boundary.
+        assert "今日锦鲤池" in body
+        assert "成员星盘" in body
+        assert "手动调整" in body
         assert "Something went wrong" not in body
-
-    def test_points_panel_switches_views(self, page):
-        page.goto(BASE_URL, timeout=10000)
-        page.wait_for_timeout(1000)
-        page.locator("button:has-text('修炼值')").first.click()
-        page.wait_for_timeout(500)
-        page.locator("button:has-text('装备商店')").first.click()
-        page.wait_for_timeout(500)
-        body = page.inner_text("body")
-        assert "武器" in body or "还没有成员数据" in body

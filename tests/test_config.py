@@ -553,17 +553,14 @@ class LoadConfigTests(unittest.TestCase):
             self.assertEqual(config.dedup_window_sec, 120)
 
     def test_load_config_boolean_parsing(self):
-        """Boolean env vars (FUN_ENABLED, PROACTIVE_ENABLED) parse correctly."""
         from src.config import load_config
 
         with patch.dict(os.environ, {
             "ANTHROPIC_API_KEY": "sk-ant-test",
-            "FUN_ENABLED": "false",
             "PROACTIVE_ENABLED": "true",
             "STICKY_MENTION_ENABLED": "false",
         }, clear=True):
             config = load_config()
-            self.assertFalse(config.fun_enabled)
             self.assertTrue(config.proactive_enabled)
             self.assertFalse(config.sticky_mention_enabled)
 

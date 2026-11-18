@@ -169,7 +169,7 @@ export default function Dashboard({ status }) {
     setBusy(true)
     try {
       const endpoint = status.running ? '/api/stop' : '/api/start'
-      await fetch(`http://127.0.0.1:7327${endpoint}`, { method: 'POST' })
+      await fetch(`${endpoint}`, { method: 'POST' })
     } catch {}
     setTimeout(() => setBusy(false), 1000)  // debounce
   }
@@ -178,7 +178,7 @@ export default function Dashboard({ status }) {
     setDiagnosing(true)
     setDiagResult(null)
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/onboarding/diagnose')
+      const res = await fetch('/api/onboarding/diagnose')
       const d = await res.json()
       if (d.ok) {
         const hasError = Object.values(d.diagnostics).some(item => !item.ok)
@@ -322,7 +322,7 @@ export default function Dashboard({ status }) {
 
 // ── Inline key extraction banner ───────────────────────────────────────
 
-const API = 'http://127.0.0.1:7327'
+const API = ''
 const EXTRACTION_PHASE_MAP = {
   hooking:         { label: '正在尝试直接获取...' },
   waiting_exit:    { label: '请退出微信' },

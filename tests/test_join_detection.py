@@ -257,9 +257,9 @@ class StandardizeMentionTests(unittest.TestCase):
         }, "测试群", "1@chatroom")
 
     def test_mention_wxid_is_kept_for_commands(self):
-        result = self._standardize("wxid_a:\n@wxid_b 切磋")
+        result = self._standardize("wxid_a:\n@wxid_b 求签")
         self.assertIsNotNone(result)
-        self.assertEqual(result["content"], "wxid_a:\n@萧山-李四 切磋")
+        self.assertEqual(result["content"], "wxid_a:\n@萧山-李四 求签")
         self.assertEqual(result["mentioned_ids"], ["wxid_b"])
 
     def test_bot_mention_is_not_a_command_target(self):
@@ -310,19 +310,19 @@ class StandardizeNewMemberNicknameTests(unittest.TestCase):
     def test_unresolved_mention_uses_group_nickname(self):
         result = self._backend()._standardize({
             "sender_username": "wxid_a",
-            "message_content": "wxid_a:\n@wxid_new 切磋",
+            "message_content": "wxid_a:\n@wxid_new 求签",
             "local_type": 1,
             "create_time": int(time.time()),
             "server_id": "m2",
         }, "测试群", "1@chatroom")
         self.assertIsNotNone(result)
-        self.assertEqual(result["content"], "wxid_a:\n@新人小明 切磋")
+        self.assertEqual(result["content"], "wxid_a:\n@新人小明 求签")
         self.assertEqual(result["mentioned_ids"], ["wxid_new"])
 
     def test_raw_wxid_mention_is_targetable_without_a_name(self):
         result = self._backend()._standardize({
             "sender_username": "wxid_a",
-            "message_content": "wxid_a:\n@wxid_unknown 切磋",
+            "message_content": "wxid_a:\n@wxid_unknown 求签",
             "local_type": 1,
             "create_time": int(time.time()),
             "server_id": "m3",

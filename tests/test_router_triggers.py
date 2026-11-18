@@ -54,6 +54,7 @@ class RouterTriggerTests(unittest.TestCase):
         })
 
         self.config = BotConfig()
+        self.config.koi_enabled = False
         self.config.db_path = ":memory:"
         self.config.todo_enabled = False
         self.config.sticky_mention_enabled = False
@@ -146,22 +147,6 @@ class RouterTriggerTests(unittest.TestCase):
         self.summarizer.is_disabled = True
         self.router.handle(self._message("随便聊聊"))
         self.assertEqual(self.summarizer.consolidate_calls, 0)
-
-    def test_ai_disabled_lot_reading_returns_lot_without_ai(self):
-        """解签 falls back to the raw lot text when AI is off."""
-        from src.points.util import local_day
-
-        self.config.ai_enabled = False
-        self.store.save_fun_draw(
-            self.chat, "wxid_a", "张三", "大吉", "🍀", "顺风顺水",
-            day=local_day(),
-        )
-        reply = self.router.handle(
-            self._message("@群聊小助手 解签", is_at=True)
-        )
-        self.assertIn("AI 功能已关闭", reply)
-        self.assertIn("顺风顺水", reply)
-        self.assertEqual(self.summarizer.chat_calls, 0)
 
     def test_todo_group_matches_dict_group_names(self):
         """group_names.json values are {name, member_count}, not strings."""

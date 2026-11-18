@@ -109,7 +109,6 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(cfg.max_messages_for_summary, 5000)
             self.assertEqual(cfg.fallback_window_hours, 8)
             self.assertEqual(cfg.dedup_window_sec, 60)
-            self.assertTrue(cfg.fun_enabled)
             self.assertFalse(cfg.proactive_enabled)
             self.assertEqual(cfg.log_level, "INFO")
 
@@ -1081,7 +1080,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
                 "DEEPSEEK_BASE_URL=https://proxy.example.com/v1\n"
                 "ANTHROPIC_BASE_URL=https://claude-proxy.example.com\n"
                 "BOT_DISPLAY_NAME=MyBot\n"
-                "FUN_ENABLED=false\n"
             )
             mock_find.return_value = fake_env
             handler, sock = _build_handler("/api/load-config")
@@ -1092,7 +1090,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
             self.assertEqual(config["deepseek_base_url"], "https://proxy.example.com/v1")
             self.assertEqual(config["anthropic_base_url"], "https://claude-proxy.example.com")
             self.assertEqual(config["bot_display_name"], "MyBot")
-            self.assertFalse(config["fun_enabled"])
 
     def test_load_config_reads_ai_enabled(self):
         """GET /api/load-config exposes the AI master switch."""
@@ -1290,7 +1287,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
                 "deepseek_base_url": "https://proxy.example.com/v1",
                 "anthropic_base_url": "https://claude-proxy.example.com",
                 "bot_display_name": "new-name",
-                "fun_enabled": False,
             }).encode()
             with patch("src.web.server._find_or_create_env",
                        return_value=tmp_env):
@@ -1310,7 +1306,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
             self.assertIn("DEEPSEEK_BASE_URL=https://proxy.example.com/v1", saved_content)
             self.assertIn("ANTHROPIC_BASE_URL=https://claude-proxy.example.com", saved_content)
             self.assertIn("BOT_DISPLAY_NAME=new-name", saved_content)
-            self.assertIn("FUN_ENABLED=false", saved_content)
             self.assertIn("AI_BACKEND=deepseek", saved_content)
         finally:
             tmp_env.unlink(missing_ok=True)
@@ -1329,7 +1324,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
         tmp_env = tmp_dir / ".env"
         tmp_env.write_text(
             "WECHAT_GROUPS=encoded-group\n"
-            "FUN_ENABLED=false\n"
             "TODO_ENABLED=false\n"
             "TODO_GROUPS=only-this-group\n"
             "VOICE_ASR_ENABLED=true\n"
@@ -1340,7 +1334,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
             # 1) Features-panel-style payload: only feature fields.
             body = json.dumps({
                 "log_level": "DEBUG",
-                "fun_enabled": True,
             }).encode()
             with patch("src.web.server._find_or_create_env",
                        return_value=tmp_env):
@@ -1359,7 +1352,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
             self.assertIn("VOICE_ASR_ENABLED=true", content)
             self.assertIn("VOICE_OPENAI_API_KEY=voice-secret", content)
             self.assertIn("LOG_LEVEL=DEBUG", content)
-            self.assertIn("FUN_ENABLED=true", content)
 
             # 2) Todo-panel-style payload: only todo fields.
             body = json.dumps({
@@ -1378,7 +1370,6 @@ class ApiConfigEndpointTests(unittest.TestCase):
 
             content = tmp_env.read_text(encoding="utf-8")
             self.assertIn("WECHAT_GROUPS=encoded-group", content)
-            self.assertIn("FUN_ENABLED=true", content)
             self.assertIn("VOICE_ASR_ENABLED=true", content)
             self.assertIn("VOICE_OPENAI_API_KEY=voice-secret", content)
             self.assertIn("TODO_ENABLED=true", content)
@@ -1916,7 +1907,6 @@ class OnboardingApiTests(unittest.TestCase):
                 patch("src.web.server._write_onboarding_to_env"),
             ):
                 post_body = json.dumps({
-                    "fun_enabled": True,
                     "proactive_enabled": False,
                     "sticky_mention_enabled": True,
                 })

@@ -19,7 +19,7 @@ export default function NicknameEditor() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('http://127.0.0.1:7327/api/nicknames/groups')
+        const res = await fetch('/api/nicknames/groups')
         const data = await res.json()
         if (data.ok) {
           setGroups(data.groups || [])
@@ -41,7 +41,7 @@ export default function NicknameEditor() {
     setError('')
     async function load() {
       try {
-        const res = await fetch(`http://127.0.0.1:7327/api/nicknames?chat_id=${encodeURIComponent(selectedGroup)}`)
+        const res = await fetch(`/api/nicknames?chat_id=${encodeURIComponent(selectedGroup)}`)
         const data = await res.json()
         if (data.ok) {
           setMembers(data.members || [])
@@ -60,7 +60,7 @@ export default function NicknameEditor() {
   async function saveNickname(wxid, nickname) {
     setSaving(prev => ({ ...prev, [wxid]: true }))
     try {
-      await fetch('http://127.0.0.1:7327/api/nicknames', {
+      await fetch('/api/nicknames', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wxid, nickname }),

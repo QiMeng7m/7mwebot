@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, Warning, FloppyDisk, Info, DownloadSimple, UploadSimple } from '@phosphor-icons/react'
 import { Field, Toggle, Select, Input } from './SharedComponents'
-import LotsEditor from './LotsEditor'
 
 const pageTransition = {
   initial: { opacity: 0, x: 12 },
@@ -132,7 +131,7 @@ function VoiceSection({ form, update }) {
     if (isOpenAi) { setDlPhase('checking'); return }
     async function check() {
       try {
-        const res = await fetch(`http://127.0.0.1:7327/api/voice/model-status?model=${form.voice_local_model || 'small'}`)
+        const res = await fetch(`/api/voice/model-status?model=${form.voice_local_model || 'small'}`)
         const d = await res.json()
         if (!d.ok) { setDlPhase('error'); setDlError(d.error || '查询失败'); return }
         if (d.downloaded) { setDlPhase('done'); return }
@@ -151,7 +150,7 @@ function VoiceSection({ form, update }) {
     if (!isActive) return
     const timer = setInterval(async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:7327/api/voice/model-status?model=${form.voice_local_model || 'small'}`)
+        const res = await fetch(`/api/voice/model-status?model=${form.voice_local_model || 'small'}`)
         const d = await res.json()
         if (!d.ok) return
         setDlPct(d.pct || 0)
@@ -168,7 +167,7 @@ function VoiceSection({ form, update }) {
     setDlPct(0)
     setDlError('')
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/voice/download-model', {
+      const res = await fetch('/api/voice/download-model', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: form.voice_local_model || 'small' }),
@@ -583,25 +582,6 @@ function FeaturesSection({ form, update }) {
         </AnimatePresence>
       </div>
 
-      {/* ── Fun: Draw Lots ── */}
-      <div className="py-4 border-b border-border-main/50">
-        <div className="flex items-center justify-between">
-          <div className="flex-1 mr-8">
-            <p className="text-[15px] text-text-main font-medium">趣味抽签</p>
-            <p className="text-sm text-text-muted mt-1.5">@机器人说"抽签"，随机返回运势签文（上上签/大吉/中吉/小吉/末吉/凶）</p>
-          </div>
-          <Toggle enabled={form.fun_enabled} onChange={v => update('fun_enabled', v)} />
-        </div>
-        <AnimatePresence>
-          {form.fun_enabled && (
-            <motion.div variants={paramPanel} initial="initial" animate="animate" exit="exit"
-              className="mt-3 p-4 bg-bg-raised rounded-lg space-y-3">
-              <LotsEditor />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
       {/* ── Proactive Participation ── */}
       <div className="py-4 border-b border-border-main/50">
         <div className="flex items-center justify-between">
@@ -886,7 +866,7 @@ function DataPathSection({ form, update, detectedDataDir }) {
     setDetectResult(null)
     try {
       const params = path ? `?path=${encodeURIComponent(path)}` : ''
-      const res = await fetch(`http://127.0.0.1:7327/api/browse${params}`)
+      const res = await fetch(`/api/browse${params}`)
       const d = await res.json()
       if (d.ok) {
         setBrowsePath(d.current_path || '')
@@ -953,7 +933,7 @@ function DataPathSection({ form, update, detectedDataDir }) {
     setDetectError('')
     setDetectResult(null)
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/wechat-data-dir/detect', {
+      const res = await fetch('/api/wechat-data-dir/detect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
@@ -1216,8 +1196,8 @@ function WelcomeSection({ form, update }) {
     async function load() {
       try {
         const [tplRes, grpRes] = await Promise.all([
-          fetch('http://127.0.0.1:7327/api/welcome/templates'),
-          fetch('http://127.0.0.1:7327/api/nicknames/groups'),
+          fetch('/api/welcome/templates'),
+          fetch('/api/nicknames/groups'),
         ])
         const tplData = await tplRes.json()
         const grpData = await grpRes.json()
@@ -1322,7 +1302,7 @@ function WelcomeSection({ form, update }) {
     setSaveError('')
     setSaved(false)
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/welcome/templates', {
+      const res = await fetch('/api/welcome/templates', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1703,7 +1683,7 @@ function SandboxSection({ form }) {
     setError('')
     const start = Date.now()
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/sandbox/test', {
+      const res = await fetch('/api/sandbox/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1855,7 +1835,6 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
     anthropic_api_key: '', anthropic_base_url: 'https://api.anthropic.com',
     summarize_model: 'claude-haiku-4-5-20251001',
     bot_display_name: '', wechat_backend: 'wcdb', wechat_groups: '*',
-    fun_enabled: true,
     proactive_enabled: false, proactive_rate_window_sec: 120,
     proactive_rate_quiet: 1.5, proactive_rate_casual: 4.0,
     proactive_rate_lively: 6.5, proactive_rate_burst: 8.5,
@@ -1878,7 +1857,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
 
   async function handleExportConfig() {
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/config/export')
+      const res = await fetch('/api/config/export')
       if (!res.ok) throw new Error('导出请求失败')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -1910,7 +1889,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
         // Update local form state immediately for UI feedback
         setForm(prev => ({ ...prev, ...parsed }))
         // Persist to server
-        const res = await fetch('http://127.0.0.1:7327/api/config/import', {
+        const res = await fetch('/api/config/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(parsed),
@@ -1940,7 +1919,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch('http://127.0.0.1:7327/api/load-config')
+        const res = await fetch('/api/load-config')
         const data = await res.json()
         if (data.ok && data.config) {
           setForm(prev => ({
@@ -1963,7 +1942,7 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
     setSaved(false)
     setSaveError('')
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/config', {
+      const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1981,7 +1960,6 @@ export default function ConfigPanel({ activeSection, onNavigate }) {
           bot_display_name: form.bot_display_name,
           wechat_backend: form.wechat_backend,
           wechat_groups: form.wechat_groups,
-          fun_enabled: form.fun_enabled,
           proactive_enabled: form.proactive_enabled,
           proactive_rate_window_sec: form.proactive_rate_window_sec,
           proactive_rate_quiet: form.proactive_rate_quiet,

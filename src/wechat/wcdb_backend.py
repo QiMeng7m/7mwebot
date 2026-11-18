@@ -36,7 +36,7 @@ DEFAULT_POLL_SEC = 1.0
 MAX_DEDUP_SIZE = 5000
 MAX_CONSECUTIVE_ERRORS = 5   # trigger reinit after this many consecutive failures
 # 群昵称快照只在启动时拿一次，运行期间新入群的成员不在里面。定期刷新，
-# 否则 @新人 / 切磋 / 钓鱼 只能显示、识别 wxid。
+# 否则 @新人 / 群指令 只能显示、识别 wxid。
 GROUP_NICKNAME_REFRESH_SEC = 60
 # On startup the poller replays the last 50 messages, including old join
 # events.  Welcome only joins that happened recently, otherwise every
@@ -1568,7 +1568,7 @@ class WcdbBackend(AbstractWeChatBackend):
                 sender_name = group_nick
 
         # Resolve @mentions in content.  Keep the underlying wxids so
-        # commands (切磋/查询…) can target the exact member even when
+        # commands can target the exact member even when
         # the display name differs from the message table's nickname
         # (e.g. a group alias with a city prefix).
         resolved_content = content
@@ -1584,7 +1584,7 @@ class WcdbBackend(AbstractWeChatBackend):
                 is_bot = bool(name) and name in self._bot_names()
                 if not is_bot and at_wxid not in mention_ids:
                     # Keep the wxid even when the name is unresolved so
-                    # 切磋/查询 can still target an explicit @wxid.
+                    # commands can still target an explicit @wxid.
                     mention_ids.append(at_wxid)
                 return f"@{name}"
             resolved_content = re.sub(r'@wxid_[a-zA-Z0-9]+', _replace_at, content)

@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Gear, ChartLine, Scroll, Users, Spinner, Sun, Moon, Sliders, CheckSquare, Trophy } from '@phosphor-icons/react'
+import { Gear, ChartLine, Scroll, Users, Spinner, Sun, Moon, Sliders, CheckSquare, Star } from '@phosphor-icons/react'
 import Dashboard from './components/Dashboard'
 import ConfigPanel from './components/ConfigPanel'
 import FeaturesPanel from './components/FeaturesPanel'
 import NicknameEditor from './components/NicknameEditor'
 import LogViewer from './components/LogViewer'
 import TodoManager from './components/TodoManager'
-import PointsPanel from './components/PointsPanel'
+import KoiPanel from './components/KoiPanel'
 import Onboarding from './components/Onboarding'
 
 const iconVariants = {
@@ -31,7 +31,6 @@ const TABS = [
     subs: [
       { id: 'summarize', label: '总结功能' },
       { id: 'feishu', label: '飞书同步' },
-      { id: 'fun', label: '趣味抽签' },
       { id: 'proactive', label: '主动发言' },
       { id: 'sticky', label: '粘性提及' },
       { id: 'welcome', label: '欢迎新人' },
@@ -40,7 +39,7 @@ const TABS = [
   },
   { id: 'nicknames', label: '群友昵称', icon: Users },
   { id: 'todo-manager', label: '群聊待办', icon: CheckSquare },
-  { id: 'points', label: '修炼值', icon: Trophy },
+  { id: 'koi', label: '星盘', icon: Star },
   { id: 'logs', label: '运行日志', icon: Scroll },
 ]
 
@@ -69,7 +68,7 @@ export default function App() {
   useEffect(() => {
     async function check() {
       try {
-        const res = await fetch('http://127.0.0.1:7327/api/onboarding/status')
+        const res = await fetch('/api/onboarding/status')
         const d = await res.json()
         setOnboardingDone(d.onboarding_done)
       } catch {
@@ -86,7 +85,8 @@ export default function App() {
     let socket = null
 
     function connectWS() {
-      socket = new WebSocket('ws://127.0.0.1:7327/ws')
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      socket = new WebSocket(`${wsProto}//${window.location.host}/ws`)
       socket.onopen = () => {
         setWsConnected(true)
       }
@@ -293,7 +293,7 @@ export default function App() {
             {activeTab === 'features' && <FeaturesPanel activeSection={featuresSection} onNavigate={setFeaturesSection} />}
             {activeTab === 'nicknames' && <NicknameEditor />}
             {activeTab === 'todo-manager' && <TodoManager />}
-            {activeTab === 'points' && <PointsPanel />}
+            {activeTab === 'koi' && <KoiPanel />}
             {activeTab === 'logs' && <LogViewer />}
           </motion.div>
         </AnimatePresence>

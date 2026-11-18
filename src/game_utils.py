@@ -1,77 +1,69 @@
-"""Small time / group-whitelist helpers shared by the points modules."""
+"""Shared time / group / text helpers used by non-game and 星盘 modules.
+
+Extracted from the retired points package so the star game has no
+dependency on the deleted gameplay code.
+"""
 
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import date
 from pathlib import Path
+
+# Zero-width / odd spaces WeChat inserts between command and arguments.
+INVISIBLE_WS = r"[\s ​﻿]"
+_INVISIBLE_RE = re.compile(r"[\s ​﻿]+")
+_WCDB_PREFIX_RE = re.compile(r"^\s*[A-Za-z0-9_@.\-]{1,64}:\s+")
 
 
 def local_day(ts: int | float | None = None) -> str:
     """Local calendar day as ``YYYY-MM-DD``."""
     return time.strftime("%Y-%m-%d", time.localtime(
-        time.time() if ts is None else ts
-    ))
+        time.time() if ts is None else ts))
 
 
 def local_hour_start(ts: int | float | None = None) -> int:
-    """Unix timestamp of the start of the local clock hour containing *ts*.
-
-    Uses the local wall clock (``tm_min`` / ``tm_sec``) rather than epoch
-    division so time zones with non-whole-hour offsets still reset on the
-    hour shown to users.
-    """
+    """Unix timestamp of the start of the local clock hour containing *ts*."""
     moment = int(time.time() if ts is None else ts)
     local = time.localtime(moment)
     return moment - int(local.tm_min) * 60 - int(local.tm_sec)
 
 
 def local_season(ts: int | float | None = None) -> str:
-    """Local calendar month as ``YYYY-MM`` (the season key)."""
+    """Local calendar month as ``YYYY-MM``."""
     return time.strftime("%Y-%m", time.localtime(
-        time.time() if ts is None else ts
-    ))
+        time.time() if ts is None else ts))
 
 
 def local_week(ts: int | float | None = None) -> str:
-    """ISO week key ``YYYY-Www`` (the world-boss cycle)."""
+    """ISO week key ``YYYY-Www``."""
     moment = time.time() if ts is None else ts
     iso = date.fromtimestamp(moment).isocalendar()
     return f"{iso.year:04d}-W{iso.week:02d}"
 
 
 def days_until_week_end(ts: int | float | None = None) -> int:
-    """Days remaining in the current ISO week (0 on Sunday)."""
     moment = time.time() if ts is None else ts
     return max(0, 7 - date.fromtimestamp(moment).isoweekday())
 
 
-def previous_season(ts: int | float | None = None) -> str:
-    """The season immediately before the one containing *ts*."""
-    d = date.fromtimestamp(time.time() if ts is None else ts)
-    year, month = d.year, d.month - 1
-    if month == 0:
-        year, month = year - 1, 12
-    return f"{year:04d}-{month:02d}"
+def strip_invisible(text: str) -> str:
+    """Collapse whitespace (including zero-width chars) to single spaces."""
+    return _INVISIBLE_RE.sub(" ", str(text or "")).strip()
 
 
-def season_end_day(season: str) -> str:
-    """Last calendar day of a ``YYYY-MM`` season."""
-    year, month = (int(part) for part in season.split("-"))
-    if month == 12:
-        next_year, next_month = year + 1, 1
-    else:
-        next_year, next_month = year, month + 1
-    first_next = date(next_year, next_month, 1)
-    return date.fromordinal(first_next.toordinal() - 1).isoformat()
-
-
-def days_until_season_end(ts: int | float | None = None) -> int:
-    """Days remaining in the current season (>= 0)."""
-    today = date.fromtimestamp(time.time() if ts is None else ts)
-    end = date.fromisoformat(season_end_day(local_season(ts)))
-    return max(0, (end - today).days)
+def clean_command_text(content: str, bot_name: str = "",
+                       aliases: tuple[str, ...] | list[str] = ()) -> str:
+    """Strip WCDB's ``wxid_xxx:`` prefix and the bot's own @mention."""
+    text = _WCDB_PREFIX_RE.sub("", str(content or ""))
+    for name in (bot_name, *aliases):
+        if name:
+            text = re.sub(
+                re.escape(f"@{name}") + r"[^\w]*", "", text,
+            )
+    return strip_invisible(text)
 
 
 def is_group_enabled(chat_id: str, group_name: str,
@@ -89,13 +81,7 @@ def is_group_enabled(chat_id: str, group_name: str,
 def load_group_members(chat_id: str,
                        path: Path | str | None = None
                        ) -> dict[str, str] | None:
-    """Return the last known ``{wxid: display_name}`` snapshot for a group.
-
-    The WeChat backend writes ``data/group_members.json`` with the live
-    member list of every chatroom.  ``None`` means "no snapshot for this
-    group" (file missing or group unknown) — callers must not treat that
-    as "everyone left".
-    """
+    """Return the last known ``{wxid: display_name}`` snapshot for a group."""
     file_path = Path(path) if path else Path("data") / "group_members.json"
     try:
         if not file_path.exists():

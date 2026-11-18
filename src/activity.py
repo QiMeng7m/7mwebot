@@ -53,12 +53,12 @@ def clean_command_text(content: str, bot_name: str = "",
                        aliases: tuple[str, ...] | list[str] = ()) -> str:
     """Strip @bot, the WCDB sender/reply prefix and invisible spaces.
 
-    Delegates to :func:`src.points.rules.clean_command_text` so activity
+    Delegates to :func:`src.game_utils.clean_command_text` so activity
     queries and point commands share one definition (custom WeChat IDs
     such as ``zy-519`` are valid prefixes too).  *aliases* lets the bot
     answer to group nicknames as well as ``bot_display_name``.
     """
-    from .points.rules import clean_command_text as _clean
+    from .game_utils import clean_command_text as _clean
 
     return _clean(content, bot_name, aliases)
 

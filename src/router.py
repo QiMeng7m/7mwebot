@@ -24,7 +24,7 @@ from .activity import (
     clean_command_text,
     parse_activity_query,
 )
-from .points.util import local_day
+from .game_utils import local_day
 
 logger = logging.getLogger(__name__)
 
@@ -95,100 +95,36 @@ class MessageRouter:
                 self._todo_store, config,
             )
 
-        # Points / equipment / duels: share the message store's connection
-        # so everything runs on one serialized SQLite connection.
-        self._points_store = None
-        self._points_engine = None
-        self._points_handler = None
-        if getattr(config, "points_enabled", False) and \
+        # 星盘玩法。
+        self._koi_service = None
+        self._koi_handler = None
+        if getattr(config, "koi_enabled", False) and \
                 getattr(store, "conn", None) is not None:
             try:
-                from .points.store import PointStore
-                from .points.engine import PointEngine
-                from .points.levels import LevelTable
-                from .points.equipment import EquipmentCatalog
-                from .points.duel import DuelService
-                from .points.fishing import FishingService
-                from .points.fishing_catalog import FishingCatalog
-                from .points.handler import PointHandler
+                from .koi.store import KoiStore
+                from .koi.service import KoiService
+                from .koi.handler import KoiHandler
 
-                self._points_store = PointStore(
+                koi_store = KoiStore(
                     store.conn, lock=getattr(store, "lock", None),
                 )
-                levels = LevelTable(
-                    getattr(config, "points_levels_path",
-                            "data/point_levels.json")
-                )
-                catalog = EquipmentCatalog(
-                    getattr(config, "equipment_path", "data/equipment.json")
-                )
-                self._points_engine = PointEngine(self._points_store, config)
-                duels = DuelService(
-                    self._points_store, config, levels, catalog,
-                )
-                fishing_catalog = FishingCatalog(getattr(
-                    config, "fishing_catalog_path", "data/fishing.json"))
-                fishing = FishingService(
-                    self._points_store, config, fishing_catalog,
-                )
-                self._points_handler = PointHandler(
-                    self._points_store, config, levels, catalog, duels,
-                    engine=self._points_engine,
-                    nickname_service=nickname_service,
-                    fishing=fishing,
+                self._koi_service = KoiService(koi_store, config)
+                self._koi_handler = KoiHandler(
+                    self._koi_service, nickname_service=nickname_service,
                 )
             except Exception:
-                logger.exception("Points system initialization failed")
-                self._points_store = None
-                self._points_engine = None
-                self._points_handler = None
-
-        # Delayed replies (fishing suspense).  Wired by Bot after the
-        # WeChat backend exists; None means "return text immediately".
-        self._reply_sender = None
+                logger.exception("Koi system initialization failed")
+                self._koi_service = None
+                self._koi_handler = None
 
         # Health monitoring: count unique messages processed (post-dedup)
         self.messages_processed: int = 0
 
-    def set_reply_sender(self, sender) -> None:
-        """Register ``sender(chat_id, text)`` for delayed replies.
-
-        Called once the backend is available.  The sender must be safe to
-        call from a background thread (the bot wraps it with the backend's
-        window lock).
-        """
-        self._reply_sender = sender
-
-    def _schedule_delayed_reply(self, msg: dict, reply) -> bool:
-        """Send *reply* after its ``delay_sec`` on a daemon thread.
-
-        Returns False when no sender is registered, so the caller can fall
-        back to returning the text for immediate delivery (tests, CLI).
-        """
-        sender = self._reply_sender
-        if sender is None:
-            return False
-        chat_id = str(msg.get("chat_id") or "")
-        text = str(reply)
-        delay = max(0, int(getattr(reply, "delay_sec", 0)))
-
-        def _run() -> None:
-            if delay:
-                time.sleep(delay)
-            try:
-                sent = sender(chat_id, text)
-                logger.info(
-                    "Delayed reply sent=%s chat=%s delay=%ss len=%d",
-                    sent, chat_id[:20], delay, len(text),
-                )
-            except Exception:
-                logger.exception(
-                    "Delayed reply failed (chat=%s)", chat_id[:20])
-
-        threading.Thread(
-            target=_run, daemon=True, name="delayed-reply",
-        ).start()
-        return True
+    def settle_koi_pools(self) -> list[tuple[str, str]]:
+        """Called periodically by the bot to announce 21:00 draws."""
+        if self._koi_service is None:
+            return []
+        return self._koi_service.settle_open_pools()
 
     @staticmethod
     def _strip_markdown(text: str) -> str:
@@ -238,15 +174,14 @@ class MessageRouter:
             return None  # Duplicate or DB error — nothing more to do
         self.messages_processed += 1
 
-        # ── Award activity points ─────────────────────────────────
-        # Runs for every fresh message; idempotent via the ledger's
-        # UNIQUE(message_id, reason) and guarded by a staleness check.
-        if self._points_engine is not None:
+        # ── 星盘：聊天积德 ────────────────────────────────────────
+        # 每条新消息 +1 香火，每天有上限；幂等由 message_id 保证。
+        if self._koi_service is not None and msg.get("msg_type") != 10000:
             try:
-                self._points_engine.award_for_message(msg)
+                self._koi_service.award_chat_merit(msg)
             except Exception:
                 logger.exception(
-                    "Point award failed (msg_id=%s, chat=%s)",
+                    "Koi chat merit failed (msg_id=%s, chat=%s)",
                     msg.get("message_id", "?"), msg.get("chat_id", "?"),
                 )
 
@@ -322,43 +257,32 @@ class MessageRouter:
                         "活跃报告生成失败，请稍后再试。"
                     )
 
-        # ── Points / equipment / duel commands (bare text) ────────
-        # Weak command: the handler returns None when the text is not
-        # actually a command (e.g. "查询一下天气") so normal routing
-        # continues untouched.
-        if self._points_handler is not None and msg.get("msg_type") != 10000:
-            from .points.handler import looks_like_command
+        # ── 星盘指令（裸文本）──────────────────────────────────────
+        if self._koi_handler is not None and msg.get("msg_type") != 10000:
+            from .koi.handler import looks_like_koi_command
             command_text = clean_command_text(
                 msg.get("content", ""), bot_name, self._bot_aliases(),
             )
-            if looks_like_command(command_text):
+            if looks_like_koi_command(command_text):
                 msg_age_sec = int(time.time()) - msg.get("timestamp", 0)
                 if msg_age_sec > AT_MENTION_MAX_AGE_SEC:
                     logger.info(
-                        "Ignoring stale points command from '%s' "
+                        "Ignoring stale koi command from '%s' "
                         "(age=%ds, max=%ds)",
                         msg["sender_name"], msg_age_sec,
                         AT_MENTION_MAX_AGE_SEC,
                     )
                     return None
                 logger.info(
-                    "Points command from '%s': %s",
+                    "Koi command from '%s': %s",
                     msg["sender_name"], command_text[:30],
                 )
                 try:
-                    reply = self._points_handler.handle(
-                        msg.get("content", ""), msg,
-                    )
+                    reply = self._koi_handler.handle(command_text, msg)
                 except Exception:
-                    logger.exception("Points command failed")
+                    logger.exception("Koi command failed")
                     reply = None
                 if reply is not None:
-                    if hasattr(reply, "delay_sec"):
-                        if self._schedule_delayed_reply(msg, reply):
-                            # Send the "pending" acknowledgement now via
-                            # the normal reply path; the result follows
-                            # from the daemon thread after delay_sec.
-                            return getattr(reply, "ack_text", "") or None
                     return reply
 
         if is_at:
@@ -429,9 +353,6 @@ class MessageRouter:
                     clean_content, msg["sender_name"],
                     config=self._config, is_admin=is_admin,
                 )
-
-            if reply is None:
-                reply = self._handle_fun_command(msg)
 
             if reply is None and is_admin and self._admin is not None:
                 reply = self._admin.handle(
@@ -516,15 +437,6 @@ class MessageRouter:
                     self._feishu_export.maybe_auto_export(msg)
                 except Exception:
                     logger.exception("Automatic Feishu knowledge sync failed")
-
-            # ── 抽签 / 解签 (bare text, no @ needed) ──────────────
-            if (
-                self._config.fun_enabled
-                and msg_age_sec <= AT_MENTION_MAX_AGE_SEC
-            ):
-                fun_reply = self._handle_fun_command(msg)
-                if fun_reply:
-                    return self._strip_markdown(fun_reply)
 
             # ── Proactive path (rate-based ambient participation) ─
             should_speak, mode, reason = self._proactive.should_speak(msg)
@@ -829,131 +741,6 @@ class MessageRouter:
         if not name or name == msg["sender_id"]:
             name = msg.get("sender_name") or msg["sender_id"]
         return name
-
-    def _handle_fun_command(self, msg: dict) -> str | None:
-        """Handle 「抽签」/「解签」 with or without an @mention."""
-        if not getattr(self._config, "fun_enabled", False):
-            return None
-        command = clean_command_text(
-            msg.get("content", ""), self._config.bot_display_name,
-            self._bot_aliases(),
-        )
-        if command == "抽签":
-            return self._handle_draw(msg)
-        if command == "解签":
-            return self._handle_read_lot(msg)
-        return None
-
-    def _handle_draw(self, msg: dict) -> str:
-        from .fun import draw_lot, format_lot
-
-        name = self._msg_display_name(msg)
-        day = local_day()
-
-        try:
-            existing = self._store.get_fun_draw(
-                msg["chat_id"], msg["sender_id"],
-            )
-        except Exception:
-            logger.exception("Loading fortune lot failed")
-            existing = None
-
-        if existing and existing.get("day") == day:
-            hint = (
-                "今天已经解过签啦，明天再来"
-                if existing.get("interpreted_at")
-                else "发「解签」可以听听 AI 怎么解读"
-            )
-            return (
-                f"{format_lot(name, existing)}\n"
-                f"今天已经抽过一签啦，明天再来；{hint}"
-            )
-
-        lot = draw_lot()
-        try:
-            self._store.save_fun_draw(
-                msg["chat_id"], msg["sender_id"], name,
-                lot["level"], lot.get("emoji", ""), lot["phrase"],
-                day=day,
-            )
-        except Exception:
-            logger.exception("Saving fortune lot failed")
-
-        logger.info("Draw lots: %s got %s", name, lot["level"])
-        return (
-            f"{format_lot(name, lot)}\n"
-            "发「解签」可以听听 AI 怎么解读这支签"
-        )
-
-    def _handle_read_lot(self, msg: dict) -> str:
-        name = self._msg_display_name(msg)
-        day = local_day()
-        try:
-            lot = self._store.get_fun_draw(
-                msg["chat_id"], msg["sender_id"],
-            )
-        except Exception:
-            logger.exception("Loading fortune lot failed")
-            lot = None
-
-        if not lot or lot.get("day") != day:
-            return f"@{name} 今天还没有抽签，先发「抽签」吧"
-
-        # Master switch: still show the lot, but no AI reading and no
-        # daily claim so the member can retry after AI is re-enabled.
-        if not self._ai_enabled:
-            return (
-                f"@{name} AI 功能已关闭，暂时不能解签。"
-                f"你这支是{lot.get('emoji', '')} {lot['level']}：{lot['phrase']}"
-            )
-
-        try:
-            claimed = self._store.claim_fun_reading(
-                msg["chat_id"], msg["sender_id"], day,
-            )
-        except Exception:
-            logger.exception("Claiming lot reading failed")
-            claimed = False
-        if not claimed:
-            return f"@{name} 今天已经解过签啦，明天再来~"
-
-        # 解签只使用本人的签文：不读取群聊记录，也不传群记忆，
-        # 避免把别人的发言误当成提问者的近况。
-        prompt = (
-            f"我是{name}，今天抽到的是「{lot['level']}」签，"
-            f"签文是：{lot['phrase']}。\n"
-            "请只根据这支签的签文，用 2-3 句话帮我解签："
-            "说说它对今天的工作、心情或人际相处有什么提醒。"
-            "不要引用群聊内容，不要猜测或提到其他人的经历，语气轻松一点。"
-        )
-
-        try:
-            reading = self._summarizer.chat(
-                message=prompt,
-                context_messages=None,
-                requester_name=name,
-                bot_name=self._config.bot_display_name,
-                group_name=msg.get("group_name", msg.get("chat_id", "群聊")),
-                group_memory="",
-            )
-            reading = self._nicks.resolve_wxids(reading or "").strip()
-            if not reading:
-                raise ValueError("empty AI reading")
-            logger.info("Lot reading for %s (%d chars)", name, len(reading))
-            return f"@{name} {reading}"
-        except Exception as e:
-            logger.error("Lot reading failed: %s", e)
-            # Let the member retry today if the model was unavailable.
-            try:
-                self._store.release_fun_reading(
-                    msg["chat_id"], msg["sender_id"], day,
-                )
-            except Exception:
-                logger.exception("Releasing lot reading failed")
-            return (
-                f"@{name} 解签先生暂时掉线了。你这支是"
-                f"{lot.get('emoji', '')} {lot['level']}：{lot['phrase']}"
-            )
 
     # ── Welcome handler ─────────────────────────────────────────
 

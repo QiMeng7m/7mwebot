@@ -84,7 +84,7 @@ export default function LogViewer() {
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/logs')
+      const res = await fetch('/api/logs')
       const data = await res.json()
       if (data.ok && data.logs?.length) {
         setLogs(prev => {

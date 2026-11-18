@@ -115,8 +115,8 @@ export default function WelcomeSection({ form, update }) {
     async function load() {
       try {
         const [tplRes, grpRes] = await Promise.all([
-          fetch('http://127.0.0.1:7327/api/welcome/templates'),
-          fetch('http://127.0.0.1:7327/api/nicknames/groups'),
+          fetch('/api/welcome/templates'),
+          fetch('/api/nicknames/groups'),
         ])
         const tplData = await tplRes.json()
         const grpData = await grpRes.json()
@@ -183,7 +183,7 @@ export default function WelcomeSection({ form, update }) {
   async function handleSave() {
     setSaving(true); setSaveError(''); setSaved(false)
     try {
-      const res = await fetch('http://127.0.0.1:7327/api/welcome/templates', {
+      const res = await fetch('/api/welcome/templates', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ templates, group_mapping: groupMapping, default_template: defaultTemplate }),
       })
