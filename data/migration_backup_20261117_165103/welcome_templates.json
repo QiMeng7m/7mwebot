@@ -1,0 +1,23 @@
+{
+  "templates": [
+    {
+      "id": "tpl_default",
+      "name": "默认",
+      "message": "@{new_member} 欢迎加入，为了拦截打广告和机器人，请加一下柒梦，邀请你进群~"
+    },
+    {
+      "id": "tpl_warm",
+      "name": "热情版",
+      "message": "欢迎 @{new_member} 加入群聊！🎉 10分钟内不参与聊天将被移除群聊哦~"
+    },
+    {
+      "id": "tpl_serious",
+      "name": "正经版",
+      "message": "欢迎 @{new_member} 加入本群，有问题随时讨论。"
+    }
+  ],
+  "group_mapping": {
+    "54857229462@chatroom": "tpl_default"
+  },
+  "default_template": "tpl_default"
+}
