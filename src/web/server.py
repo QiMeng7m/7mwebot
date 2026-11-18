@@ -188,84 +188,11 @@ def _feishu_config_from_raw(raw: dict[str, str]) -> dict:
     }
 
 
-_DEFAULT_TODO_ADD_KEYWORDS = "记一下,添加待办,新建待办,帮我记,待办"
-_DEFAULT_TODO_COMPLETE_KEYWORDS = "搞定,做完了,完成,完成了,done"
-_DEFAULT_TODO_DELETE_KEYWORDS = "删掉,删除,取消,不要了"
-
-
-def _todo_config_from_raw(raw: dict[str, str]) -> dict:
-    """Return UI-facing todo config from env key/value pairs."""
-    return {
-        "todo_enabled": _bool_env(raw.get("TODO_ENABLED", "true"), True),
-        "todo_groups": _split_csv(raw.get("TODO_GROUPS", "*")),
-        "todo_max_per_group": _int_env(raw.get("TODO_MAX_PER_GROUP", "50"), 50),
-        "todo_completed_retention_days": _int_env(
-            raw.get("TODO_COMPLETED_RETENTION_DAYS", "30"), 30,
-        ),
-        "todo_deleted_retention_days": _int_env(
-            raw.get("TODO_DELETED_RETENTION_DAYS", "30"), 30,
-        ),
-        "todo_add_keywords": _split_csv(
-            raw.get("TODO_ADD_KEYWORDS", _DEFAULT_TODO_ADD_KEYWORDS),
-        ),
-        "todo_complete_keywords": _split_csv(
-            raw.get("TODO_COMPLETE_KEYWORDS", _DEFAULT_TODO_COMPLETE_KEYWORDS),
-        ),
-        "todo_delete_keywords": _split_csv(
-            raw.get("TODO_DELETE_KEYWORDS", _DEFAULT_TODO_DELETE_KEYWORDS),
-        ),
-    }
-
-
-def _todo_updates_from_config(config: dict) -> dict[str, str | None]:
-    """Return env updates for todo settings from a UI payload.
-
-    Only fields present in the payload are written.  The todo panel sends a
-    partial payload; defaulting missing fields would reset the user's todo
-    configuration every time another panel saves.
-    """
-    updates: dict[str, str | None] = {}
-
-    def put(env_key: str, field: str, transform=None, empty=None) -> None:
-        if field not in config:
-            return
-        value = config.get(field)
-        if value is None:
-            return
-        if value == "" and empty is not None:
-            value = empty
-        updates[env_key] = transform(value) if transform else str(value)
-
-    def as_bool(value) -> str:
-        if isinstance(value, str):
-            return value.strip().lower()
-        return str(bool(value)).lower()
-
-    def as_csv(value) -> str:
-        if isinstance(value, (list, tuple)):
-            return ",".join(str(v).strip() for v in value if str(v).strip())
-        return str(value).strip()
-
-    put("TODO_ENABLED", "todo_enabled", transform=as_bool)
-    put("TODO_GROUPS", "todo_groups", transform=lambda v: as_csv(v) or "*")
-    put("TODO_MAX_PER_GROUP", "todo_max_per_group")
-    put("TODO_COMPLETED_RETENTION_DAYS", "todo_completed_retention_days")
-    put("TODO_DELETED_RETENTION_DAYS", "todo_deleted_retention_days")
-    for env_key, field in (
-        ("TODO_ADD_KEYWORDS", "todo_add_keywords"),
-        ("TODO_COMPLETE_KEYWORDS", "todo_complete_keywords"),
-        ("TODO_DELETE_KEYWORDS", "todo_delete_keywords"),
-    ):
-        if field in config and config.get(field) is not None:
-            updates[env_key] = as_csv(config[field]) or None
-    return updates
-
-
 def _config_updates_from_payload(config: dict) -> dict[str, str | None]:
     """Map a /api/config payload to .env updates.
 
     Only fields actually present in the payload are written.  The features
-    panel and todo panel send partial payloads; treating missing keys as
+    panel sends partial payloads; treating missing keys as
     "use the default" silently reset unrelated settings — most notably
     WECHAT_GROUPS to "*" (monitor every group) and VOICE_* to defaults.
     """
@@ -1147,7 +1074,7 @@ def _handle_ws_upgrade(headers, conn):
 
 
 def _game_db_path() -> str:
-    """Resolve DB_PATH exactly like the todo endpoints do."""
+    """Resolve DB_PATH from the .env file."""
     from src.config import find_env_file
     db_path = "data/messages.db"
     env_path = find_env_file()
@@ -1191,7 +1118,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                          "/api/onboarding/step1", "/api/onboarding/step2",
                          "/api/onboarding/step3", "/api/onboarding/step4",
                          "/api/sandbox/test",
-                         "/api/todos/action",
                          "/api/koi/adjust",
                          "/api/voice/download-model",
                          "/api/wechat-data-dir/detect"):
@@ -1305,7 +1231,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 "voice_local_model": raw.get("VOICE_LOCAL_MODEL", "small"),
             }
             config_data.update(_feishu_config_from_raw(raw))
-            config_data.update(_todo_config_from_raw(raw))
             self.send_json({
                 "ok": True,
                 "config": config_data,
@@ -1389,7 +1314,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 new_lines = []
                 updates = _config_updates_from_payload(config)
                 updates.update(_feishu_updates_from_config(config))
-                updates.update(_todo_updates_from_config(config))
                 # ── Safety: never overwrite real secrets with masked values.
                 #     load-config returns masked keys (e.g. "sk-r***t-k"); the
                 #     frontend sends them back unchanged.  Writing a masked
@@ -1452,7 +1376,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                     lines = []
                 updates = _config_updates_from_payload(config)
                 updates.update(_feishu_updates_from_config(config))
-                updates.update(_todo_updates_from_config(config))
                 # Export files contain masked secrets; never overwrite the
                 # real values with them during import.
                 for masked_key in ("DEEPSEEK_API_KEY", "OPENAI_API_KEY",
@@ -1708,120 +1631,6 @@ class _UIHandler(SimpleHTTPRequestHandler):
                 self.send_json({"ok": True})
             except Exception as e:
                 logger.exception("Failed to save nickname")
-                self.send_json({"ok": False, "error": str(e)})
-            return
-
-        # ── API: Todo management ───────────────────────────────────────
-        if self.path == "/api/todos" or self.path.startswith("/api/todos?"):
-            params = {}
-            if "?" in self.path:
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(self.path)
-                for k, v in parse_qs(parsed.query).items():
-                    params[k] = v[0] if v else ""
-            status = params.get("status", "active")
-            chat_id = params.get("chat_id", "")
-            search = params.get("search", "")
-            try:
-                from src.todo.store import TodoStore
-                from src.config import find_env_file
-                db_path = "data/messages.db"
-                env_path = find_env_file()
-                if env_path and env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.strip().startswith("DB_PATH="):
-                            db_path = line.strip().split("=", 1)[1].strip()
-                            break
-                store = TodoStore(db_path)
-                items = store.get_all(status=status, chat_id=chat_id, search=search)
-                groups = store.get_active_groups()
-                self.send_json({
-                    "ok": True,
-                    "items": [
-                        {
-                            "id": item.id,
-                            "chat_id": item.chat_id,
-                            "content": item.content,
-                            "display_order": item.display_order,
-                            "status": item.status,
-                            "creator_name": item.creator_name,
-                            "created_at": item.created_at,
-                            "completed_by_name": item.completed_by_name,
-                            "completed_at": item.completed_at,
-                            "deleted_by_name": item.deleted_by_name,
-                            "deleted_at": item.deleted_at,
-                        }
-                        for item in items
-                    ],
-                    "groups": groups,
-                })
-            except Exception as e:
-                logger.exception("Failed to load todos")
-                self.send_json({"ok": False, "error": str(e)})
-            return
-
-        # ── API: Get todo counts per status ─────────────────────────────
-        if self.path.startswith("/api/todos/counts"):
-            chat_id = ""
-            if "?" in self.path:
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(self.path)
-                params = {k: v[0] if v else "" for k, v in parse_qs(parsed.query).items()}
-                chat_id = params.get("chat_id", "")
-            try:
-                from src.todo.store import TodoStore
-                from src.config import find_env_file
-                db_path = "data/messages.db"
-                env_path = find_env_file()
-                if env_path and env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.strip().startswith("DB_PATH="):
-                            db_path = line.strip().split("=", 1)[1].strip()
-                            break
-                store = TodoStore(db_path)
-                counts = store.get_counts(chat_id=chat_id)
-                self.send_json({"ok": True, "counts": counts})
-            except Exception as e:
-                logger.exception("Failed to load todo counts")
-                self.send_json({"ok": False, "error": str(e)})
-            return
-
-        if self.path == "/api/todos/action":
-            content_len = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_len) if content_len else b"{}"
-            try:
-                data = json.loads(body)
-                action = data.get("action", "")
-                chat_id = data.get("chat_id", "")
-                target = data.get("target", "")
-                from src.todo.store import TodoStore
-                from src.config import find_env_file
-                db_path = "data/messages.db"
-                env_path = find_env_file()
-                if env_path and env_path.exists():
-                    for line in env_path.read_text(encoding="utf-8").splitlines():
-                        if line.strip().startswith("DB_PATH="):
-                            db_path = line.strip().split("=", 1)[1].strip()
-                            break
-                store = TodoStore(db_path)
-                if action == "complete":
-                    result = store.complete(chat_id, target)
-                elif action == "delete":
-                    result = store.delete(chat_id, target)
-                elif action == "restore":
-                    result = store.restore(chat_id, target)
-                elif action == "clear_completed":
-                    result = store.clear_completed(chat_id)
-                elif action == "clear_deleted":
-                    result = store.clear_deleted(chat_id)
-                else:
-                    self.send_json({"ok": False, "error": f"Unknown action: {action}"})
-                    return
-                self.send_json({"ok": result.ok, "reply": result.reply})
-                # 触发自动清理
-                store.cleanup(chat_id)
-            except Exception as e:
-                logger.exception("Todo action failed")
                 self.send_json({"ok": False, "error": str(e)})
             return
 

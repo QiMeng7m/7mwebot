@@ -268,24 +268,6 @@ class BotConfig:
     sticky_mention_enabled: bool = True
     sticky_mention_ttl_sec: int = 60  # max wait for follow-up message
 
-    # === Group Todo ===
-    # Master switch — @bot mention triggers todo management commands.
-    todo_enabled: bool = True
-    # Comma-separated group names where todo is active. "*" = all groups.
-    todo_groups: list[str] = field(default_factory=lambda: ["*"])
-    todo_max_per_group: int = 50           # max active todos per group (1-200)
-    todo_completed_retention_days: int = 30  # auto-clean completed (0=forever)
-    todo_deleted_retention_days: int = 30    # auto-clean deleted (0=forever)
-    todo_add_keywords: list[str] = field(default_factory=lambda: [
-        "记一下", "添加待办", "新建待办", "帮我记", "待办",
-    ])
-    todo_complete_keywords: list[str] = field(default_factory=lambda: [
-        "搞定", "做完了", "完成", "完成了", "done",
-    ])
-    todo_delete_keywords: list[str] = field(default_factory=lambda: [
-        "删掉", "删除", "取消", "不要了",
-    ])
-
     # === 星盘玩法 ================================================
     koi_enabled: bool = True
     koi_groups: list[str] = field(default_factory=lambda: ["*"])
@@ -527,22 +509,6 @@ def load_config() -> BotConfig:
         if feishu_keywords_str
         else None
     )
-    todo_add_kw_str = os.getenv("TODO_ADD_KEYWORDS", "").strip()
-    todo_add_keywords = (
-        [kw.strip() for kw in todo_add_kw_str.split(",") if kw.strip()]
-        if todo_add_kw_str else None
-    )
-    todo_complete_kw_str = os.getenv("TODO_COMPLETE_KEYWORDS", "").strip()
-    todo_complete_keywords = (
-        [kw.strip() for kw in todo_complete_kw_str.split(",") if kw.strip()]
-        if todo_complete_kw_str else None
-    )
-    todo_delete_kw_str = os.getenv("TODO_DELETE_KEYWORDS", "").strip()
-    todo_delete_keywords = (
-        [kw.strip() for kw in todo_delete_kw_str.split(",") if kw.strip()]
-        if todo_delete_kw_str else None
-    )
-
     kwargs: dict = {
         "ai_enabled": ai_enabled,
         "ai_backend": ai_backend,
@@ -597,12 +563,6 @@ def load_config() -> BotConfig:
         "red_packet_max_age_sec": _safe_int(os.getenv("RED_PACKET_MAX_AGE_SEC", "120"), 120, "RED_PACKET_MAX_AGE_SEC"),
         "sticky_mention_enabled": os.getenv("STICKY_MENTION_ENABLED", "true").strip().lower() == "true",
         "sticky_mention_ttl_sec": _safe_int(os.getenv("STICKY_MENTION_TTL_SEC", "60"), 60, "STICKY_MENTION_TTL_SEC"),
-        # Group Todo
-        "todo_enabled": os.getenv("TODO_ENABLED", "true").strip().lower() == "true",
-        "todo_groups": [g.strip() for g in os.getenv("TODO_GROUPS", "*").split(",") if g.strip()],
-        "todo_max_per_group": _safe_int(os.getenv("TODO_MAX_PER_GROUP", "50"), 50, "TODO_MAX_PER_GROUP"),
-        "todo_completed_retention_days": _safe_int(os.getenv("TODO_COMPLETED_RETENTION_DAYS", "30"), 30, "TODO_COMPLETED_RETENTION_DAYS"),
-        "todo_deleted_retention_days": _safe_int(os.getenv("TODO_DELETED_RETENTION_DAYS", "30"), 30, "TODO_DELETED_RETENTION_DAYS"),
         # Activity points
         # Equipment
         # Duels
@@ -658,12 +618,6 @@ def load_config() -> BotConfig:
         kwargs["trigger_keywords"] = trigger_keywords
     if feishu_export_trigger_keywords is not None:
         kwargs["feishu_export_trigger_keywords"] = feishu_export_trigger_keywords
-    if todo_add_keywords is not None:
-        kwargs["todo_add_keywords"] = todo_add_keywords
-    if todo_complete_keywords is not None:
-        kwargs["todo_complete_keywords"] = todo_complete_keywords
-    if todo_delete_keywords is not None:
-        kwargs["todo_delete_keywords"] = todo_delete_keywords
 
     _validate_config(kwargs)
 

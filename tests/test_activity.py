@@ -277,7 +277,6 @@ class RouterActivityTests(unittest.TestCase):
 
         config = BotConfig()
         config.db_path = ":memory:"
-        config.todo_enabled = False
         config.sticky_mention_enabled = False
 
         nicks_path = Path(tempfile.mkdtemp()) / "nicknames.json"

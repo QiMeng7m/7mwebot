@@ -138,19 +138,6 @@ class AdminCommandHandler:
             ],
         }]
 
-        if cls._flag(config, "todo_enabled"):
-            sections.append({
-                "title": "待办",
-                "keys": ("待办", "todo"),
-                "menu_key": "待办",
-                "items": [
-                    ("记一下", "添加待办（如 记一下 周五聚餐）"),
-                    ("查看待办", "未完成列表"),
-                    ("搞定 / 删掉", "完成 / 删除（如 搞定 3）"),
-                    ("已完成列表", "已完成事项"),
-                ],
-            })
-
         ai: list[tuple[str, str]] = []
         if cls._flag(config, "summarize_enabled"):
             ai.append(("@我 总结一下", "总结最近聊天"))
@@ -190,29 +177,61 @@ class AdminCommandHandler:
         return self._menu_text(requester_name, sections)
 
     @staticmethod
-    def _menu_text(requester_name: str, sections: list[dict]) -> str:
-        """Compact one-screen overview: one line per play section."""
+    def _display_width(text: str) -> int:
+        """Approximate terminal/WeChat width: CJK glyphs count as 2."""
+        import unicodedata
+        return sum(
+            2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+            for ch in text
+        )
+
+    @classmethod
+    def _wrap_items(cls, items: list[str], width: int = 30) -> list[str]:
+        """Wrap command labels into aligned, indented lines."""
+        lines: list[str] = []
+        current = ""
+        for item in items:
+            candidate = f"{current}  {item}" if current else item
+            if current and cls._display_width(candidate) > width:
+                lines.append(f"  {current}")
+                current = item
+            else:
+                current = candidate
+        if current:
+            lines.append(f"  {current}")
+        return lines
+
+    @classmethod
+    def _menu_text(cls, requester_name: str, sections: list[dict]) -> str:
+        """Compact one-screen overview: one block per play section."""
         lines = [
             f"@{requester_name} 游玩清单（直接发指令）",
             "━━━━━━━━━━━━━━",
         ]
         for entry in sections:
-            labels = " · ".join(label for label, _ in entry["items"])
-            lines.append(f"【{entry['title']}】 {labels}")
+            labels = [label for label, _ in entry["items"]]
+            if len(labels) <= 3:
+                lines.append(f"【{entry['title']}】 " + "  ".join(labels))
+            else:
+                lines.append(f"【{entry['title']}】")
+                lines.extend(cls._wrap_items(labels))
         lines.append("━━━━━━━━━━━━━━")
         keys = " / ".join(entry["menu_key"] for entry in sections)
         lines.append(f"看具体用法：帮助 {keys}")
         return "\n".join(lines)
 
-    @staticmethod
-    def _section_text(requester_name: str, entry: dict) -> str:
-        """Detailed command list for a single play section."""
+    @classmethod
+    def _section_text(cls, requester_name: str, entry: dict) -> str:
+        """Detailed command list laid out as two aligned columns."""
         lines = [
             f"@{requester_name}【{entry['title']}】用法",
             "━━━━━━━━━━━━━━",
         ]
+        widths = [cls._display_width(label) for label, _ in entry["items"]]
+        column = min(max(widths, default=0), 24) + 2
         for label, desc in entry["items"]:
-            lines.append(f"  {label} — {desc}")
+            padding = max(1, column - cls._display_width(label))
+            lines.append(f"{label}{' ' * padding}{desc}")
         lines.append("━━━━━━━━━━━━━━")
         lines.append("完整清单：发送 帮助")
         return "\n".join(lines)

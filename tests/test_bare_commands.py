@@ -1,4 +1,4 @@
-"""Bare-text routing: 帮助 / 待办 / 管理命令 without @mention."""
+"""Bare-text routing: 帮助 / 管理命令 without @mention."""
 
 import os
 import tempfile
@@ -49,8 +49,6 @@ class BareCommandRoutingTests(unittest.TestCase):
         self.config.koi_enabled = True
         self.config.koi_groups = ["*"]
         self.config.db_path = os.path.join(self.tmp.name, "test.db")
-        self.config.todo_enabled = True
-        self.config.todo_groups = ["*"]
         self.config.admin_wxid = "wxid_admin"
         self.config.sticky_mention_enabled = False
 
@@ -112,15 +110,11 @@ class BareCommandRoutingTests(unittest.TestCase):
         self.assertIn("求签", reply)
         self.assertIn("观星", reply)
 
-    def test_bare_todo_add_and_view(self):
-        added = self.router.handle(self._message("记一下 周五聚餐"))
-        self.assertIsNotNone(added)
-        self.assertIn("周五聚餐", added)
+    def test_bare_todo_commands_are_gone(self):
+        self.assertIsNone(self.router.handle(self._message("查看待办")))
+        self.assertIsNone(self.router.handle(self._message("记一下 周五聚餐")))
 
-        listed = self.router.handle(self._message("查看待办"))
-        self.assertIn("周五聚餐", listed)
-
-    def test_bare_casual_phrase_does_not_trigger_todo(self):
+    def test_bare_casual_phrase_does_not_trigger_reply(self):
         self.assertIsNone(self.router.handle(self._message("不要了")))
         self.assertIsNone(self.router.handle(self._message("搞定")))
 

@@ -17,8 +17,6 @@ from .admin import is_help_command
 from .proactive.gate import ProactiveGate
 from .proactive.sticky import StickyMentionTracker
 from .memory.consolidator import MemoryConsolidator
-from .todo.store import TodoStore
-from .todo.handler import TodoHandler, format_todo_reply
 from .activity import (
     build_activity_report,
     clean_command_text,
@@ -86,14 +84,6 @@ class MessageRouter:
             ttl_sec=config.sticky_mention_ttl_sec,
         ) if config.sticky_mention_enabled else None
         self._memory = MemoryConsolidator(store, summarizer)
-        # Todo: init store and handler if feature is enabled
-        self._todo_store: Optional[TodoStore] = None
-        self._todo_handler: Optional[TodoHandler] = None
-        if config.todo_enabled:
-            self._todo_store = TodoStore(db_path=config.db_path)
-            self._todo_handler = TodoHandler(
-                self._todo_store, config,
-            )
 
         # 星盘玩法。
         self._koi_service = None
@@ -362,10 +352,6 @@ class MessageRouter:
                     config=self._config, is_admin=True,
                 )
 
-            # ── Todo: group todo commands ───────────────────
-            if reply is None:
-                reply = self._handle_todo_command(msg, clean_content)
-
             if reply is None and self._detector.is_trigger(
                 content=clean_content,
                 is_at_mentioned=False,
@@ -386,7 +372,7 @@ class MessageRouter:
                 msg.get("content", ""), bot_name, self._bot_aliases(),
             )
 
-            # ── Help / admin / todo commands (bare text, no @ needed) ──
+            # ── Help / admin commands (bare text, no @ needed) ──────
             # Only fresh messages are accepted so replayed history does
             # not re-run commands on startup.
             if msg_age_sec <= AT_MENTION_MAX_AGE_SEC and clean_content.strip():
@@ -406,16 +392,6 @@ class MessageRouter:
                     )
                     if reply:
                         return self._strip_markdown(reply)
-                if (
-                    self._todo_handler is not None
-                    and self._is_todo_group(msg["chat_id"])
-                    and self._todo_handler.looks_like_command(clean_content)
-                ):
-                    todo_reply = self._handle_todo_command(
-                        msg, clean_content,
-                    )
-                    if todo_reply:
-                        return self._strip_markdown(todo_reply)
 
             if (
                 msg_age_sec <= AT_MENTION_MAX_AGE_SEC
@@ -449,91 +425,6 @@ class MessageRouter:
 
         # ── Strip markdown — WeChat can't render it ──────────────
         return self._strip_markdown(reply) if reply else None
-
-    # ── Todo helpers ────────────────────────────────────────────
-
-    _group_names_cache: dict[str, str] | None = None
-    _group_names_loaded: bool = False
-
-    def _load_group_names(self) -> dict[str, str]:
-        """Load chat_id → display_name mapping from disk (lazy + cached)."""
-        if not self._group_names_loaded:
-            self._group_names_loaded = True
-            import json
-            from pathlib import Path
-            path = Path("data/group_names.json")
-            if path.exists():
-                try:
-                    raw = json.loads(path.read_text(encoding="utf-8"))
-                    # group_names.json stores {chat_id: {name, member_count}}
-                    # (older versions stored {chat_id: name}); normalise to
-                    # chat_id -> display name so callers can compare strings.
-                    names: dict[str, str] = {}
-                    for chat_id, value in raw.items():
-                        if isinstance(value, dict):
-                            value = value.get("name", "")
-                        if value:
-                            names[chat_id] = str(value)
-                    self._group_names_cache = names
-                except (json.JSONDecodeError, OSError):
-                    self._group_names_cache = {}
-        return self._group_names_cache or {}
-
-    def _is_todo_group(self, chat_id: str) -> bool:
-        """Check if the given chat_id is in the todo allowed-groups list.
-
-        Uses group_names.json (persisted by WcdbBackend) to match
-        configured group names against actual chat_ids and their
-        display names.
-        """
-        groups = self._config.todo_groups
-        if not groups or groups == ["*"]:
-            return True
-        # Load display name mapping (chat_id → display_name)
-        name_map = self._load_group_names()
-        display_name = name_map.get(chat_id, "")
-        for g in groups:
-            g_lower = g.lower()
-            # Exact match against chat_id or display name
-            if g == chat_id or g == display_name:
-                return True
-            # Substring match against chat_id or display name
-            if g_lower in chat_id.lower():
-                return True
-            if display_name and g_lower in display_name.lower():
-                return True
-        return False
-
-    def _handle_todo_command(self, msg: dict, content: str) -> str | None:
-        """Dispatch a group todo command; returns reply text or None."""
-        if self._todo_handler is None or not self._is_todo_group(msg["chat_id"]):
-            return None
-        is_admin = (
-            bool(self._config.admin_wxid)
-            and msg["sender_id"] == self._config.admin_wxid
-        )
-        try:
-            result = self._todo_handler.handle(
-                content,
-                msg["chat_id"],
-                msg["sender_id"],
-                msg["sender_name"],
-                is_admin,
-            )
-            reply = (
-                format_todo_reply(result, msg["sender_name"])
-                if result is not None else None
-            )
-            # 触发自动清理
-            self._todo_store.cleanup(
-                msg["chat_id"],
-                self._config.todo_completed_retention_days,
-                self._config.todo_deleted_retention_days,
-            )
-            return reply
-        except Exception:
-            logger.exception("Todo command failed")
-            return None
 
     # ── Memory helper ────────────────────────────────────────────
 

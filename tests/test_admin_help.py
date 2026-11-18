@@ -10,7 +10,6 @@ from src.admin import AdminCommandHandler, is_help_command
 def make_config(**overrides):
     values = {
         "koi_enabled": True,
-        "todo_enabled": True,
         "summarize_enabled": True,
     }
     values.update(overrides)
@@ -52,10 +51,9 @@ class AdminHelpTests(unittest.TestCase):
         reply = self._help(make_config(), text="帮助 未知")
         self.assertIn("游玩清单", reply)
 
-    def test_help_hides_disabled_todo(self):
-        cfg = make_config(todo_enabled=False, summarize_enabled=False)
-        reply = self._help(cfg)
-        self.assertNotIn("【待办】", reply)
+    def test_help_has_no_todo_section(self):
+        reply = self._help(make_config(summarize_enabled=False))
+        self.assertNotIn("待办", reply)
         self.assertIn("【星盘】", reply)
         # 直接对话始终可用，所以 AI 区块仍会显示。
         self.assertIn("【AI】", reply)
@@ -64,6 +62,30 @@ class AdminHelpTests(unittest.TestCase):
         reply = self._help(make_config(), is_admin=True)
         self.assertIn("【管理（仅管理员）】", reply)
         self.assertIn("改名", reply)
+
+    def test_help_menu_lines_stay_narrow(self):
+        reply = self._help(make_config())
+
+        for line in reply.splitlines():
+            self.assertLessEqual(
+                AdminCommandHandler._display_width(line), 34, line)
+
+    def test_help_section_columns_align(self):
+        import re
+
+        reply = self._help(make_config(), text="帮助 星盘")
+        rows = [
+            line for line in reply.splitlines()
+            if line and not line.startswith(("@", "━━", "完整清单"))
+        ]
+        columns = set()
+        for line in rows:
+            match = re.match(r"^(.+?)(  +)(.+)$", line)
+            self.assertIsNotNone(match, line)
+            columns.add(
+                AdminCommandHandler._display_width(
+                    line[:match.start(3)]))
+        self.assertEqual(len(columns), 1, columns)
 
     def test_help_command_detection(self):
         for text in ("帮助", "help", "命令", "帮助 星盘", " 帮助   待办 "):

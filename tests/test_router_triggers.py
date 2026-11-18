@@ -56,7 +56,6 @@ class RouterTriggerTests(unittest.TestCase):
         self.config = BotConfig()
         self.config.koi_enabled = False
         self.config.db_path = ":memory:"
-        self.config.todo_enabled = False
         self.config.sticky_mention_enabled = False
         self.summarizer = _StubSummarizer()
         self.router = MessageRouter(
@@ -147,34 +146,6 @@ class RouterTriggerTests(unittest.TestCase):
         self.summarizer.is_disabled = True
         self.router.handle(self._message("随便聊聊"))
         self.assertEqual(self.summarizer.consolidate_calls, 0)
-
-    def test_todo_group_matches_dict_group_names(self):
-        """group_names.json values are {name, member_count}, not strings."""
-        import json
-        import os
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            data_dir = Path(tmp) / "data"
-            data_dir.mkdir()
-            (data_dir / "group_names.json").write_text(
-                json.dumps({
-                    self.chat: {
-                        "name": "想亲想爱一家人",
-                        "member_count": 26,
-                    }
-                }, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            old_cwd = os.getcwd()
-            os.chdir(tmp)
-            try:
-                self.config.todo_groups = ["想亲想爱一家人"]
-                self.router._group_names_loaded = False
-                self.router._group_names_cache = None
-                self.assertTrue(self.router._is_todo_group(self.chat))
-            finally:
-                os.chdir(old_cwd)
 
 
 if __name__ == "__main__":
