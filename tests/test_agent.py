@@ -146,6 +146,15 @@ class PersonaRenderingTests(unittest.TestCase):
         self.assertNotEqual(grumpy, high_eq)
         self.assertIn("高情商", high_eq)
 
+    def test_custom_block_tells_model_to_be_the_character(self):
+        block = render_persona_block(
+            resolve_persona("custom", "情商高、幽默风趣的男大学生"),
+        )
+        self.assertIn("下面这段描述就是你的真实性格", block)
+        self.assertIn("不是在扮演", block)
+        self.assertIn("情商高、幽默风趣的男大学生", block)
+        self.assertIn("不改变上文的「硬底线」", block)
+
     def test_empty_persona_is_safe(self):
         self.assertEqual(render_persona_block(Persona(id="x", name="x", summary="")), "")
 
@@ -339,6 +348,13 @@ class PersonaConfigTests(unittest.TestCase):
             "AI_ENABLED": "true",
             "AI_BACKEND": "deepseek",
             "DEEPSEEK_API_KEY": "sk-test",
+            # Pin persona/agent fields so the developer's real .env cannot
+            # leak into these assertions.
+            "BOT_PERSONA": "default",
+            "BOT_PERSONA_PROMPT": "",
+            "AGENT_ENABLED": "false",
+            "AGENT_MAX_TOOL_CALLS": "4",
+            "AGENT_TIMEOUT_SEC": "20",
         }
         base.update(env)
         with patch.dict(os.environ, base, clear=False):

@@ -236,6 +236,23 @@ def render_persona_block(persona: Persona) -> str:
     if persona is None or persona.is_default:
         return ""
 
+    # Free-form personas are the primary UX: make the model *be* the
+    # character rather than merely "know about" it.  Presets keep the
+    # structured blocks below.
+    if persona.id == CUSTOM_PERSONA_ID:
+        return "\n".join([
+            "下面这段描述就是你的真实性格，不是在扮演，也不用介绍自己。",
+            "它必须体现在每一句回复的语气、用词、节奏和幽默感里：",
+            "",
+            persona.style,
+            "",
+            "### 要求",
+            "- 不要用客服腔、总结腔或 AI 腔（「首先/其次」「综上所述」等）",
+            "- 不要解释或复述自己的性格，直接用这个人格说话",
+            "- 如果与上文的默认示例冲突，以这段人格描述为准",
+            "- 人格只改变语气和表达，不改变上文的「硬底线」与「禁止用词」",
+        ])
+
     lines = [
         f"你现在扮演的人格是「{persona.name}」。",
         persona.summary,
