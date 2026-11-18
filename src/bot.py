@@ -188,6 +188,9 @@ class Bot:
         self._conn = None
         self._backend = None
         self._health: HealthMonitor | None = None
+        # Set when this Bot instance shuts down; stops the koi tick thread
+        # so a restarted Bot doesn't leave an old thread using a closed DB.
+        self._koi_stop = threading.Event()
 
     def run(self) -> None:
         """Initialize all components and start the bot. Blocks until stopped."""
@@ -266,8 +269,7 @@ class Bot:
         window_lock = getattr(backend, "_window_lock", None)
 
         def _koi_pool_loop() -> None:
-            while True:
-                time.sleep(60)
+            while not self._koi_stop.wait(60):
                 try:
                     for chat_id, text in router.settle_koi_pools():
                         if window_lock is not None:
@@ -328,6 +330,7 @@ class Bot:
         except KeyboardInterrupt:
             pass
         finally:
+            self._koi_stop.set()
             if self._health:
                 self._health.stop()
             if self._conn is not None:
